@@ -27,7 +27,7 @@ jobs:
         run: npm run build
 
       - name: Deploy to Cloudflare Workers (dev)
-        run: npx wrangler deploy --env dev
+        run: npx wrangler deploy --name bt-servant-admin-portal-dev
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -38,7 +38,7 @@ jobs:
           script: |
             const body = `### Dev deployment complete
 
-            **URL:** \`https://bt-servant-admin-portal-dev.<your-subdomain>.workers.dev\`
+            **URL:** https://bt-servant-admin-portal-dev.unfoldingword.workers.dev
 
             This dev deployment is updated on every push to this PR.`;
 
