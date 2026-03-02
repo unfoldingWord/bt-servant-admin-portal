@@ -1,0 +1,4 @@
+{
+  "max_history_storage": 50,
+  "max_history_llm": 25
+}

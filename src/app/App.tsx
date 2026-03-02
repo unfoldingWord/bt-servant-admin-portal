@@ -1,15 +1,27 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router";
 
+import { useThemeSync } from "@/hooks/use-theme-sync";
+import { useSyncSection } from "@/hooks/use-sync-section";
+import { AppShell } from "@/components/app-shell";
+import { AdvancedOptionsPage } from "@/app/pages/advanced-options";
+import { BaruchPage } from "@/app/pages/baruch";
+import { McpServersPage } from "@/app/pages/mcp-servers";
+
 const queryClient = new QueryClient();
 
-function HomePage() {
+function AppRoutes() {
+  useThemeSync();
+  useSyncSection();
+
   return (
-    <div className="flex min-h-screen items-center justify-center">
-      <h1 className="text-foreground text-4xl font-bold">
-        BT Servant Admin Portal
-      </h1>
-    </div>
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route index element={<BaruchPage />} />
+        <Route path="mcp-servers" element={<McpServersPage />} />
+        <Route path="advanced-options" element={<AdvancedOptionsPage />} />
+      </Route>
+    </Routes>
   );
 }
 
@@ -17,9 +29,7 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-        </Routes>
+        <AppRoutes />
       </BrowserRouter>
     </QueryClientProvider>
   );

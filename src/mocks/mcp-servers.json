@@ -1,0 +1,26 @@
+[
+  {
+    "id": "mcp-001",
+    "name": "Bible Gateway",
+    "url": "https://mcp.bible-gateway.example.com/sse",
+    "enabled": true,
+    "priority": 1,
+    "allowedTools": ["search_verses", "get_passage", "compare_translations"]
+  },
+  {
+    "id": "mcp-002",
+    "name": "Lexicon Lookup",
+    "url": "https://mcp.lexicon.example.com/sse",
+    "authToken": "tok_lex_xxxxx",
+    "enabled": true,
+    "priority": 2
+  },
+  {
+    "id": "mcp-003",
+    "name": "Commentary Archive",
+    "url": "https://mcp.commentary.example.com/sse",
+    "enabled": false,
+    "priority": 3,
+    "allowedTools": ["search_commentaries", "get_commentary"]
+  }
+]

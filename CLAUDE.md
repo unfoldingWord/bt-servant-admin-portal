@@ -56,6 +56,18 @@ worker/
 - **Production** deploys via manual workflow dispatch (Actions → Deploy Production → Run workflow)
 - No direct deploys from local machines
 
+## Git Commit Rules
+
+1. **Commit Author**: Claude is the SOLE author. Do NOT include:
+   - Co-Authored-By lines
+   - Any reference to the user's name
+   - Any "Generated with Claude Code" footer
+   - Use `--author="Claude <claude@anthropic.com>"` on every commit
+2. **Commit Messages**: ALWAYS include both a good subject AND description - neither should EVER be blank
+3. **Pre-commit Must Pass**: NEVER commit if the pre-commit hook is failing. Loop until you fix all issues.
+4. **No Suppression**: NEVER suppress warnings, disable linting rules, or skip checks without explicitly asking the user first
+5. **No --no-verify**: NEVER use `--no-verify` or any flag to skip pre-commit hooks
+
 ## Pre-commit Hooks
 
 Husky runs on every commit:
@@ -73,3 +85,11 @@ All three must pass before a commit is accepted.
 - shadcn components go in `src/components/ui/`
 - CSS variables for theming (light/dark mode via `.dark` class)
 - Font Awesome Pro + Lucide React for icons
+
+## UI Design
+
+- **Always use the `frontend-design` skill** when building or modifying UI components, pages, or layouts
+- **Always use the `refactoring-ui` skill** when reviewing or polishing UI code
+- **Use the shadcn MCP** to look up component APIs, examples, and add new components
+- Aim for distinctive, production-grade interfaces — avoid generic "AI slop" aesthetics
+- Every UI element should have intentional design direction: typography, color, spacing, motion
