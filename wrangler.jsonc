@@ -13,6 +13,13 @@
     "DEFAULT_ORG": "unfoldingWord",
   },
   "env": {
+    "dev": {
+      "name": "bt-servant-admin-portal-dev",
+      "vars": {
+        "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
+        "DEFAULT_ORG": "unfoldingWord",
+      },
+    },
     "staging": {
       "name": "bt-servant-admin-portal-staging",
       "vars": {
