@@ -1,0 +1,22 @@
+# dependencies
+/node_modules
+
+# production build
+/dist
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+
+# env files
+.env*
+.dev.vars
+
+# cloudflare
+.wrangler
+
+# typescript
+*.tsbuildinfo

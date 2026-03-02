@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bt-servant-admin-portal",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2025-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "vars": {
+    "ENGINE_BASE_URL": "https://api.btservant.ai",
+    "DEFAULT_ORG": "unfoldingWord",
+  },
+  "env": {
+    "staging": {
+      "name": "bt-servant-admin-portal-staging",
+      "vars": {
+        "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
+        "DEFAULT_ORG": "unfoldingWord",
+      },
+    },
+  },
+}
