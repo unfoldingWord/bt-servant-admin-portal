@@ -47,8 +47,13 @@ worker/
 ## Workflow
 
 - Create feature branches off `main`
-- Open PRs for review — staging deploys automatically on PR
-- Production deploys on merge to `main`
+- Open PRs for review — **staging** deploys automatically on PR
+- **NEVER merge to `main` without explicit user permission.** Always ask first.
+- Before any merge discussion, a **code review must be completed** on the PR
+- All issues found during code review with **medium severity or higher must be fixed** before merging
+- Low severity issues may be converted to GitHub issues, but **only with user permission**
+- After merge to `main` — **staging** redeploys automatically (after CI passes)
+- **Production** deploys via manual workflow dispatch (Actions → Deploy Production → Run workflow)
 - No direct deploys from local machines
 
 ## Pre-commit Hooks
