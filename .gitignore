@@ -15,6 +15,9 @@ npm-debug.log*
 .env*
 .dev.vars
 
+# Font Awesome Pro registry auth
+.npmrc
+
 # cloudflare
 .wrangler
 
