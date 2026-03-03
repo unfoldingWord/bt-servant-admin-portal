@@ -19,7 +19,7 @@ export function BaruchPage() {
             Baruch
           </h1>
           <p className="text-muted-foreground mt-3 max-w-md text-[15px] leading-relaxed">
-            Talk to Baruch to configure your BT Servant agent — identity,
+            Talk to Baruch to configure your BT Servant agent — name, identity,
             teaching methodology, tool guidance, instructions, memory
             instructions, and closing prompt.
           </p>

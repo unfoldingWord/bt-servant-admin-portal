@@ -11,7 +11,7 @@ export function ManualConfigPage() {
         <div className="bg-primary/10 ring-primary/20 flex size-20 items-center justify-center rounded-2xl ring-1">
           <FontAwesomeIcon
             icon={faPenToSquare}
-            className="text-primary size-8"
+            className="text-primary text-4xl"
           />
         </div>
         <div className="text-center">
