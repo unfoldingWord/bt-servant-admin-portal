@@ -33,19 +33,21 @@ export function ActivityBarItem({
           onClick={onClick}
           aria-label={label}
           className={cn(
-            "text-muted-foreground relative size-10 rounded-none transition-colors",
-            "hover:bg-accent hover:text-foreground",
+            "text-muted-foreground relative size-10 rounded-md transition-all",
+            "hover:bg-accent hover:text-foreground hover:shadow-sm",
+            "active:scale-95",
+            "focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2",
             isActive &&
-              "text-foreground before:bg-primary before:absolute before:inset-y-0 before:left-0 before:w-0.5"
+              "text-foreground before:bg-primary before:absolute before:inset-y-1.5 before:-left-1 before:w-0.5 before:rounded-full before:transition-all"
           )}
         >
           <FontAwesomeIcon
             icon={isActive ? activeIcon : icon}
-            className="size-[18px]"
+            className="text-xl"
           />
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="right" sideOffset={6}>
+      <TooltipContent side="right" sideOffset={10}>
         {label}
       </TooltipContent>
     </Tooltip>

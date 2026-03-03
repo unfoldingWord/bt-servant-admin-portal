@@ -21,15 +21,15 @@ export function ThemeToggle() {
           size="icon"
           onClick={toggleTheme}
           aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-          className="text-muted-foreground hover:bg-accent hover:text-foreground size-10 rounded-none"
+          className="text-muted-foreground hover:bg-accent hover:text-foreground size-10 rounded-md transition-all hover:shadow-sm active:scale-95"
         >
           <FontAwesomeIcon
             icon={theme === "dark" ? faMoonLight : faSunBrightLight}
-            className="size-[18px]"
+            className="text-xl"
           />
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="right" sideOffset={6}>
+      <TooltipContent side="right" sideOffset={10}>
         {theme === "dark" ? "Light theme" : "Dark theme"}
       </TooltipContent>
     </Tooltip>

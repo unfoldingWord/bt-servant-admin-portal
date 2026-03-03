@@ -1,5 +1,1 @@
-export type Section =
-  | "baruch"
-  | "test-chat"
-  | "mcp-servers"
-  | "advanced-options";
+export type Section = "baruch" | "manual-config";

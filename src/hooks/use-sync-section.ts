@@ -6,8 +6,7 @@ import type { Section } from "@/types/ui";
 
 const pathToSection: Record<string, Section> = {
   "/": "baruch",
-  "/mcp-servers": "mcp-servers",
-  "/advanced-options": "advanced-options",
+  "/manual-config": "manual-config",
 };
 
 export function useSyncSection() {
