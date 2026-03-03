@@ -1,3 +1,4 @@
+import { faBookBible } from "@fortawesome/pro-duotone-svg-icons";
 import { faPaperPlaneTop } from "@fortawesome/pro-light-svg-icons";
 import { faXmark } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -28,12 +29,19 @@ export function TestChatPanel() {
 
       {/* Messages area */}
       <div className="bg-background flex flex-1 flex-col items-center justify-center gap-3 p-4">
-        <div className="bg-muted flex size-12 items-center justify-center rounded-xl">
-          <FontAwesomeIcon
-            icon={faPaperPlaneTop}
-            className="text-muted-foreground size-5"
-          />
-        </div>
+        <span
+          className="text-3xl"
+          style={
+            {
+              "--fa-primary-color": "var(--primary-foreground)",
+              "--fa-primary-opacity": "1",
+              "--fa-secondary-color": "#ae5630",
+              "--fa-secondary-opacity": "1",
+            } as React.CSSProperties
+          }
+        >
+          <FontAwesomeIcon icon={faBookBible} />
+        </span>
         <p className="text-muted-foreground max-w-[200px] text-center text-sm leading-relaxed">
           Send a message to test your BT Servant configuration.
         </p>
