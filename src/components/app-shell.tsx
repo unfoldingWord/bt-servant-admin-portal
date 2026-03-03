@@ -1,5 +1,6 @@
 import { Outlet } from "react-router";
 
+import { cn } from "@/lib/utils";
 import { useUiStore } from "@/lib/ui-store";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -21,11 +22,14 @@ export function AppShell() {
         </main>
 
         {isDesktop ? (
-          testChatOpen && (
-            <aside className="h-full w-[340px] shrink-0 shadow-[-4px_0_12px_rgba(0,0,0,0.2)]">
-              <TestChatPanel />
-            </aside>
-          )
+          <aside
+            className={cn(
+              "h-full w-[340px] shrink-0 shadow-[-4px_0_12px_rgba(0,0,0,0.2)]",
+              !testChatOpen && "hidden"
+            )}
+          >
+            <TestChatPanel />
+          </aside>
         ) : (
           <Sheet open={testChatOpen} onOpenChange={setTestChatOpen}>
             <SheetContent side="right" showCloseButton={false} className="p-0">
