@@ -30,12 +30,15 @@ export function AppShell() {
 
   return (
     <TooltipProvider>
-      <div className="flex h-full">
+      <div className="flex h-full overflow-hidden">
         <ActivityBar />
 
         {isDesktop ? (
-          <ResizablePanelGroup orientation="horizontal" className="flex-1">
-            <ResizablePanel defaultSize={65} minSize={40}>
+          <ResizablePanelGroup
+            orientation="horizontal"
+            className="min-w-0 flex-1"
+          >
+            <ResizablePanel defaultSize={testChatOpen ? 65 : 100} minSize={40}>
               <ScrollArea className="h-full">
                 <Outlet />
               </ScrollArea>
@@ -44,18 +47,19 @@ export function AppShell() {
             <ResizableHandle />
             <ResizablePanel
               panelRef={chatPanelRef}
-              defaultSize={35}
+              defaultSize={testChatOpen ? 35 : 0}
               minSize={20}
               maxSize={50}
               collapsible
               collapsedSize={0}
+              className="overflow-hidden"
             >
               <TestChatPanel />
             </ResizablePanel>
           </ResizablePanelGroup>
         ) : (
           <>
-            <ScrollArea className="h-full flex-1">
+            <ScrollArea className="h-full min-w-0 flex-1">
               <Outlet />
             </ScrollArea>
 
