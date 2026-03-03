@@ -1,4 +1,6 @@
+import { useEffect, useRef } from "react";
 import { Outlet } from "react-router";
+import type { PanelImperativeHandle } from "react-resizable-panels";
 
 import { useUiStore } from "@/lib/ui-store";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -16,6 +18,15 @@ import { TestChatPanel } from "@/components/test-chat-panel";
 export function AppShell() {
   const { testChatOpen, setTestChatOpen } = useUiStore();
   const isDesktop = useMediaQuery("(min-width: 768px)");
+  const chatPanelRef = useRef<PanelImperativeHandle>(null);
+
+  useEffect(() => {
+    if (testChatOpen) {
+      chatPanelRef.current?.expand();
+    } else {
+      chatPanelRef.current?.collapse();
+    }
+  }, [testChatOpen]);
 
   return (
     <TooltipProvider>
@@ -30,14 +41,17 @@ export function AppShell() {
               </ScrollArea>
             </ResizablePanel>
 
-            {testChatOpen && (
-              <>
-                <ResizableHandle />
-                <ResizablePanel defaultSize={35} minSize={20} maxSize={50}>
-                  <TestChatPanel />
-                </ResizablePanel>
-              </>
-            )}
+            <ResizableHandle />
+            <ResizablePanel
+              panelRef={chatPanelRef}
+              defaultSize={35}
+              minSize={20}
+              maxSize={50}
+              collapsible
+              collapsedSize={0}
+            >
+              <TestChatPanel />
+            </ResizablePanel>
           </ResizablePanelGroup>
         ) : (
           <>

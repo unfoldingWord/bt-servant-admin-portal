@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 
 import { useThemeSync } from "@/hooks/use-theme-sync";
 import { useSyncSection } from "@/hooks/use-sync-section";
@@ -20,6 +20,7 @@ function AppRoutes() {
         <Route index element={<BaruchPage />} />
         <Route path="mcp-servers" element={<McpServersPage />} />
         <Route path="advanced-options" element={<AdvancedOptionsPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
   );

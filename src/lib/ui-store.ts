@@ -21,6 +21,9 @@ export const useUiStore = create<UiState>()(
       toggleTestChat: () =>
         set((state) => ({ testChatOpen: !state.testChatOpen })),
     }),
-    { name: "bt-servant-ui" }
+    {
+      name: "bt-servant-ui",
+      partialize: (state) => ({ testChatOpen: state.testChatOpen }),
+    }
   )
 );
