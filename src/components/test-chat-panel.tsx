@@ -3,18 +3,20 @@ import { faPaperPlaneTop } from "@fortawesome/pro-light-svg-icons";
 import { faXmark } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
+import { useThemeStore } from "@/lib/theme-store";
 import { useUiStore } from "@/lib/ui-store";
 import { Button } from "@/components/ui/button";
 
 export function TestChatPanel() {
   const setTestChatOpen = useUiStore((s) => s.setTestChatOpen);
+  const theme = useThemeStore((s) => s.theme);
 
   return (
     <div className="bg-card flex h-full flex-col">
       {/* Header */}
       <div className="border-border/50 flex h-12 shrink-0 items-center justify-between border-b px-4">
         <span className="text-foreground text-sm font-semibold tracking-tight">
-          Test Chat
+          BT Servant Chat
         </span>
         <Button
           variant="ghost"
@@ -30,12 +32,16 @@ export function TestChatPanel() {
       {/* Messages area */}
       <div className="bg-background flex flex-1 flex-col items-center justify-center gap-3 p-4">
         <span
-          className="text-3xl"
+          className="text-4xl"
           style={
             {
-              "--fa-primary-color": "var(--primary-foreground)",
+              "--fa-primary-color":
+                theme === "dark" ? "oklch(0.9 0 0)" : "oklch(1 0 0)",
               "--fa-primary-opacity": "1",
-              "--fa-secondary-color": "#ae5630",
+              "--fa-secondary-color":
+                theme === "dark"
+                  ? "oklch(0.541 0.168 248)"
+                  : "oklch(0.475 0.157 248)",
               "--fa-secondary-opacity": "1",
             } as React.CSSProperties
           }
@@ -51,7 +57,7 @@ export function TestChatPanel() {
       <div className="border-border/50 bg-card shrink-0 border-t p-3">
         <div className="bg-background ring-border focus-within:ring-primary/50 flex h-10 items-center rounded-lg px-3 ring-1 transition-all">
           <span className="text-muted-foreground flex-1 text-sm">
-            Type a message...
+            Chat with BT Servant…
           </span>
           <FontAwesomeIcon
             icon={faPaperPlaneTop}

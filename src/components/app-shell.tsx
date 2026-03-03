@@ -29,7 +29,7 @@ export function AppShell() {
         ) : (
           <Sheet open={testChatOpen} onOpenChange={setTestChatOpen}>
             <SheetContent side="right" showCloseButton={false} className="p-0">
-              <SheetTitle className="sr-only">Test Chat</SheetTitle>
+              <SheetTitle className="sr-only">BT Servant Chat</SheetTitle>
               <TestChatPanel />
             </SheetContent>
           </Sheet>

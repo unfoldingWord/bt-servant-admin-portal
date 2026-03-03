@@ -11,7 +11,7 @@ export function BaruchPage() {
         <div className="bg-primary/10 ring-primary/20 flex size-20 items-center justify-center rounded-2xl ring-1">
           <FontAwesomeIcon
             icon={faMessageBot}
-            className="text-primary size-8"
+            className="text-primary text-4xl"
           />
         </div>
         <div className="text-center">
@@ -19,9 +19,9 @@ export function BaruchPage() {
             Baruch
           </h1>
           <p className="text-muted-foreground mt-3 max-w-md text-[15px] leading-relaxed">
-            Configure your BT Servant agent — identity, teaching methodology,
-            tool guidance, instructions, memory instructions, and closing
-            prompt.
+            Talk to Baruch to configure your BT Servant agent — identity,
+            teaching methodology, tool guidance, instructions, memory
+            instructions, and closing prompt.
           </p>
         </div>
       </div>

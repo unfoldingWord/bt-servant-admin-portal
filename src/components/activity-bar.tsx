@@ -22,7 +22,7 @@ export function ActivityBar() {
         <ActivityBarItem
           icon={faMessageBotLight}
           activeIcon={faMessageBotSolid}
-          label="Baruch"
+          label="Talk to Baruch to configure your BT Servant agent"
           isActive={activeSection === "baruch"}
           onClick={() => {
             setActiveSection("baruch");
@@ -32,7 +32,7 @@ export function ActivityBar() {
         <ActivityBarItem
           icon={faPenToSquareLight}
           activeIcon={faPenToSquareSolid}
-          label="Manual Config"
+          label="Manually configure your BT Servant agent"
           isActive={activeSection === "manual-config"}
           onClick={() => {
             setActiveSection("manual-config");
@@ -43,7 +43,7 @@ export function ActivityBar() {
         <ActivityBarItem
           icon={faCommentsLight}
           activeIcon={faCommentsSolid}
-          label="Test Chat"
+          label="Chat with BT Servant"
           isActive={testChatOpen}
           onClick={toggleTestChat}
         />
