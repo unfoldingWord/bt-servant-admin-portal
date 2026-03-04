@@ -57,7 +57,7 @@ export function LoginPage() {
             />
             <FontAwesomeIcon
               icon={faScrewdriverWrench}
-              className="absolute -right-1 bottom-2.5 text-sm text-slate-500 drop-shadow-sm dark:text-slate-300"
+              className="absolute -right-1.5 bottom-2.5 text-sm text-slate-500 drop-shadow-sm dark:text-slate-300"
             />
           </div>
           <CardTitle className="text-2xl font-bold tracking-tight">
@@ -104,7 +104,11 @@ export function LoginPage() {
               </div>
             )}
 
-            <Button type="submit" className="h-11 w-full" disabled={submitting}>
+            <Button
+              type="submit"
+              className="mt-8 h-11 w-full"
+              disabled={submitting}
+            >
               {submitting ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
