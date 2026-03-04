@@ -4,11 +4,15 @@ import { cn } from "@/lib/utils";
 
 /**
  * Pure-CSS tooltip system.  No JS state management — tooltips appear on
- * hover after a short delay and vanish instantly on mouse-leave.
+ * hover / focus after a short delay and vanish instantly on mouse-leave.
  *
  * API mirrors the old Radix-based components so existing call-sites
  * don't need to change.
  */
+
+/* ---------- shared context for aria-describedby wiring ---------- */
+
+const TooltipIdContext = React.createContext<string | undefined>(undefined);
 
 /* ---------- TooltipProvider (no-op wrapper) ---------- */
 
@@ -24,10 +28,13 @@ function Tooltip({
 }: {
   children: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
+  const id = React.useId();
   return (
-    <div className="group/tooltip relative inline-flex" {...rest}>
-      {children}
-    </div>
+    <TooltipIdContext.Provider value={id}>
+      <div className="group/tooltip relative inline-flex" {...rest}>
+        {children}
+      </div>
+    </TooltipIdContext.Provider>
   );
 }
 
@@ -41,10 +48,19 @@ function TooltipTrigger({
   asChild?: boolean;
   children: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
-  if (asChild && React.isValidElement(children)) {
-    return children;
+  const tooltipId = React.useContext(TooltipIdContext);
+
+  if (asChild && React.isValidElement<Record<string, unknown>>(children)) {
+    return React.cloneElement(children, {
+      "aria-describedby": tooltipId,
+      ...rest,
+    });
   }
-  return <div {...rest}>{children}</div>;
+  return (
+    <div aria-describedby={tooltipId} {...rest}>
+      {children}
+    </div>
+  );
 }
 
 /* ---------- TooltipContent ---------- */
@@ -68,15 +84,19 @@ function TooltipContent({
   side?: Side;
   children: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
+  const tooltipId = React.useContext(TooltipIdContext);
+
   return (
     <div
+      id={tooltipId}
       role="tooltip"
       className={cn(
         // Base styles
         "bg-foreground text-background pointer-events-none absolute z-50 w-max max-w-xs rounded-md px-3 py-1.5 text-xs",
-        // Hidden by default, visible on group hover after delay
+        // Hidden by default, visible on group hover OR focus-within after delay
         "opacity-0 transition-opacity duration-150",
         "group-hover/tooltip:opacity-100 group-hover/tooltip:delay-300",
+        "group-focus-within/tooltip:opacity-100 group-focus-within/tooltip:delay-300",
         // Position
         sideStyles[side],
         className
