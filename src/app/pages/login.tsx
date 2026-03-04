@@ -53,7 +53,7 @@ export function LoginPage() {
           <div className="relative -mb-1 flex size-14 items-center justify-center">
             <FontAwesomeIcon
               icon={faBookBible}
-              className="dark:text-primary/80 text-4xl text-amber-800"
+              className="dark:text-primary/80 text-4xl text-[#ae5630]"
             />
             <FontAwesomeIcon
               icon={faScrewdriverWrench}
@@ -124,7 +124,7 @@ export function LoginPage() {
 
       {/* Version footer */}
       <p className="text-primary/50 dark:text-muted-foreground/60 mt-3 text-xs">
-        BT Servant Admin Portal v0.2.1
+        BT Servant Admin Portal v0.2.2
       </p>
     </div>
   );
