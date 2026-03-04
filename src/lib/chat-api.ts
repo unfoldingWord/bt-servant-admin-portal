@@ -67,3 +67,16 @@ export async function fetchHistory(
 
   return (await res.json()) as ChatHistoryResponse;
 }
+
+export async function deleteHistory(signal?: AbortSignal): Promise<void> {
+  const res = await fetch("/api/chat/history", {
+    method: "DELETE",
+    headers: SAME_ORIGIN_HEADERS,
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Delete history failed (${res.status}): ${body}`);
+  }
+}

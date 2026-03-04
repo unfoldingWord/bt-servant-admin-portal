@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { enqueueMessage, fetchHistory, pollEvents } from "@/lib/chat-api";
+import {
+  deleteHistory,
+  enqueueMessage,
+  fetchHistory,
+  pollEvents,
+} from "@/lib/chat-api";
 import type { ChatHistoryEntry, ChatMessage, SSEEvent } from "@/types/chat";
 
 const POLL_INTERVAL_ACTIVE = 600;
@@ -238,6 +243,11 @@ export function useTestChat() {
     setStreamingText("");
     setStatusMessage(null);
     setError(null);
+
+    deleteHistory().catch((err) => {
+      console.warn("[useTestChat] Failed to delete server history:", err);
+      setError("Failed to clear server history. It may reappear on reload.");
+    });
   }, []);
 
   const streamingCreatedAt = useRef(new Date());

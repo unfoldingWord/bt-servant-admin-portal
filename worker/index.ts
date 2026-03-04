@@ -1,6 +1,11 @@
 import { handleAdmin } from "./admin";
 import { handleLogin, handleLogout, handleMe, validateSession } from "./auth";
-import { handleEnqueue, handleHistory, handlePoll } from "./chat";
+import {
+  handleDeleteHistory,
+  handleEnqueue,
+  handleHistory,
+  handlePoll,
+} from "./chat";
 import type { Env } from "./helpers";
 import { errorResponse, requireSameOrigin } from "./helpers";
 
@@ -48,6 +53,9 @@ export default {
         return handleEnqueue(request, env);
       }
       if (url.pathname === "/api/chat/history") {
+        if (request.method === "DELETE") {
+          return handleDeleteHistory(request, env);
+        }
         return handleHistory(request, env);
       }
       return handlePoll(request, env);
