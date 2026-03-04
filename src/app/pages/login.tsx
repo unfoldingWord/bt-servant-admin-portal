@@ -44,7 +44,7 @@ export function LoginPage() {
     <div className="login-bg relative flex min-h-full flex-col items-center px-4 pt-[20vh] pb-16">
       {/* Theme toggle — top right */}
       <div className="absolute top-4 right-4">
-        <ThemeToggle showTooltip={false} />
+        <ThemeToggle tooltipSide="bottom" />
       </div>
 
       {/* Login card */}
