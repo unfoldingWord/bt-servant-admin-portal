@@ -35,7 +35,7 @@ jobs:
         run: npm run build
 
       - name: Deploy to Cloudflare Workers (staging)
-        run: npx wrangler deploy --name bt-servant-admin-portal-staging --var ENGINE_BASE_URL:https://staging-api.btservant.ai --var DEFAULT_ORG:unfoldingWord
+        run: npx wrangler deploy --name bt-servant-admin-portal-staging --var ENGINE_BASE_URL:https://staging-api.btservant.ai --var DEFAULT_ORG:unfoldingWord --var ENGINE_API_KEY:${{ secrets.ENGINE_API_KEY_STAGING }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
