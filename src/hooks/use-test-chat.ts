@@ -10,7 +10,7 @@ const POLL_TIMEOUT = 120_000;
 export function useTestChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [isCompleting, setIsCompleting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
@@ -54,7 +54,9 @@ export function useTestChat() {
             createdAt: timestamp,
           });
         });
-        setMessages(historyMessages);
+        setMessages((prev) =>
+          prev.length > 0 ? [...historyMessages, ...prev] : historyMessages
+        );
       })
       .catch((err) => {
         if (err instanceof DOMException && err.name === "AbortError") return;

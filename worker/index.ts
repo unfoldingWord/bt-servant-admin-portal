@@ -147,8 +147,15 @@ async function handleHistory(request: Request, env: Env): Promise<Response> {
   }
 
   const url = new URL(request.url);
-  const limit = url.searchParams.get("limit") || "50";
-  const offset = url.searchParams.get("offset") || "0";
+  const limit = String(
+    Math.min(
+      Math.max(parseInt(url.searchParams.get("limit") || "50", 10) || 50, 1),
+      100
+    )
+  );
+  const offset = String(
+    Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0)
+  );
 
   const params = new URLSearchParams({ limit, offset });
   const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${env.DEFAULT_ORG}/users/${ADMIN_USER_ID}/history?${params.toString()}`;
