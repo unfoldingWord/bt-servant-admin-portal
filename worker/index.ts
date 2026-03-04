@@ -138,12 +138,47 @@ async function validateSession(
 }
 
 // ---------------------------------------------------------------------------
+// Security helpers
+// ---------------------------------------------------------------------------
+
+/** Constant-time comparison to prevent timing attacks on hash values. */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+const RATE_LIMIT_WINDOW = 300; // 5 minutes
+const RATE_LIMIT_MAX = 10; // max attempts per window
+
+/** Per-IP rate limiting via KV. Returns true if the request should be blocked. */
+async function isRateLimited(ip: string, env: Env): Promise<boolean> {
+  const key = `ratelimit:login:${ip}`;
+  const count = parseInt((await env.AUTH_KV.get(key)) || "0", 10);
+
+  if (count >= RATE_LIMIT_MAX) return true;
+
+  await env.AUTH_KV.put(key, String(count + 1), {
+    expirationTtl: RATE_LIMIT_WINDOW,
+  });
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Auth endpoints
 // ---------------------------------------------------------------------------
 
 async function handleLogin(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") {
     return errorResponse("Method not allowed", 405);
+  }
+
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  if (await isRateLimited(ip, env)) {
+    return errorResponse("Too many login attempts. Try again later.", 429);
   }
 
   let body: { email?: string; password?: string };
@@ -168,7 +203,7 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
   }
 
   const hash = await hashPassword(password, user.salt);
-  if (hash !== user.passwordHash) {
+  if (!timingSafeEqual(hash, user.passwordHash)) {
     return errorResponse("Invalid email or password", 401);
   }
 

@@ -18,9 +18,12 @@ export function useAuth() {
   );
 
   const logout = useCallback(async () => {
-    await authApi.logout();
-    setUser(null);
-    void navigate("/login", { replace: true });
+    try {
+      await authApi.logout();
+    } finally {
+      setUser(null);
+      void navigate("/login", { replace: true });
+    }
   }, [setUser, navigate]);
 
   return {
