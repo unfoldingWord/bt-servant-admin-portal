@@ -23,3 +23,7 @@ npm-debug.log*
 
 # typescript
 *.tsbuildinfo
+
+# claude code
+.claude/worktrees
+.claude/settings.local.json
