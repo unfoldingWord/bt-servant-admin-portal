@@ -48,13 +48,24 @@ worker/
 
 - Create feature branches off `main`
 - Open PRs for review — **dev** deploys automatically on PR
-- **NEVER merge to `main` without explicit user permission.** Always ask first.
-- Before any merge discussion, a **code review must be completed** on the PR
+- **NEVER merge to `main` without explicit user permission.** Always ask first. Never assume permission — even if CI passes and reviews are clean, wait for the user to say "merge".
+- Before any merge discussion, a **code review must be completed** on the PR using the `claude-code-review` sub-agent
 - All issues found during code review with **medium severity or higher must be fixed** before merging
+- After fixing review issues, **always push the fixes and kick off a new review** using the `claude-code-review` sub-agent. Repeat this fix → re-review cycle until the reviewer approves with no medium+ issues remaining.
 - Low severity issues may be converted to GitHub issues, but **only with user permission**
 - Push/merge to `main` — **staging** deploys automatically (after CI passes)
 - **Production** deploys via manual workflow dispatch (Actions → Deploy Production → Run workflow)
 - No direct deploys from local machines
+
+## After Every Push
+
+Whenever you push to the remote, **always** do the following automatically:
+
+1. **Monitor CI/CD** — watch `gh pr checks` (or `gh run list`) until all checks pass or fail. If a check fails, investigate and fix it.
+2. **Create a PR if one doesn't exist** — if you're on a feature branch and no PR exists yet, create one after CI succeeds using `gh pr create`.
+3. **Report results** — tell the user whether CI passed or failed, and share the PR URL if one was created.
+
+Do this every time without being asked.
 
 ## Git Commit Rules
 
