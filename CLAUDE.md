@@ -57,6 +57,16 @@ worker/
 - **Production** deploys via manual workflow dispatch (Actions → Deploy Production → Run workflow)
 - No direct deploys from local machines
 
+## After Every Push
+
+Whenever you push to the remote, **always** do the following automatically:
+
+1. **Monitor CI/CD** — watch `gh pr checks` (or `gh run list`) until all checks pass or fail. If a check fails, investigate and fix it.
+2. **Create a PR if one doesn't exist** — if you're on a feature branch and no PR exists yet, create one after CI succeeds using `gh pr create`.
+3. **Report results** — tell the user whether CI passed or failed, and share the PR URL if one was created.
+
+Do this every time without being asked.
+
 ## Git Commit Rules
 
 1. **Commit Author**: Claude is the SOLE author. Do NOT include:
