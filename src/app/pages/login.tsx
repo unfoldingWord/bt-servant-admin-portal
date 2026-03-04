@@ -1,21 +1,17 @@
 import { type FormEvent, useState } from "react";
 import { Navigate } from "react-router";
-import { Loader2 } from "lucide-react";
+import { faBookBible } from "@fortawesome/pro-duotone-svg-icons";
+import { faScrewdriverWrench } from "@fortawesome/pro-duotone-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { AlertTriangle, Loader2 } from "lucide-react";
 
 import { useAuthStore } from "@/lib/auth-store";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { TooltipProvider } from "@/components/ui/tooltip";
 
 export function LoginPage() {
   const { login, isLoading: authLoading } = useAuth();
@@ -45,72 +41,87 @@ export function LoginPage() {
   }
 
   return (
-    <TooltipProvider delayDuration={300}>
-      <div className="login-bg relative flex min-h-full flex-col items-center justify-center px-4">
-        {/* Theme toggle — top right */}
-        <div className="absolute top-4 right-4">
-          <ThemeToggle />
-        </div>
-
-        {/* Login card */}
-        <Card className="animate-in fade-in slide-in-from-bottom-4 w-full max-w-sm duration-500">
-          <CardHeader className="items-center text-center">
-            <CardTitle className="text-xl tracking-tight">BT Servant</CardTitle>
-            <CardDescription>Admin Portal</CardDescription>
-          </CardHeader>
-
-          <CardContent>
-            <form onSubmit={(e) => void handleSubmit(e)} className="grid gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="admin@example.com"
-                  autoComplete="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  disabled={submitting}
-                />
-              </div>
-
-              <div className="grid gap-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={submitting}
-                />
-              </div>
-
-              {error && (
-                <p className="text-destructive text-sm font-medium">{error}</p>
-              )}
-
-              <Button type="submit" className="w-full" disabled={submitting}>
-                {submitting ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Signing in...
-                  </>
-                ) : (
-                  "Sign in"
-                )}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-
-        {/* Version footer */}
-        <p className="text-muted-foreground/60 mt-8 text-xs">
-          BT Servant Admin Portal v0.1.0
-        </p>
+    <div className="login-bg relative flex min-h-full flex-col items-center px-4 pt-[20vh] pb-16">
+      {/* Theme toggle — top right */}
+      <div className="absolute top-4 right-4">
+        <ThemeToggle showTooltip={false} />
       </div>
-    </TooltipProvider>
+
+      {/* Login card */}
+      <Card className="animate-in fade-in slide-in-from-bottom-4 w-full max-w-sm shadow-xl duration-500 dark:shadow-black/40">
+        <CardHeader className="items-center justify-items-center text-center">
+          <div className="relative -mb-1 flex size-14 items-center justify-center">
+            <FontAwesomeIcon
+              icon={faBookBible}
+              className="dark:text-primary/80 text-4xl text-amber-800"
+            />
+            <FontAwesomeIcon
+              icon={faScrewdriverWrench}
+              className="absolute -right-1 bottom-2.5 text-sm text-slate-500 drop-shadow-sm dark:text-slate-300"
+            />
+          </div>
+          <CardTitle className="text-2xl font-bold tracking-tight">
+            BT Servant
+          </CardTitle>
+          <p className="text-muted-foreground/60 text-xs font-medium tracking-widest uppercase">
+            Admin Portal
+          </p>
+        </CardHeader>
+
+        <CardContent>
+          <form onSubmit={(e) => void handleSubmit(e)} className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="admin@example.com"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={submitting}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={submitting}
+              />
+            </div>
+
+            {error && (
+              <div className="border-destructive/20 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm font-medium">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                {error}
+              </div>
+            )}
+
+            <Button type="submit" className="h-11 w-full" disabled={submitting}>
+              {submitting ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Signing in...
+                </>
+              ) : (
+                "Sign in"
+              )}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Version footer */}
+      <p className="text-primary/50 dark:text-muted-foreground/60 mt-3 text-xs">
+        BT Servant Admin Portal v0.1.0
+      </p>
+    </div>
   );
 }
