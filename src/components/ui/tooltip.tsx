@@ -94,7 +94,7 @@ function TooltipContent({
         "bg-foreground text-background pointer-events-none absolute z-50 w-max max-w-xs rounded-md px-3 py-1.5 text-xs",
         "opacity-0 transition-opacity duration-150",
         "group-hover/tooltip:opacity-100 group-hover/tooltip:delay-300",
-        "group-focus-within/tooltip:opacity-100 group-focus-within/tooltip:delay-300",
+        "group-has-[:focus-visible]/tooltip:opacity-100 group-has-[:focus-visible]/tooltip:delay-300",
         sideStyles[side],
         className
       )}
