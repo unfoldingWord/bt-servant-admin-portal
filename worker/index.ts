@@ -1,3 +1,4 @@
+import { handleAdmin } from "./admin";
 import { handleLogin, handleLogout, handleMe, validateSession } from "./auth";
 import { handleEnqueue, handleHistory, handlePoll } from "./chat";
 import type { Env } from "./helpers";
@@ -22,6 +23,11 @@ export default {
         return handleMe(request, env);
       }
       return errorResponse("Not found", 404);
+    }
+
+    // Admin endpoints — admin secret required, no same-origin check
+    if (url.pathname.startsWith("/api/admin/")) {
+      return handleAdmin(request, env, url.pathname);
     }
 
     // Chat endpoints — session required

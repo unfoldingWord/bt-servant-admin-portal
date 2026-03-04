@@ -1,24 +1,7 @@
+import { hashPassword } from "./crypto";
 import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface StoredUser {
-  id: string;
-  email: string;
-  name: string;
-  passwordHash: string;
-  salt: string;
-}
-
-interface SessionData {
-  userId: string;
-  email: string;
-  name: string;
-  createdAt: string;
-}
+import type { SessionData, StoredUser } from "./types";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -27,48 +10,6 @@ interface SessionData {
 const SESSION_TTL = 60 * 60 * 24 * 7; // 7 days in seconds
 const RATE_LIMIT_WINDOW = 300; // 5 minutes
 const RATE_LIMIT_MAX = 10; // max attempts per window
-
-// ---------------------------------------------------------------------------
-// Password hashing (PBKDF2 via Web Crypto)
-// ---------------------------------------------------------------------------
-
-function hexToBuffer(hex: string): ArrayBuffer {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-  }
-  return bytes.buffer;
-}
-
-function bufferToHex(buffer: ArrayBuffer): string {
-  return [...new Uint8Array(buffer)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function hashPassword(password: string, salt: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-
-  const derived = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      salt: new Uint8Array(hexToBuffer(salt)),
-      iterations: 100_000,
-      hash: "SHA-256",
-    },
-    keyMaterial,
-    256
-  );
-
-  return bufferToHex(derived);
-}
 
 // ---------------------------------------------------------------------------
 // Security helpers
@@ -187,6 +128,7 @@ export async function handleLogin(
     userId: user.id,
     email: user.email,
     name: user.name,
+    isAdmin: user.isAdmin ?? false,
     createdAt: new Date().toISOString(),
   };
 
@@ -195,7 +137,12 @@ export async function handleLogin(
   });
 
   const response = jsonResponse({
-    user: { id: user.id, email: user.email, name: user.name },
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      isAdmin: user.isAdmin ?? false,
+    },
   });
   response.headers.set("Set-Cookie", sessionCookie(sessionId, request.url));
   return response;
@@ -234,6 +181,7 @@ export async function handleMe(request: Request, env: Env): Promise<Response> {
       id: session.userId,
       email: session.email,
       name: session.name,
+      isAdmin: session.isAdmin ?? false,
     },
   });
 }

@@ -3,6 +3,7 @@ export interface Env {
   ENGINE_API_KEY: string;
   DEFAULT_ORG: string;
   AUTH_KV: KVNamespace;
+  ADMIN_SECRET: string;
 }
 
 export function jsonResponse(data: unknown, status = 200): Response {
