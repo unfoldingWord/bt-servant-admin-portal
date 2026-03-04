@@ -43,6 +43,16 @@ export async function hashPassword(
   return bufferToHex(derived);
 }
 
+/** Constant-time comparison to prevent timing attacks. */
+export function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
 export function generateSalt(): string {
   return bufferToHex(crypto.getRandomValues(new Uint8Array(16)).buffer);
 }

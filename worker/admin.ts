@@ -1,4 +1,4 @@
-import { generateSalt, hashPassword } from "./crypto";
+import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
 import type { StoredUser } from "./types";
@@ -9,7 +9,11 @@ import type { StoredUser } from "./types";
 
 function requireAdminSecret(request: Request, env: Env): Response | null {
   const secret = request.headers.get("X-Admin-Secret");
-  if (!env.ADMIN_SECRET || secret !== env.ADMIN_SECRET) {
+  if (
+    !env.ADMIN_SECRET ||
+    !secret ||
+    !timingSafeEqual(secret, env.ADMIN_SECRET)
+  ) {
     return errorResponse("Forbidden", 403);
   }
   return null;
@@ -120,7 +124,11 @@ async function updateUser(
   }
 
   if (body.name !== undefined) {
-    user.name = body.name.trim();
+    const trimmed = body.name.trim();
+    if (!trimmed) {
+      return errorResponse("name cannot be empty", 400);
+    }
+    user.name = trimmed;
   }
   if (body.isAdmin !== undefined) {
     user.isAdmin = body.isAdmin;

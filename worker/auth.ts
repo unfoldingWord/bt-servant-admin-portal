@@ -1,4 +1,4 @@
-import { hashPassword } from "./crypto";
+import { hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
 import type { SessionData, StoredUser } from "./types";
@@ -14,16 +14,6 @@ const RATE_LIMIT_MAX = 10; // max attempts per window
 // ---------------------------------------------------------------------------
 // Security helpers
 // ---------------------------------------------------------------------------
-
-/** Constant-time comparison to prevent timing attacks on hash values. */
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
-}
 
 /** Per-IP rate limiting via KV. Returns true if the request should be blocked. */
 async function isRateLimited(ip: string, env: Env): Promise<boolean> {
@@ -77,6 +67,15 @@ export async function validateSession(
   const data = await env.AUTH_KV.get<SessionData>(`session:${sessionId}`, {
     type: "json",
   });
+  if (!data) return null;
+
+  // Ensure the user still exists (e.g. not deleted by admin)
+  const userExists = await env.AUTH_KV.get(`user:${data.email}`);
+  if (!userExists) {
+    await env.AUTH_KV.delete(`session:${sessionId}`);
+    return null;
+  }
+
   return data;
 }
 
