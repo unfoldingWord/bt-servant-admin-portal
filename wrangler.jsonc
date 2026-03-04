@@ -12,6 +12,12 @@
     "ENGINE_BASE_URL": "https://api.btservant.ai",
     "DEFAULT_ORG": "unfoldingWord",
   },
+  "kv_namespaces": [
+    {
+      "binding": "AUTH_KV",
+      "id": "PLACEHOLDER_PRODUCTION_KV_ID",
+    },
+  ],
   "env": {
     "dev": {
       "name": "bt-servant-admin-portal-dev",
@@ -19,6 +25,12 @@
         "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
         "DEFAULT_ORG": "unfoldingWord",
       },
+      "kv_namespaces": [
+        {
+          "binding": "AUTH_KV",
+          "id": "PLACEHOLDER_DEV_KV_ID",
+        },
+      ],
     },
     "staging": {
       "name": "bt-servant-admin-portal-staging",
@@ -26,6 +38,12 @@
         "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
         "DEFAULT_ORG": "unfoldingWord",
       },
+      "kv_namespaces": [
+        {
+          "binding": "AUTH_KV",
+          "id": "PLACEHOLDER_STAGING_KV_ID",
+        },
+      ],
     },
   },
 }

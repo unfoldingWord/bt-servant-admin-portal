@@ -190,6 +190,56 @@
   background: oklch(0.5 0 0 / 0.4);
 }
 
+/* Login page — warm gradient that adapts to light/dark */
+.login-bg {
+  background: linear-gradient(
+    135deg,
+    oklch(0.97 0.01 80) 0%,
+    oklch(0.96 0.015 220) 50%,
+    oklch(0.98 0.005 280) 100%
+  );
+}
+
+.dark .login-bg {
+  background: linear-gradient(
+    135deg,
+    oklch(0.18 0.015 250) 0%,
+    oklch(0.16 0.02 280) 50%,
+    oklch(0.19 0.01 230) 100%
+  );
+}
+
+/* Tailwind animate-in utilities for card entrance */
+@keyframes animate-in {
+  from {
+    opacity: var(--tw-enter-opacity, initial);
+    transform: translate3d(
+        var(--tw-enter-translate-x, 0),
+        var(--tw-enter-translate-y, 0),
+        0
+      )
+      scale3d(
+        var(--tw-enter-scale, 1),
+        var(--tw-enter-scale, 1),
+        var(--tw-enter-scale, 1)
+      )
+      rotate(var(--tw-enter-rotate, 0));
+  }
+}
+
+.animate-in {
+  animation-name: animate-in;
+  animation-fill-mode: both;
+}
+
+.fade-in {
+  --tw-enter-opacity: 0;
+}
+
+.slide-in-from-bottom-4 {
+  --tw-enter-translate-y: 1rem;
+}
+
 .dark .bg-dot-grid {
   background-image: radial-gradient(
     circle,
