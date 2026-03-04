@@ -15,7 +15,7 @@
   "kv_namespaces": [
     {
       "binding": "AUTH_KV",
-      "id": "PLACEHOLDER_PRODUCTION_KV_ID",
+      "id": "0fa90c7559164e96b3c2f182c10b13de",
     },
   ],
   "env": {
@@ -28,7 +28,7 @@
       "kv_namespaces": [
         {
           "binding": "AUTH_KV",
-          "id": "PLACEHOLDER_DEV_KV_ID",
+          "id": "fe1fdafdb04a4fa085b38c0a79e7a590",
         },
       ],
     },
@@ -41,7 +41,7 @@
       "kv_namespaces": [
         {
           "binding": "AUTH_KV",
-          "id": "PLACEHOLDER_STAGING_KV_ID",
+          "id": "76b77b269f7c48b481f3448955950b57",
         },
       ],
     },
