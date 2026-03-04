@@ -47,9 +47,7 @@ export function ActivityBarItem({
           />
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="right" sideOffset={10}>
-        {label}
-      </TooltipContent>
+      <TooltipContent side="right">{label}</TooltipContent>
     </Tooltip>
   );
 }

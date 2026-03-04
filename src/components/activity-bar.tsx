@@ -76,9 +76,7 @@ export function ActivityBar() {
               />
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="right" sideOffset={10}>
-            Sign out
-          </TooltipContent>
+          <TooltipContent side="right">Sign out</TooltipContent>
         </Tooltip>
       </div>
     </div>
