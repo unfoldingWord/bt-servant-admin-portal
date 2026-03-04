@@ -246,6 +246,7 @@ export function useTestChat() {
 
     deleteHistory().catch((err) => {
       console.warn("[useTestChat] Failed to delete server history:", err);
+      setError("Failed to clear server history. It may reappear on reload.");
     });
   }, []);
 
