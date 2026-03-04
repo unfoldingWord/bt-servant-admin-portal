@@ -16,6 +16,11 @@ import { useUiStore } from "@/lib/ui-store";
 import { useTestChat } from "@/hooks/use-test-chat";
 import { useAnimatedText } from "@/hooks/use-animated-text";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { ChatMessage } from "@/types/chat";
 
 const markdownComponents = {
@@ -198,15 +203,22 @@ export function TestChatPanel() {
         </span>
         <div className="flex items-center gap-1">
           {hasMessages && (
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={clearMessages}
-              aria-label="Clear messages"
-              className="text-muted-foreground hover:text-foreground rounded-md transition-colors"
-            >
-              <FontAwesomeIcon icon={faTrashCan} className="size-3.5" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={clearMessages}
+                  aria-label="Clear conversation history"
+                  className="text-muted-foreground hover:text-foreground rounded-md transition-colors"
+                >
+                  <FontAwesomeIcon icon={faTrashCan} className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                Clear conversation history
+              </TooltipContent>
+            </Tooltip>
           )}
           <Button
             variant="ghost"

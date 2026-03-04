@@ -167,3 +167,31 @@ export async function handleHistory(
 
   return jsonResponse(data);
 }
+
+export async function handleDeleteHistory(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  if (request.method !== "DELETE") {
+    return errorResponse("Method not allowed", 405);
+  }
+
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${env.DEFAULT_ORG}/users/${ADMIN_USER_ID}/history`;
+
+  const engineRes = await fetch(engineUrl, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${env.ENGINE_API_KEY}`,
+    },
+  });
+
+  if (!engineRes.ok) {
+    const text = await engineRes.text().catch(() => "");
+    console.error(
+      `Engine delete history failed (${engineRes.status}): ${text}`
+    );
+    return errorResponse("Failed to delete history", 502);
+  }
+
+  return jsonResponse({ success: true });
+}
