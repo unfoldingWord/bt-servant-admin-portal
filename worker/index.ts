@@ -50,15 +50,15 @@ export default {
       }
 
       if (url.pathname === "/api/chat/stream") {
-        return handleEnqueue(request, env);
+        return handleEnqueue(request, env, session);
       }
       if (url.pathname === "/api/chat/history") {
         if (request.method === "DELETE") {
-          return handleDeleteHistory(request, env);
+          return handleDeleteHistory(request, env, session);
         }
-        return handleHistory(request, env);
+        return handleHistory(request, env, session);
       }
-      return handlePoll(request, env);
+      return handlePoll(request, env, session);
     }
 
     if (url.pathname.startsWith("/api/")) {

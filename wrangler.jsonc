@@ -10,7 +10,6 @@
   },
   "vars": {
     "ENGINE_BASE_URL": "https://api.btservant.ai",
-    "DEFAULT_ORG": "unfoldingWord",
   },
   "kv_namespaces": [
     {
@@ -23,7 +22,6 @@
       "name": "bt-servant-admin-portal-dev",
       "vars": {
         "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
-        "DEFAULT_ORG": "unfoldingWord",
       },
       "kv_namespaces": [
         {
@@ -36,7 +34,6 @@
       "name": "bt-servant-admin-portal-staging",
       "vars": {
         "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
-        "DEFAULT_ORG": "unfoldingWord",
       },
       "kv_namespaces": [
         {

@@ -128,6 +128,7 @@ export async function handleLogin(
     userId: user.id,
     email: user.email,
     name: user.name,
+    org: user.org,
     isAdmin: user.isAdmin ?? false,
     createdAt: new Date().toISOString(),
   };
@@ -141,6 +142,7 @@ export async function handleLogin(
       id: user.id,
       email: user.email,
       name: user.name,
+      org: user.org,
       isAdmin: user.isAdmin ?? false,
     },
   });
@@ -181,6 +183,7 @@ export async function handleMe(request: Request, env: Env): Promise<Response> {
       id: session.userId,
       email: session.email,
       name: session.name,
+      org: session.org,
       isAdmin: session.isAdmin ?? false,
     },
   });

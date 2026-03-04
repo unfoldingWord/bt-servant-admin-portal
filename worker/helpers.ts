@@ -1,7 +1,6 @@
 export interface Env {
   ENGINE_BASE_URL: string;
   ENGINE_API_KEY: string;
-  DEFAULT_ORG: string;
   AUTH_KV: KVNamespace;
   ADMIN_SECRET: string;
 }

@@ -1,12 +1,14 @@
 import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
+import type { SessionData } from "./types";
 
 const ADMIN_USER_ID = "admin-test";
 const ADMIN_CLIENT_ID = "admin-portal";
 
 export async function handleEnqueue(
   request: Request,
-  env: Env
+  env: Env,
+  session: SessionData
 ): Promise<Response> {
   if (request.method !== "POST") {
     return errorResponse("Method not allowed", 405);
@@ -28,7 +30,7 @@ export async function handleEnqueue(
     message: body.message,
     message_type: body.message_type || "text",
     user_id: ADMIN_USER_ID,
-    org: env.DEFAULT_ORG,
+    org: session.org,
     client_id: ADMIN_CLIENT_ID,
   };
 
@@ -60,7 +62,8 @@ export async function handleEnqueue(
 
 export async function handlePoll(
   request: Request,
-  env: Env
+  env: Env,
+  session: SessionData
 ): Promise<Response> {
   if (request.method !== "GET") {
     return errorResponse("Method not allowed", 405);
@@ -77,7 +80,7 @@ export async function handlePoll(
   const params = new URLSearchParams({
     user_id: ADMIN_USER_ID,
     message_id: messageId,
-    org: env.DEFAULT_ORG,
+    org: session.org,
     cursor,
   });
 
@@ -122,7 +125,8 @@ export async function handlePoll(
 
 export async function handleHistory(
   request: Request,
-  env: Env
+  env: Env,
+  session: SessionData
 ): Promise<Response> {
   if (request.method !== "GET") {
     return errorResponse("Method not allowed", 405);
@@ -140,7 +144,7 @@ export async function handleHistory(
   );
 
   const params = new URLSearchParams({ limit, offset });
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${env.DEFAULT_ORG}/users/${ADMIN_USER_ID}/history?${params.toString()}`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${session.org}/users/${ADMIN_USER_ID}/history?${params.toString()}`;
 
   const engineRes = await fetch(engineUrl, {
     headers: {
@@ -170,13 +174,14 @@ export async function handleHistory(
 
 export async function handleDeleteHistory(
   request: Request,
-  env: Env
+  env: Env,
+  session: SessionData
 ): Promise<Response> {
   if (request.method !== "DELETE") {
     return errorResponse("Method not allowed", 405);
   }
 
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${env.DEFAULT_ORG}/users/${ADMIN_USER_ID}/history`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${session.org}/users/${ADMIN_USER_ID}/history`;
 
   const engineRes = await fetch(engineUrl, {
     method: "DELETE",
