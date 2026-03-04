@@ -1,7 +1,5 @@
 import { type FormEvent, useState } from "react";
 import { Navigate } from "react-router";
-import { faBookBible } from "@fortawesome/pro-duotone-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Loader2 } from "lucide-react";
 
 import { useAuthStore } from "@/lib/auth-store";
@@ -57,9 +55,6 @@ export function LoginPage() {
         {/* Login card */}
         <Card className="animate-in fade-in slide-in-from-bottom-4 w-full max-w-sm duration-500">
           <CardHeader className="items-center text-center">
-            <div className="bg-primary/10 text-primary mb-2 flex size-14 items-center justify-center rounded-2xl">
-              <FontAwesomeIcon icon={faBookBible} className="text-2xl" />
-            </div>
             <CardTitle className="text-xl tracking-tight">BT Servant</CardTitle>
             <CardDescription>Admin Portal</CardDescription>
           </CardHeader>
@@ -113,7 +108,7 @@ export function LoginPage() {
 
         {/* Version footer */}
         <p className="text-muted-foreground/60 mt-8 text-xs">
-          bt-servant-admin v0.1.0
+          BT Servant Admin Portal v0.1.0
         </p>
       </div>
     </TooltipProvider>
