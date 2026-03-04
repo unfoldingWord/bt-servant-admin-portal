@@ -75,3 +75,18 @@ export interface PollResponse {
   done: boolean;
   cursor: string;
 }
+
+export interface ChatHistoryEntry {
+  user_message: string;
+  assistant_response: string;
+  timestamp: number;
+  created_at?: string | null;
+}
+
+export interface ChatHistoryResponse {
+  user_id: string;
+  entries: ChatHistoryEntry[];
+  total_count: number;
+  limit: number;
+  offset: number;
+}
