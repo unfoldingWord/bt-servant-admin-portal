@@ -15,14 +15,15 @@ const RATE_LIMIT_MAX = 10; // max attempts per window
 // Security helpers
 // ---------------------------------------------------------------------------
 
-/** Per-IP rate limiting via KV. Returns true if the request should be blocked. */
+/** Per-IP rate limiting via KV using per-attempt keys to avoid race conditions. */
 async function isRateLimited(ip: string, env: Env): Promise<boolean> {
-  const key = `ratelimit:login:${ip}`;
-  const count = parseInt((await env.AUTH_KV.get(key)) || "0", 10);
+  const prefix = `ratelimit:login:${ip}:`;
+  const list = await env.AUTH_KV.list({ prefix });
 
-  if (count >= RATE_LIMIT_MAX) return true;
+  if (list.keys.length >= RATE_LIMIT_MAX) return true;
 
-  await env.AUTH_KV.put(key, String(count + 1), {
+  const attemptKey = `${prefix}${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  await env.AUTH_KV.put(attemptKey, "1", {
     expirationTtl: RATE_LIMIT_WINDOW,
   });
   return false;

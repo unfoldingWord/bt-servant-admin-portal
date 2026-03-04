@@ -87,9 +87,16 @@ async function listUsers(request: Request, env: Env): Promise<Response> {
     return errorResponse("Method not allowed", 405);
   }
 
-  const list = await env.AUTH_KV.list({ prefix: "user:" });
+  const keys: KVNamespaceListKey<unknown>[] = [];
+  let cursor: string | undefined;
+  do {
+    const list = await env.AUTH_KV.list({ prefix: "user:", cursor });
+    keys.push(...list.keys);
+    cursor = list.list_complete ? undefined : list.cursor;
+  } while (cursor);
+
   const users = await Promise.all(
-    list.keys.map(async (key) => {
+    keys.map(async (key) => {
       const user = await env.AUTH_KV.get<StoredUser>(key.name, {
         type: "json",
       });
