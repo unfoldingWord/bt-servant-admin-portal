@@ -13,7 +13,7 @@ export function AppShell() {
   const isDesktop = useMediaQuery("(min-width: 768px)");
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider>
       <div className="flex h-full overflow-hidden">
         <ActivityBar />
 
