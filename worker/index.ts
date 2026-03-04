@@ -141,19 +141,61 @@ async function handlePoll(request: Request, env: Env): Promise<Response> {
   });
 }
 
+async function handleHistory(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") {
+    return errorResponse("Method not allowed", 405);
+  }
+
+  const url = new URL(request.url);
+  const limit = url.searchParams.get("limit") || "50";
+  const offset = url.searchParams.get("offset") || "0";
+
+  const params = new URLSearchParams({ limit, offset });
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${env.DEFAULT_ORG}/users/${ADMIN_USER_ID}/history?${params.toString()}`;
+
+  const engineRes = await fetch(engineUrl, {
+    headers: {
+      Authorization: `Bearer ${env.ENGINE_API_KEY}`,
+    },
+  });
+
+  if (!engineRes.ok) {
+    const text = await engineRes.text().catch(() => "");
+    console.error(`Engine history failed (${engineRes.status}): ${text}`);
+    return errorResponse("Failed to fetch history", 502);
+  }
+
+  const data: unknown = await engineRes.json();
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !("entries" in data) ||
+    !Array.isArray((data as { entries: unknown }).entries)
+  ) {
+    console.error("Engine history returned unexpected shape:", data);
+    return errorResponse("Unexpected engine response", 502);
+  }
+
+  return jsonResponse(data);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
     if (
       url.pathname === "/api/chat/stream" ||
-      url.pathname === "/api/chat/stream/poll"
+      url.pathname === "/api/chat/stream/poll" ||
+      url.pathname === "/api/chat/history"
     ) {
       const blocked = requireSameOrigin(request);
       if (blocked) return blocked;
 
       if (url.pathname === "/api/chat/stream") {
         return handleEnqueue(request, env);
+      }
+      if (url.pathname === "/api/chat/history") {
+        return handleHistory(request, env);
       }
       return handlePoll(request, env);
     }

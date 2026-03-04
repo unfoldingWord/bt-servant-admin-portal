@@ -1,4 +1,8 @@
-import type { EnqueueResponse, PollResponse } from "@/types/chat";
+import type {
+  ChatHistoryResponse,
+  EnqueueResponse,
+  PollResponse,
+} from "@/types/chat";
 
 const SAME_ORIGIN_HEADERS = {
   "X-Requested-With": "XMLHttpRequest",
@@ -40,4 +44,26 @@ export async function pollEvents(
   }
 
   return (await res.json()) as PollResponse;
+}
+
+export async function fetchHistory(
+  limit = 50,
+  offset = 0,
+  signal?: AbortSignal
+): Promise<ChatHistoryResponse> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  const res = await fetch(`/api/chat/history?${params.toString()}`, {
+    headers: SAME_ORIGIN_HEADERS,
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`History fetch failed (${res.status}): ${body}`);
+  }
+
+  return (await res.json()) as ChatHistoryResponse;
 }

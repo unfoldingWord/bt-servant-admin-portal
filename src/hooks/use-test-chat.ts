@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { enqueueMessage, pollEvents } from "@/lib/chat-api";
-import type { ChatMessage, SSEEvent } from "@/types/chat";
+import { enqueueMessage, fetchHistory, pollEvents } from "@/lib/chat-api";
+import type { ChatHistoryEntry, ChatMessage, SSEEvent } from "@/types/chat";
 
 const POLL_INTERVAL_ACTIVE = 600;
 const POLL_INTERVAL_IDLE = 1500;
@@ -10,6 +10,7 @@ const POLL_TIMEOUT = 120_000;
 export function useTestChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
@@ -22,6 +23,51 @@ export function useTestChat() {
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+    };
+  }, []);
+
+  // Load conversation history on mount.
+  // No ref gate — the AbortController cleanup handles StrictMode's
+  // double-invocation: the first fetch is aborted, the second succeeds.
+  useEffect(() => {
+    const controller = new AbortController();
+    setIsLoadingHistory(true);
+
+    fetchHistory(50, 0, controller.signal)
+      .then((data) => {
+        const historyMessages: ChatMessage[] = [];
+        data.entries.forEach((entry: ChatHistoryEntry, i: number) => {
+          const timestamp = entry.created_at
+            ? new Date(entry.created_at)
+            : new Date(entry.timestamp);
+
+          historyMessages.push({
+            id: `history-user-${i}`,
+            role: "user",
+            content: entry.user_message,
+            createdAt: timestamp,
+          });
+          historyMessages.push({
+            id: `history-assistant-${i}`,
+            role: "assistant",
+            content: entry.assistant_response,
+            createdAt: timestamp,
+          });
+        });
+        setMessages(historyMessages);
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.warn("[useTestChat] Failed to load history:", err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIsLoadingHistory(false);
+        }
+      });
+
+    return () => {
+      controller.abort();
     };
   }, []);
 
@@ -210,6 +256,7 @@ export function useTestChat() {
   return {
     messages: allMessages,
     isLoading,
+    isLoadingHistory,
     isCompleting,
     statusMessage,
     streamingText,

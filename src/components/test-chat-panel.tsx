@@ -154,6 +154,7 @@ export function TestChatPanel() {
   const {
     messages,
     isLoading,
+    isLoadingHistory,
     isCompleting,
     statusMessage,
     streamingText,
@@ -224,7 +225,9 @@ export function TestChatPanel() {
         ref={scrollRef}
         className={cn(
           "bg-background chat-scrollbar flex-1 overflow-y-auto",
-          !hasMessages && "flex flex-col items-center justify-center"
+          !hasMessages &&
+            !isLoadingHistory &&
+            "flex flex-col items-center justify-center"
         )}
       >
         {hasMessages ? (
@@ -244,6 +247,16 @@ export function TestChatPanel() {
             {isLoading && !streamingText && (
               <ThinkingIndicator status={statusMessage} />
             )}
+          </div>
+        ) : isLoadingHistory ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4">
+            <FontAwesomeIcon
+              icon={faSpinnerThird}
+              className="text-muted-foreground size-5 animate-spin"
+            />
+            <p className="text-muted-foreground text-sm">
+              Loading conversation…
+            </p>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-3 p-4">
