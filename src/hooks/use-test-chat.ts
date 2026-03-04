@@ -60,7 +60,12 @@ export function useTestChat() {
           let parsed: SSEEvent;
           try {
             parsed = JSON.parse(rawEvent.data) as SSEEvent;
-          } catch {
+          } catch (e) {
+            console.warn(
+              "[useTestChat] malformed SSE event data:",
+              rawEvent.data,
+              e
+            );
             continue;
           }
 
@@ -187,6 +192,8 @@ export function useTestChat() {
     setError(null);
   }, []);
 
+  const streamingCreatedAt = useRef(new Date());
+
   const allMessages = useMemo(() => {
     if (!streamingText) return messages;
 
@@ -194,7 +201,7 @@ export function useTestChat() {
       id: "streaming",
       role: "assistant",
       content: streamingText,
-      createdAt: new Date(),
+      createdAt: streamingCreatedAt.current,
       isStreaming: true,
     };
     return [...messages, streamingMessage];

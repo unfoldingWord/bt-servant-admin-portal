@@ -48,9 +48,10 @@ worker/
 
 - Create feature branches off `main`
 - Open PRs for review — **dev** deploys automatically on PR
-- **NEVER merge to `main` without explicit user permission.** Always ask first.
-- Before any merge discussion, a **code review must be completed** on the PR
+- **NEVER merge to `main` without explicit user permission.** Always ask first. Never assume permission — even if CI passes and reviews are clean, wait for the user to say "merge".
+- Before any merge discussion, a **code review must be completed** on the PR using the `claude-code-review` sub-agent
 - All issues found during code review with **medium severity or higher must be fixed** before merging
+- After fixing review issues, **always push the fixes and kick off a new review** using the `claude-code-review` sub-agent. Repeat this fix → re-review cycle until the reviewer approves with no medium+ issues remaining.
 - Low severity issues may be converted to GitHub issues, but **only with user permission**
 - Push/merge to `main` — **staging** deploys automatically (after CI passes)
 - **Production** deploys via manual workflow dispatch (Actions → Deploy Production → Run workflow)

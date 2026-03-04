@@ -18,6 +18,19 @@ function errorResponse(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
 
+/**
+ * Lightweight same-origin guard: require X-Requested-With header.
+ * Browsers block custom headers on cross-origin requests unless a CORS
+ * preflight succeeds, and this worker sends no CORS headers, so external
+ * sites cannot call these endpoints.
+ */
+function requireSameOrigin(request: Request): Response | null {
+  if (request.headers.get("X-Requested-With") !== "XMLHttpRequest") {
+    return errorResponse("Forbidden", 403);
+  }
+  return null;
+}
+
 async function handleEnqueue(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") {
     return errorResponse("Method not allowed", 405);
@@ -54,14 +67,19 @@ async function handleEnqueue(request: Request, env: Env): Promise<Response> {
 
   if (!engineRes.ok) {
     const text = await engineRes.text().catch(() => "");
-    return errorResponse(
-      `Engine enqueue failed (${engineRes.status}): ${text}`,
-      502
-    );
+    console.error(`Engine enqueue failed (${engineRes.status}): ${text}`);
+    return errorResponse("Failed to enqueue message", 502);
   }
 
-  const data = await engineRes.json();
-  return jsonResponse(data);
+  const data: unknown = await engineRes.json();
+  if (!data || typeof data !== "object" || !("message_id" in data)) {
+    console.error("Engine enqueue returned unexpected shape:", data);
+    return errorResponse("Unexpected engine response", 502);
+  }
+
+  return jsonResponse({
+    message_id: (data as { message_id: string }).message_id,
+  });
 }
 
 async function handlePoll(request: Request, env: Env): Promise<Response> {
@@ -94,25 +112,49 @@ async function handlePoll(request: Request, env: Env): Promise<Response> {
 
   if (!engineRes.ok) {
     const text = await engineRes.text().catch(() => "");
-    return errorResponse(
-      `Engine poll failed (${engineRes.status}): ${text}`,
-      502
-    );
+    console.error(`Engine poll failed (${engineRes.status}): ${text}`);
+    return errorResponse("Failed to poll events", 502);
   }
 
-  const data = await engineRes.json();
-  return jsonResponse(data);
+  const data: unknown = await engineRes.json();
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !("events" in data) ||
+    !Array.isArray((data as { events: unknown }).events)
+  ) {
+    console.error("Engine poll returned unexpected shape:", data);
+    return errorResponse("Unexpected engine response", 502);
+  }
+
+  const typed = data as {
+    events: unknown[];
+    done?: boolean;
+    cursor?: string;
+    message_id?: string;
+  };
+  return jsonResponse({
+    message_id: typed.message_id,
+    events: typed.events,
+    done: typed.done ?? false,
+    cursor: typed.cursor ?? "",
+  });
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === "/api/chat/stream" && request.method === "POST") {
-      return handleEnqueue(request, env);
-    }
+    if (
+      url.pathname === "/api/chat/stream" ||
+      url.pathname === "/api/chat/stream/poll"
+    ) {
+      const blocked = requireSameOrigin(request);
+      if (blocked) return blocked;
 
-    if (url.pathname === "/api/chat/stream/poll" && request.method === "GET") {
+      if (url.pathname === "/api/chat/stream") {
+        return handleEnqueue(request, env);
+      }
       return handlePoll(request, env);
     }
 
