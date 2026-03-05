@@ -110,7 +110,7 @@ export function ManualConfigPage() {
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       {/* Header — solid card background to contrast with the grid area */}
-      <div className="bg-card border-border/50 border-b px-6 py-5">
+      <div className="config-header border-border/50 border-b px-6 py-5">
         <h1 className="text-foreground text-lg font-semibold tracking-tight">
           Prompt Configuration
         </h1>

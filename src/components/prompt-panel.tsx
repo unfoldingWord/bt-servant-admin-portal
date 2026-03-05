@@ -1,12 +1,12 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   faBookOpen,
   faBrain,
-  faCompass,
   faLightbulb,
   faMemoPad,
-  faUserCrown,
-  faWandMagicSparkles,
+  faPersonChalkboard,
+  faRoute,
+  faScrewdriverWrench,
 } from "@fortawesome/pro-duotone-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Pencil, Save, X } from "lucide-react";
@@ -28,9 +28,9 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 const SLOT_ICONS = {
-  identity: faUserCrown,
-  methodology: faCompass,
-  tool_guidance: faWandMagicSparkles,
+  identity: faPersonChalkboard,
+  methodology: faRoute,
+  tool_guidance: faScrewdriverWrench,
   instructions: faLightbulb,
   client_instructions: faBookOpen,
   memory_instructions: faBrain,
@@ -137,6 +137,13 @@ export function PromptPanel({
 }: PromptPanelProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
+
+  // Keep draft synced with value when not actively editing
+  useEffect(() => {
+    if (!editing) {
+      setDraft(value ?? "");
+    }
+  }, [value, editing]);
 
   const startEdit = useCallback(() => {
     setDraft(value ?? "");
