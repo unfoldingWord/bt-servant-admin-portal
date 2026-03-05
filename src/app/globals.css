@@ -274,6 +274,7 @@
 }
 
 .dark .config-grid-bg {
+  background-color: oklch(0.193 0.011 248);
   background-image:
     radial-gradient(
       ellipse at 30% 20%,
