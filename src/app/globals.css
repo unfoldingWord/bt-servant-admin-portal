@@ -190,14 +190,9 @@
   background: oklch(0.5 0 0 / 0.4);
 }
 
-/* Login page — cool blue gradient matching in-app palette */
+/* Login page — neutral grey matching the sidebar/card tone */
 .login-bg {
-  background: linear-gradient(
-    135deg,
-    oklch(0.97 0.008 248) 0%,
-    oklch(0.96 0.012 260) 50%,
-    oklch(0.975 0.006 240) 100%
-  );
+  background: oklch(0.98 0 0);
 }
 
 .dark .login-bg {
