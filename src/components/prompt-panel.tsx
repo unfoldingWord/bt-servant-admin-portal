@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import {
   MAX_SLOT_LENGTH,
   type PromptSlot,
+  SLOT_DESCRIPTIONS,
   SLOT_LABELS,
 } from "@/types/prompt-override";
 import { Button } from "@/components/ui/button";
@@ -202,9 +203,14 @@ export function PromptPanel({
               }}
             />
           </div>
-          <CardTitle className="text-sm tracking-tight">
-            {SLOT_LABELS[slot]}
-          </CardTitle>
+          <div>
+            <CardTitle className="text-sm tracking-tight">
+              {SLOT_LABELS[slot]}
+            </CardTitle>
+            <p className="text-muted-foreground mt-0.5 text-[11px] leading-tight">
+              {SLOT_DESCRIPTIONS[slot]}
+            </p>
+          </div>
         </div>
         <CardAction>
           {!editing && (

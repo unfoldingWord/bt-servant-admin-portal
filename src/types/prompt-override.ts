@@ -29,6 +29,16 @@ export const SLOT_LABELS: Record<PromptSlot, string> = {
   closing: "Closing",
 };
 
+export const SLOT_DESCRIPTIONS: Record<PromptSlot, string> = {
+  identity: "Defines who the assistant is and its core persona",
+  methodology: "The teaching approach and pedagogical framework",
+  tool_guidance: "How and when the assistant should use its tools",
+  instructions: "General behavioral rules and constraints",
+  client_instructions: "Instructions specific to the client application",
+  memory_instructions: "How the assistant manages conversation memory",
+  closing: "How the assistant wraps up and signs off",
+};
+
 export const MAX_SLOT_LENGTH = 4000;
 
 export interface PromptMode {
