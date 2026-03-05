@@ -50,7 +50,7 @@ export function LoginPage() {
       </div>
 
       {/* Login card */}
-      <Card className="animate-in fade-in slide-in-from-bottom-4 w-full max-w-sm shadow-xl [animation-duration:500ms] dark:shadow-black/40">
+      <Card className="animate-in fade-in w-full max-w-sm shadow-xl [animation-duration:500ms] dark:shadow-black/40">
         <CardHeader className="items-center justify-items-center text-center">
           <div className="relative -mb-1 flex size-14 items-center justify-center">
             <span

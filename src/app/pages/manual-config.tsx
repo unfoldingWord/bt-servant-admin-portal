@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
+import { useAuthStore } from "@/lib/auth-store";
 import {
   useClearDefaultMode,
   useDeleteMode,
@@ -18,6 +19,7 @@ import { ModeSelector } from "@/components/mode-selector";
 import { PromptPanel } from "@/components/prompt-panel";
 
 export function ManualConfigPage() {
+  const orgName = useAuthStore((s) => s.user?.org);
   const [selectedMode, setSelectedMode] = useState<string | null>(null);
 
   // Queries
@@ -33,13 +35,19 @@ export function ManualConfigPage() {
   const clearDefault = useClearDefaultMode();
 
   // Current overrides based on selection
-  const currentOverrides = useMemo<PromptOverrides>(
-    () =>
+  const currentOverrides = useMemo<PromptOverrides>(() => {
+    const result =
       selectedMode !== null
         ? (modeQuery.data?.overrides ?? {})
-        : (orgOverrides.data ?? {}),
-    [selectedMode, modeQuery.data?.overrides, orgOverrides.data]
-  );
+        : (orgOverrides.data ?? {});
+    console.log("[manual-config] currentOverrides:", {
+      selectedMode,
+      orgOverridesData: orgOverrides.data,
+      modeQueryData: modeQuery.data,
+      result,
+    });
+    return result;
+  }, [selectedMode, modeQuery.data?.overrides, orgOverrides.data]);
 
   const handleSaveSlot = useCallback(
     (slot: PromptSlot, value: string) => {
@@ -117,6 +125,11 @@ export function ManualConfigPage() {
         <p className="text-muted-foreground mt-1 text-[13px] leading-relaxed">
           Manage prompt overrides for each slot at the org level or per mode.
         </p>
+        {orgName && (
+          <span className="bg-primary/8 text-primary/80 ring-primary/15 dark:bg-primary/12 dark:text-primary/70 dark:ring-primary/20 mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1">
+            Org: <em className="ml-1 font-semibold not-italic">{orgName}</em>
+          </span>
+        )}
       </div>
 
       {/* Grid area — dot grid + subtle radial glow */}

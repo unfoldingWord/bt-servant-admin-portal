@@ -135,6 +135,8 @@ export function PromptPanel({
   onSave,
   isSaving,
 }: PromptPanelProps) {
+  console.log(`[prompt-panel] render "${slot}":`, { value, hasValue: !!value });
+
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
 
@@ -146,9 +148,10 @@ export function PromptPanel({
   }, [value, editing]);
 
   const startEdit = useCallback(() => {
+    console.log(`[prompt-panel] startEdit "${slot}":`, { value, draft });
     setDraft(value ?? "");
     setEditing(true);
-  }, [value]);
+  }, [value, slot, draft]);
 
   const cancel = useCallback(() => {
     setEditing(false);

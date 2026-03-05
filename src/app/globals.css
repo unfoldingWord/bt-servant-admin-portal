@@ -190,13 +190,13 @@
   background: oklch(0.5 0 0 / 0.4);
 }
 
-/* Login page — warm gradient that adapts to light/dark */
+/* Login page — cool blue gradient matching in-app palette */
 .login-bg {
   background: linear-gradient(
     135deg,
-    oklch(0.97 0.01 80) 0%,
-    oklch(0.96 0.015 220) 50%,
-    oklch(0.98 0.005 280) 100%
+    oklch(0.97 0.008 248) 0%,
+    oklch(0.96 0.012 260) 50%,
+    oklch(0.975 0.006 240) 100%
   );
 }
 
@@ -300,4 +300,43 @@
     oklch(0.5 0 0 / 0.08) 1px,
     transparent 1px
   );
+}
+
+/* Config page scrollbar — theme-adaptive */
+.config-grid-bg {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.5 0.02 248 / 0.2) oklch(0.92 0.005 248 / 0.5);
+}
+
+.dark .config-grid-bg {
+  scrollbar-color: oklch(0.5 0.02 248 / 0.25) oklch(0.16 0.01 248 / 0.5);
+}
+
+.config-grid-bg::-webkit-scrollbar {
+  width: 8px;
+}
+
+.config-grid-bg::-webkit-scrollbar-track {
+  background: oklch(0.92 0.005 248 / 0.5);
+}
+
+.config-grid-bg::-webkit-scrollbar-thumb {
+  background: oklch(0.5 0.02 248 / 0.2);
+  border-radius: 4px;
+}
+
+.config-grid-bg::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.5 0.02 248 / 0.35);
+}
+
+.dark .config-grid-bg::-webkit-scrollbar-track {
+  background: oklch(0.16 0.01 248 / 0.5);
+}
+
+.dark .config-grid-bg::-webkit-scrollbar-thumb {
+  background: oklch(0.5 0.02 248 / 0.25);
+}
+
+.dark .config-grid-bg::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.5 0.02 248 / 0.4);
 }

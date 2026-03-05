@@ -3,7 +3,6 @@ import { faLayerGroup } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Plus, Star, StarOff, Trash2 } from "lucide-react";
 
-import { useAuthStore } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
 import type { OrgModes } from "@/types/prompt-override";
 import {
@@ -56,7 +55,6 @@ export function ModeSelector({
   isDeleting,
   isSettingDefault,
 }: ModeSelectorProps) {
-  const orgName = useAuthStore((s) => s.user?.org);
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newLabel, setNewLabel] = useState("");
@@ -187,12 +185,6 @@ export function ModeSelector({
           </div>
         )}
       </div>
-
-      {orgName && (
-        <p className="text-muted-foreground -mt-1 ml-[2.625rem] text-xs">
-          Org: <em>{orgName}</em>
-        </p>
-      )}
 
       {showCreate && (
         <div className="bg-card animate-in fade-in slide-in-from-bottom-4 rounded-xl border p-4 shadow-sm duration-200">

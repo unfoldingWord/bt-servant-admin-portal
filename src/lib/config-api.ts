@@ -29,8 +29,18 @@ export async function getOrgOverrides(
     | PromptOverrides
     | { prompt_overrides: PromptOverrides };
 
+  console.log(
+    "[config-api] getOrgOverrides raw response:",
+    JSON.stringify(data)
+  );
+
   // Engine API may wrap overrides in { prompt_overrides: { ... } }
-  return "prompt_overrides" in data ? data.prompt_overrides : data;
+  const result = "prompt_overrides" in data ? data.prompt_overrides : data;
+  console.log(
+    "[config-api] getOrgOverrides unwrapped:",
+    JSON.stringify(result)
+  );
+  return result;
 }
 
 export async function putOrgOverrides(
@@ -97,7 +107,9 @@ export async function getMode(
     throw new Error(`Failed to load mode (${res.status}): ${body}`);
   }
 
-  return (await res.json()) as PromptMode;
+  const modeData = (await res.json()) as PromptMode;
+  console.log("[config-api] getMode raw response:", JSON.stringify(modeData));
+  return modeData;
 }
 
 export async function putMode(
