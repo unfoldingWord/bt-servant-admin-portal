@@ -43,10 +43,10 @@ export function ActivityBar() {
           icon={faPenToSquareLight}
           activeIcon={faPenToSquareSolid}
           label="Manually configure your BT Servant agent"
-          isActive={activeSection === "manual-config"}
+          isActive={activeSection === "prompt-configuration"}
           onClick={() => {
-            setActiveSection("manual-config");
-            void navigate("/manual-config");
+            setActiveSection("prompt-configuration");
+            void navigate("/prompt-configuration");
           }}
         />
         <Separator className="my-1.5 w-5 opacity-50" />

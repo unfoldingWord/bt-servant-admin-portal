@@ -1,1 +1,1 @@
-export type Section = "baruch" | "manual-config";
+export type Section = "baruch" | "prompt-configuration";

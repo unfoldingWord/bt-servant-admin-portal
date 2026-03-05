@@ -28,7 +28,7 @@ function AppRoutes() {
         }
       >
         <Route index element={<BaruchPage />} />
-        <Route path="manual-config" element={<ManualConfigPage />} />
+        <Route path="prompt-configuration" element={<ManualConfigPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

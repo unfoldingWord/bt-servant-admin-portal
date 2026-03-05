@@ -30,7 +30,7 @@ export function BaruchPage() {
       </div>
 
       {/* Version footer */}
-      <p className="text-muted-foreground/40 absolute bottom-4 text-xs">
+      <p className="text-muted-foreground/60 absolute bottom-4 text-xs">
         BT Servant Admin Portal v0.3.0
       </p>
     </div>

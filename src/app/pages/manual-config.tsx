@@ -108,7 +108,7 @@ export function ManualConfigPage() {
   const isSaving = updateOrg.isPending || saveMode.isPending;
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
+    <div className="flex min-h-full flex-col">
       {/* Header — solid card background to contrast with the grid area */}
       <div className="config-header border-border/50 border-b px-4 py-4 sm:px-6 sm:py-5">
         <h1 className="text-foreground text-lg font-semibold tracking-tight">
@@ -166,7 +166,7 @@ export function ManualConfigPage() {
         )}
 
         {/* Version footer */}
-        <p className="text-muted-foreground/40 pt-4 text-center text-xs">
+        <p className="text-muted-foreground/60 pt-4 text-center text-xs">
           BT Servant Admin Portal v0.3.0
         </p>
       </div>

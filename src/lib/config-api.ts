@@ -25,7 +25,12 @@ export async function getOrgOverrides(
     throw new Error(`Failed to load overrides (${res.status}): ${body}`);
   }
 
-  return (await res.json()) as PromptOverrides;
+  const data = (await res.json()) as
+    | PromptOverrides
+    | { prompt_overrides: PromptOverrides };
+
+  // Engine API may wrap overrides in { prompt_overrides: { ... } }
+  return "prompt_overrides" in data ? data.prompt_overrides : data;
 }
 
 export async function putOrgOverrides(
