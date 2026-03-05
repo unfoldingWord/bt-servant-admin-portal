@@ -84,15 +84,15 @@ export function ModeSelector({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2.5">
-          <div className="bg-primary/10 text-primary flex size-8 items-center justify-center rounded-lg">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 sm:flex-initial">
+          <div className="bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-lg">
             <FontAwesomeIcon icon={faLayerGroup} className="text-sm" />
           </div>
           <Select
             value={selectedMode ?? "__org__"}
             onValueChange={handleSelectChange}
           >
-            <SelectTrigger className="w-52">
+            <SelectTrigger className="w-full sm:w-52">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -127,7 +127,7 @@ export function ModeSelector({
         </Button>
 
         {selectedMode !== null && (
-          <div className="border-border flex items-center gap-1 border-l pl-3">
+          <div className="border-border flex items-center gap-1 sm:border-l sm:pl-3">
             <Button
               variant="ghost"
               size="sm"
