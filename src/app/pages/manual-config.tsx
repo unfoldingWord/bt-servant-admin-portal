@@ -1,29 +1,168 @@
-import { faPenToSquare } from "@fortawesome/pro-light-svg-icons";
+import { useCallback, useMemo, useState } from "react";
+import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
-export function ManualConfigPage() {
-  return (
-    <div className="bg-dot-grid relative flex min-h-full flex-col items-center justify-center p-8">
-      {/* Radial glow */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,oklch(0.541_0.168_248/0.08)_0%,transparent_60%)]" />
+import {
+  useClearDefaultMode,
+  useDeleteMode,
+  useMode,
+  useModes,
+  useOrgOverrides,
+  useSaveMode,
+  useSetDefaultMode,
+  useUpdateOrgOverrides,
+} from "@/hooks/use-prompt-config";
+import type { PromptOverrides, PromptSlot } from "@/types/prompt-override";
+import { PROMPT_SLOTS } from "@/types/prompt-override";
+import { ModeSelector } from "@/components/mode-selector";
+import { PromptPanel } from "@/components/prompt-panel";
 
-      <div className="relative flex flex-col items-center gap-6">
-        <div className="bg-primary/10 ring-primary/20 flex size-20 items-center justify-center rounded-2xl ring-1">
-          <FontAwesomeIcon
-            icon={faPenToSquare}
-            className="text-primary text-4xl"
-          />
-        </div>
-        <div className="text-center">
-          <h1 className="text-foreground text-3xl font-bold tracking-tight">
-            Manual Configuration
-          </h1>
-          <p className="text-muted-foreground mt-3 max-w-md text-[15px] leading-relaxed">
-            Manually configure MCP servers and prompt overrides — identity,
-            methodology, tool guidance, instructions, memory instructions, and
-            closing prompt.
-          </p>
-        </div>
+export function ManualConfigPage() {
+  const [selectedMode, setSelectedMode] = useState<string | null>(null);
+
+  // Queries
+  const orgOverrides = useOrgOverrides();
+  const modesQuery = useModes();
+  const modeQuery = useMode(selectedMode);
+
+  // Mutations
+  const updateOrg = useUpdateOrgOverrides();
+  const saveMode = useSaveMode();
+  const deleteMode = useDeleteMode();
+  const setDefault = useSetDefaultMode();
+  const clearDefault = useClearDefaultMode();
+
+  // Current overrides based on selection
+  const currentOverrides = useMemo<PromptOverrides>(
+    () =>
+      selectedMode !== null
+        ? (modeQuery.data?.overrides ?? {})
+        : (orgOverrides.data ?? {}),
+    [selectedMode, modeQuery.data?.overrides, orgOverrides.data]
+  );
+
+  const handleSaveSlot = useCallback(
+    (slot: PromptSlot, value: string) => {
+      const updated = { ...currentOverrides, [slot]: value || undefined };
+
+      if (selectedMode !== null) {
+        saveMode.mutate({
+          name: selectedMode,
+          body: {
+            label: modeQuery.data?.label,
+            description: modeQuery.data?.description,
+            overrides: updated,
+          },
+        });
+      } else {
+        updateOrg.mutate(updated);
+      }
+    },
+    [currentOverrides, selectedMode, modeQuery.data, saveMode, updateOrg]
+  );
+
+  const handleCreateMode = useCallback(
+    (name: string, label: string, description: string) => {
+      saveMode.mutate(
+        {
+          name,
+          body: {
+            label: label || undefined,
+            description: description || undefined,
+            overrides: orgOverrides.data ?? {},
+          },
+        },
+        { onSuccess: () => setSelectedMode(name) }
+      );
+    },
+    [saveMode, orgOverrides.data]
+  );
+
+  const handleDeleteMode = useCallback(
+    (name: string) => {
+      deleteMode.mutate(name, {
+        onSuccess: () => setSelectedMode(null),
+      });
+    },
+    [deleteMode]
+  );
+
+  const handleSetDefault = useCallback(
+    (name: string) => {
+      setDefault.mutate(name);
+    },
+    [setDefault]
+  );
+
+  const handleClearDefault = useCallback(() => {
+    clearDefault.mutate();
+  }, [clearDefault]);
+
+  const isLoading =
+    orgOverrides.isLoading ||
+    modesQuery.isLoading ||
+    (selectedMode !== null && modeQuery.isLoading);
+
+  const error = orgOverrides.error || modesQuery.error || modeQuery.error;
+
+  const isSaving = updateOrg.isPending || saveMode.isPending;
+
+  return (
+    <div className="flex h-full flex-col overflow-y-auto">
+      {/* Header */}
+      <div className="border-border/50 border-b px-6 py-5">
+        <h1 className="text-foreground text-lg font-semibold tracking-tight">
+          Prompt Configuration
+        </h1>
+        <p className="text-muted-foreground mt-1 text-[13px] leading-relaxed">
+          Manage prompt overrides for each slot at the org level or per mode.
+        </p>
+      </div>
+
+      <div className="flex-1 space-y-6 p-6">
+        {/* Mode toolbar */}
+        <ModeSelector
+          modesData={modesQuery.data}
+          selectedMode={selectedMode}
+          onSelectMode={setSelectedMode}
+          onCreateMode={handleCreateMode}
+          onDeleteMode={handleDeleteMode}
+          onSetDefault={handleSetDefault}
+          onClearDefault={handleClearDefault}
+          isCreating={saveMode.isPending}
+          isDeleting={deleteMode.isPending}
+          isSettingDefault={setDefault.isPending || clearDefault.isPending}
+        />
+
+        {/* Error banner */}
+        {error && (
+          <div className="bg-destructive/10 text-destructive border-destructive/20 rounded-lg border px-4 py-3 text-sm">
+            {error.message}
+          </div>
+        )}
+
+        {/* Slot grid */}
+        {isLoading ? (
+          <div className="text-muted-foreground flex flex-col items-center justify-center gap-3 py-20">
+            <FontAwesomeIcon
+              icon={faSpinnerThird}
+              className="size-5 animate-spin"
+            />
+            <p className="text-sm">Loading configuration...</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {PROMPT_SLOTS.map((slot) => (
+              <PromptPanel
+                key={slot}
+                slot={slot}
+                value={currentOverrides[slot]}
+                onSave={(value) => handleSaveSlot(slot, value)}
+                isSaving={isSaving}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -18,6 +18,9 @@ export function BaruchPage() {
           <h1 className="text-foreground text-3xl font-bold tracking-tight">
             Baruch
           </h1>
+          <span className="mt-2 inline-flex items-center rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-600 ring-1 ring-amber-500/20 dark:text-amber-400 dark:ring-amber-400/20">
+            Coming Soon
+          </span>
           <p className="text-muted-foreground mt-3 max-w-md text-[15px] leading-relaxed">
             Talk to Baruch to configure your BT Servant agent — name, identity,
             teaching methodology, tool guidance, instructions, memory
