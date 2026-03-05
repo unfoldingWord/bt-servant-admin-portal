@@ -74,7 +74,7 @@ export function PromptPanel({
   return (
     <Card
       className={cn(
-        "transition-shadow duration-200",
+        "gap-3 transition-shadow duration-200",
         !editing && "hover:shadow-md"
       )}
     >
@@ -90,7 +90,9 @@ export function PromptPanel({
           >
             <FontAwesomeIcon icon={SLOT_ICONS[slot]} className="text-sm" />
           </div>
-          <CardTitle className="text-sm">{SLOT_LABELS[slot]}</CardTitle>
+          <CardTitle className="text-sm tracking-tight">
+            {SLOT_LABELS[slot]}
+          </CardTitle>
         </div>
         <CardAction>
           {!editing && (
@@ -145,11 +147,11 @@ export function PromptPanel({
             </div>
           </div>
         ) : hasValue ? (
-          <pre className="text-foreground/80 max-h-40 overflow-auto font-mono text-xs leading-relaxed whitespace-pre-wrap">
+          <pre className="text-foreground/70 max-h-40 overflow-auto font-mono text-xs leading-relaxed whitespace-pre-wrap">
             {value}
           </pre>
         ) : (
-          <p className="text-muted-foreground/50 text-xs italic">
+          <p className="text-muted-foreground text-xs italic">
             No override set
           </p>
         )}

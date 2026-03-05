@@ -136,14 +136,14 @@ export function ManualConfigPage() {
 
         {/* Error banner */}
         {error && (
-          <div className="bg-destructive/10 text-destructive border-destructive/20 rounded-lg border px-4 py-3 text-sm">
+          <div className="bg-destructive/10 text-destructive border-destructive rounded-lg border-l-2 px-4 py-3 text-sm">
             {error.message}
           </div>
         )}
 
         {/* Slot grid */}
         {isLoading ? (
-          <div className="text-muted-foreground flex flex-col items-center justify-center gap-3 py-20">
+          <div className="text-muted-foreground flex flex-col items-center justify-center gap-3 py-16">
             <FontAwesomeIcon
               icon={faSpinnerThird}
               className="size-5 animate-spin"

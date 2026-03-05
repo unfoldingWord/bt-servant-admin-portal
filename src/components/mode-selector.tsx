@@ -5,6 +5,17 @@ import { Plus, Star, StarOff, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { OrgModes } from "@/types/prompt-override";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -124,7 +135,10 @@ export function ModeSelector({
                 isDefault ? onClearDefault() : onSetDefault(selectedMode)
               }
               disabled={isSettingDefault}
-              className={cn(isDefault && "text-amber-500 hover:text-amber-600")}
+              className={cn(
+                isDefault &&
+                  "text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
+              )}
             >
               {isDefault ? (
                 <StarOff className="mr-1.5 size-3.5" />
@@ -134,24 +148,40 @@ export function ModeSelector({
               {isDefault ? "Remove Default" : "Set as Default"}
             </Button>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Delete mode "${selectedMode}"? This cannot be undone.`
-                  )
-                ) {
-                  onDeleteMode(selectedMode);
-                }
-              }}
-              disabled={isDeleting}
-              className="text-destructive hover:text-destructive"
-            >
-              <Trash2 className="mr-1.5 size-3.5" />
-              Delete
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={isDeleting}
+                  className="text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="mr-1.5 size-3.5" />
+                  Delete
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete mode</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Are you sure you want to delete{" "}
+                    <span className="text-foreground font-medium">
+                      &ldquo;{selectedMode}&rdquo;
+                    </span>
+                    ? This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    onClick={() => onDeleteMode(selectedMode)}
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         )}
       </div>
@@ -161,7 +191,7 @@ export function ModeSelector({
           <p className="text-foreground mb-3 text-sm font-medium">
             Create a new mode
           </p>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="mode-name" className="text-xs">
                 Name (slug)
