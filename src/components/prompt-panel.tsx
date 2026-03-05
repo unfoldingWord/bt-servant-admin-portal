@@ -175,7 +175,7 @@ export function PromptPanel({
       <CardHeader>
         <div className="flex items-center gap-2.5">
           <div
-            className="slot-icon flex size-8 shrink-0 items-center justify-center rounded-lg"
+            className="slot-icon flex size-10 shrink-0 items-center justify-center rounded-lg"
             style={
               {
                 "--icon-bg": colors.bg,
@@ -190,7 +190,7 @@ export function PromptPanel({
           >
             <FontAwesomeIcon
               icon={SLOT_ICONS[slot]}
-              className="text-base"
+              className="text-lg"
               style={{
                 "--fa-primary-color": "var(--icon-fa-primary)",
                 "--fa-primary-opacity": "1",
@@ -206,7 +206,7 @@ export function PromptPanel({
         <CardAction>
           {!editing && (
             <Button variant="ghost" size="icon-xs" onClick={startEdit}>
-              <Pencil className="size-3.5" />
+              <Pencil className="size-4" />
             </Button>
           )}
         </CardAction>
