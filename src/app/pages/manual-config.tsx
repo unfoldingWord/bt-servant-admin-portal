@@ -164,6 +164,11 @@ export function ManualConfigPage() {
             ))}
           </div>
         )}
+
+        {/* Version footer */}
+        <p className="text-muted-foreground/40 pt-4 text-center text-xs">
+          BT Servant Admin Portal v0.3.0
+        </p>
       </div>
     </div>
   );
