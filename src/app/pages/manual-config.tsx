@@ -108,9 +108,9 @@ export function ManualConfigPage() {
   const isSaving = updateOrg.isPending || saveMode.isPending;
 
   return (
-    <div className="flex min-h-full flex-col">
-      {/* Header — solid card background to contrast with the grid area */}
-      <div className="config-header border-border/50 border-b px-4 py-4 sm:px-6 sm:py-5">
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* Header — pinned, never scrolls */}
+      <div className="config-header border-border/50 shrink-0 border-b px-4 py-4 sm:px-6 sm:py-5">
         <h1 className="text-foreground text-lg font-semibold tracking-tight">
           Prompt Configuration
         </h1>
@@ -120,7 +120,7 @@ export function ManualConfigPage() {
       </div>
 
       {/* Grid area — dot grid + subtle radial glow */}
-      <div className="config-grid-bg relative flex-1 space-y-4 p-4 sm:space-y-6 sm:p-6">
+      <div className="config-grid-bg relative flex-1 space-y-4 overflow-y-auto p-4 sm:space-y-6 sm:p-6">
         {/* Mode toolbar */}
         <ModeSelector
           modesData={modesQuery.data}
