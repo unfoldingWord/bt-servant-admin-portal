@@ -240,13 +240,23 @@
   --tw-enter-translate-y: 1rem;
 }
 
-/* Config page header — slightly lighter than sidebar in dark mode */
+/* Config page header — subtle gradient with blue tint */
 .config-header {
-  background-color: var(--card);
+  background: linear-gradient(
+    135deg,
+    oklch(0.98 0.005 248) 0%,
+    oklch(0.97 0.01 248) 50%,
+    oklch(0.98 0.003 270) 100%
+  );
 }
 
 .dark .config-header {
-  background-color: oklch(0.22 0.012 248);
+  background: linear-gradient(
+    135deg,
+    oklch(0.22 0.015 248) 0%,
+    oklch(0.215 0.02 260) 50%,
+    oklch(0.225 0.012 240) 100%
+  );
 }
 
 /* Config page grid area — circuit board trace pattern with subtle blue glow */
