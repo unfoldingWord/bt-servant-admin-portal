@@ -189,7 +189,7 @@ export function ModeSelector({
       </div>
 
       {orgName && (
-        <p className="text-muted-foreground/60 ml-[2.625rem] text-xs sm:ml-0">
+        <p className="text-muted-foreground -mt-1 ml-[2.625rem] text-xs">
           Org: <em>{orgName}</em>
         </p>
       )}
