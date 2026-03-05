@@ -240,6 +240,40 @@
   --tw-enter-translate-y: 1rem;
 }
 
+/* Config page grid area — dot grid with subtle blue glow */
+.config-grid-bg {
+  background-image:
+    radial-gradient(
+      ellipse at 30% 20%,
+      oklch(0.475 0.157 248 / 0.04) 0%,
+      transparent 50%
+    ),
+    radial-gradient(circle, oklch(0.5 0.01 248 / 0.1) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    24px 24px;
+}
+
+.dark .config-grid-bg {
+  background-image:
+    radial-gradient(
+      ellipse at 30% 20%,
+      oklch(0.541 0.168 248 / 0.06) 0%,
+      transparent 50%
+    ),
+    radial-gradient(circle, oklch(0.5 0 0 / 0.06) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    24px 24px;
+}
+
+/* Dark mode overrides for prompt panel slot icons */
+.dark .slot-icon {
+  background-color: var(--icon-bg-dark) !important;
+  --icon-fa-primary: var(--icon-fa-primary-dark);
+  --icon-fa-secondary: var(--icon-fa-secondary-dark);
+}
+
 .dark .bg-dot-grid {
   background-image: radial-gradient(
     circle,

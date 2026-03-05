@@ -7,7 +7,7 @@ import {
   faMemoPad,
   faUserCrown,
   faWandMagicSparkles,
-} from "@fortawesome/pro-light-svg-icons";
+} from "@fortawesome/pro-duotone-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Pencil, Save, X } from "lucide-react";
 
@@ -36,6 +36,91 @@ const SLOT_ICONS = {
   memory_instructions: faBrain,
   closing: faMemoPad,
 } as const;
+
+// Analogous blue/teal palette — each slot gets a unique hue in the cool range
+// [primary, secondary] color pairs for duotone icons
+const SLOT_COLORS: Record<
+  PromptSlot,
+  { primary: string; secondary: string; bg: string }
+> = {
+  identity: {
+    primary: "oklch(0.50 0.16 270)",
+    secondary: "oklch(0.65 0.12 270)",
+    bg: "oklch(0.95 0.02 270)",
+  },
+  methodology: {
+    primary: "oklch(0.48 0.16 248)",
+    secondary: "oklch(0.63 0.12 248)",
+    bg: "oklch(0.95 0.02 248)",
+  },
+  tool_guidance: {
+    primary: "oklch(0.52 0.12 200)",
+    secondary: "oklch(0.68 0.09 200)",
+    bg: "oklch(0.95 0.02 200)",
+  },
+  instructions: {
+    primary: "oklch(0.55 0.10 175)",
+    secondary: "oklch(0.70 0.08 175)",
+    bg: "oklch(0.95 0.02 175)",
+  },
+  client_instructions: {
+    primary: "oklch(0.50 0.14 220)",
+    secondary: "oklch(0.65 0.10 220)",
+    bg: "oklch(0.95 0.02 220)",
+  },
+  memory_instructions: {
+    primary: "oklch(0.50 0.16 290)",
+    secondary: "oklch(0.65 0.12 290)",
+    bg: "oklch(0.95 0.02 290)",
+  },
+  closing: {
+    primary: "oklch(0.48 0.12 240)",
+    secondary: "oklch(0.63 0.09 240)",
+    bg: "oklch(0.95 0.015 240)",
+  },
+};
+
+// Dark mode variants — same hues, shifted for dark backgrounds
+const SLOT_COLORS_DARK: Record<
+  PromptSlot,
+  { primary: string; secondary: string; bg: string }
+> = {
+  identity: {
+    primary: "oklch(0.75 0.14 270)",
+    secondary: "oklch(0.55 0.10 270)",
+    bg: "oklch(0.25 0.02 270)",
+  },
+  methodology: {
+    primary: "oklch(0.72 0.14 248)",
+    secondary: "oklch(0.52 0.10 248)",
+    bg: "oklch(0.25 0.02 248)",
+  },
+  tool_guidance: {
+    primary: "oklch(0.75 0.10 200)",
+    secondary: "oklch(0.55 0.08 200)",
+    bg: "oklch(0.25 0.02 200)",
+  },
+  instructions: {
+    primary: "oklch(0.78 0.08 175)",
+    secondary: "oklch(0.58 0.06 175)",
+    bg: "oklch(0.25 0.02 175)",
+  },
+  client_instructions: {
+    primary: "oklch(0.72 0.12 220)",
+    secondary: "oklch(0.52 0.09 220)",
+    bg: "oklch(0.25 0.02 220)",
+  },
+  memory_instructions: {
+    primary: "oklch(0.75 0.14 290)",
+    secondary: "oklch(0.55 0.10 290)",
+    bg: "oklch(0.25 0.02 290)",
+  },
+  closing: {
+    primary: "oklch(0.72 0.10 240)",
+    secondary: "oklch(0.52 0.08 240)",
+    bg: "oklch(0.25 0.015 240)",
+  },
+};
 
 interface PromptPanelProps {
   slot: PromptSlot;
@@ -70,6 +155,8 @@ export function PromptPanel({
 
   const overLimit = draft.length > MAX_SLOT_LENGTH;
   const hasValue = !!value;
+  const colors = SLOT_COLORS[slot];
+  const darkColors = SLOT_COLORS_DARK[slot];
 
   return (
     <Card
@@ -81,14 +168,29 @@ export function PromptPanel({
       <CardHeader>
         <div className="flex items-center gap-2.5">
           <div
-            className={cn(
-              "flex size-7 shrink-0 items-center justify-center rounded-md",
-              hasValue
-                ? "bg-primary/10 text-primary"
-                : "bg-muted text-muted-foreground"
-            )}
+            className="slot-icon flex size-8 shrink-0 items-center justify-center rounded-lg"
+            style={
+              {
+                "--icon-bg": colors.bg,
+                "--icon-bg-dark": darkColors.bg,
+                "--icon-fa-primary": colors.primary,
+                "--icon-fa-primary-dark": darkColors.primary,
+                "--icon-fa-secondary": colors.secondary,
+                "--icon-fa-secondary-dark": darkColors.secondary,
+                backgroundColor: "var(--icon-bg)",
+              } as React.CSSProperties
+            }
           >
-            <FontAwesomeIcon icon={SLOT_ICONS[slot]} className="text-sm" />
+            <FontAwesomeIcon
+              icon={SLOT_ICONS[slot]}
+              className="text-base"
+              style={{
+                "--fa-primary-color": "var(--icon-fa-primary)",
+                "--fa-primary-opacity": "1",
+                "--fa-secondary-color": "var(--icon-fa-secondary)",
+                "--fa-secondary-opacity": "0.7",
+              }}
+            />
           </div>
           <CardTitle className="text-sm tracking-tight">
             {SLOT_LABELS[slot]}

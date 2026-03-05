@@ -109,8 +109,8 @@ export function ManualConfigPage() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      {/* Header */}
-      <div className="border-border/50 border-b px-6 py-5">
+      {/* Header — solid card background to contrast with the grid area */}
+      <div className="bg-card border-border/50 border-b px-6 py-5">
         <h1 className="text-foreground text-lg font-semibold tracking-tight">
           Prompt Configuration
         </h1>
@@ -119,7 +119,8 @@ export function ManualConfigPage() {
         </p>
       </div>
 
-      <div className="flex-1 space-y-6 p-6">
+      {/* Grid area — dot grid + subtle radial glow */}
+      <div className="config-grid-bg relative flex-1 space-y-6 p-6">
         {/* Mode toolbar */}
         <ModeSelector
           modesData={modesQuery.data}
