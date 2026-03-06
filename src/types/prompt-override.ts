@@ -34,7 +34,8 @@ export const SLOT_DESCRIPTIONS: Record<PromptSlot, string> = {
   methodology: "The teaching approach and pedagogical framework",
   tool_guidance: "How and when the assistant should use its tools",
   instructions: "General behavioral rules and constraints",
-  client_instructions: "Instructions specific to the client application",
+  client_instructions:
+    "Instructions specific to the client application (e.g. WhatsApp, Telegram)",
   memory_instructions: "How the assistant manages conversation memory",
   closing: "How the assistant wraps up and signs off",
 };
