@@ -72,13 +72,20 @@ export function ManualConfigPage() {
 
   const handleCreateMode = useCallback(
     (name: string, label: string, description: string) => {
+      const inheritedOverrides = orgOverrides.data ?? {};
+      console.log("[manual-config] handleCreateMode:", {
+        name,
+        label,
+        description,
+        inheritedOverrides,
+      });
       saveMode.mutate(
         {
           name,
           body: {
             label: label || undefined,
             description: description || undefined,
-            overrides: orgOverrides.data ?? {},
+            overrides: inheritedOverrides,
           },
         },
         { onSuccess: () => setSelectedMode(name) }

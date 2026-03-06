@@ -123,6 +123,10 @@ export async function putMode(
   body: { label?: string; description?: string; overrides: PromptOverrides },
   signal?: AbortSignal
 ): Promise<PromptMode> {
+  console.log("[config-api] putMode request:", {
+    name,
+    body: JSON.stringify(body),
+  });
   const res = await fetch(`/api/config/modes/${encodeURIComponent(name)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
