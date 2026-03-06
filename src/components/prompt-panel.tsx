@@ -244,7 +244,7 @@ export function PromptPanel({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               rows={6}
-              className="bg-background resize-y font-mono text-xs leading-relaxed dark:bg-white/[0.06]"
+              className="bg-background max-h-64 resize-y font-mono text-xs leading-relaxed dark:bg-white/[0.06]"
               placeholder={`Enter ${SLOT_LABELS[slot].toLowerCase()} override...`}
               autoFocus
             />
