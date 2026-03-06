@@ -119,7 +119,7 @@ export function ManualConfigPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header — pinned, never scrolls */}
-      <div className="config-header border-border/50 relative z-10 shrink-0 border-b px-4 py-4 shadow-[0_2px_8px_rgba(0,0,0,0.06)] sm:px-6 sm:py-5 dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
+      <div className="config-header border-border/50 shrink-0 border-b px-4 py-4 shadow-[0_2px_8px_rgba(0,0,0,0.06)] sm:px-6 sm:py-5 dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
         <h1 className="text-foreground text-lg font-semibold tracking-tight">
           Prompt Configuration
         </h1>
