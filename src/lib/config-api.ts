@@ -25,17 +25,23 @@ export async function getOrgOverrides(
     throw new Error(`Failed to load overrides (${res.status}): ${body}`);
   }
 
-  const data = (await res.json()) as
-    | PromptOverrides
-    | { prompt_overrides: PromptOverrides };
+  const data = (await res.json()) as Record<string, unknown>;
 
   console.log(
     "[config-api] getOrgOverrides raw response:",
     JSON.stringify(data)
   );
 
-  // Engine API may wrap overrides in { prompt_overrides: { ... } }
-  const result = "prompt_overrides" in data ? data.prompt_overrides : data;
+  // Engine API may wrap overrides in { prompt_overrides: {...} } or { org, overrides: {...} }
+  let result: PromptOverrides;
+  if ("prompt_overrides" in data && typeof data.prompt_overrides === "object") {
+    result = data.prompt_overrides as PromptOverrides;
+  } else if ("overrides" in data && typeof data.overrides === "object") {
+    result = data.overrides as PromptOverrides;
+  } else {
+    result = data as unknown as PromptOverrides;
+  }
+
   console.log(
     "[config-api] getOrgOverrides unwrapped:",
     JSON.stringify(result)

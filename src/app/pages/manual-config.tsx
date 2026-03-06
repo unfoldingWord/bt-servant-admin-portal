@@ -118,7 +118,7 @@ export function ManualConfigPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header — pinned, never scrolls */}
-      <div className="config-header border-border/50 shrink-0 border-b px-4 py-4 sm:px-6 sm:py-5">
+      <div className="config-header border-border/50 relative z-10 shrink-0 border-b px-4 py-4 shadow-[0_2px_8px_rgba(0,0,0,0.06)] sm:px-6 sm:py-5 dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
         <h1 className="text-foreground text-lg font-semibold tracking-tight">
           Prompt Configuration
         </h1>
@@ -177,12 +177,12 @@ export function ManualConfigPage() {
             ))}
           </div>
         )}
-      </div>
 
-      {/* Version footer — pinned at bottom of page */}
-      <p className="text-muted-foreground/60 shrink-0 py-4 text-center text-xs">
-        BT Servant Admin Portal v0.3.0
-      </p>
+        {/* Version footer */}
+        <p className="text-muted-foreground/60 pt-2 pb-4 text-center text-xs">
+          BT Servant Admin Portal v0.3.0
+        </p>
+      </div>
     </div>
   );
 }
