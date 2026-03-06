@@ -134,7 +134,7 @@ export function ManualConfigPage() {
       </div>
 
       {/* Grid area — dot grid + subtle radial glow */}
-      <div className="config-grid-bg relative flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
+      <div className="config-grid-bg min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="space-y-4 sm:space-y-6">
           {/* Mode toolbar */}
           <ModeSelector
@@ -181,11 +181,6 @@ export function ManualConfigPage() {
             </div>
           )}
         </div>
-
-        {/* Version footer — pinned to bottom of grid area */}
-        <p className="text-muted-foreground/60 pointer-events-none sticky bottom-4 mt-auto pt-6 text-center text-xs">
-          BT Servant Admin Portal v0.3.0
-        </p>
       </div>
     </div>
   );
