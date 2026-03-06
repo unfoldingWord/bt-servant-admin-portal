@@ -128,6 +128,7 @@ interface PromptPanelProps {
   value: string | undefined;
   onSave: (value: string) => void;
   isSaving: boolean;
+  readOnly?: boolean;
 }
 
 export function PromptPanel({
@@ -135,6 +136,7 @@ export function PromptPanel({
   value,
   onSave,
   isSaving,
+  readOnly = false,
 }: PromptPanelProps) {
   console.log(`[prompt-panel] render "${slot}":`, { value, hasValue: !!value });
 
@@ -213,7 +215,7 @@ export function PromptPanel({
           </div>
         </div>
         <CardAction>
-          {!editing && (
+          {!editing && !readOnly && (
             <Button variant="ghost" size="icon-xs" onClick={startEdit}>
               <Pencil className="size-4" />
             </Button>
@@ -227,7 +229,7 @@ export function PromptPanel({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               rows={6}
-              className="resize-y font-mono text-xs leading-relaxed"
+              className="bg-background/60 resize-y font-mono text-xs leading-relaxed dark:bg-white/[0.03]"
               placeholder={`Enter ${SLOT_LABELS[slot].toLowerCase()} override...`}
               autoFocus
             />
@@ -265,11 +267,9 @@ export function PromptPanel({
             </div>
           </div>
         ) : hasValue ? (
-          <pre className="text-foreground/70 max-h-40 overflow-auto font-mono text-xs leading-relaxed whitespace-pre-wrap">
-            {value}
-          </pre>
+          <p className="text-muted-foreground text-xs">Override set</p>
         ) : (
-          <p className="text-muted-foreground text-xs italic">
+          <p className="text-muted-foreground/60 text-xs italic">
             No override set
           </p>
         )}

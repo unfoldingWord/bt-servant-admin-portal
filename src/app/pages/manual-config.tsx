@@ -20,6 +20,7 @@ import { PromptPanel } from "@/components/prompt-panel";
 
 export function ManualConfigPage() {
   const orgName = useAuthStore((s) => s.user?.org);
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
   const [selectedMode, setSelectedMode] = useState<string | null>(null);
 
   // Queries
@@ -133,53 +134,56 @@ export function ManualConfigPage() {
       </div>
 
       {/* Grid area — dot grid + subtle radial glow */}
-      <div className="config-grid-bg relative flex-1 space-y-4 overflow-y-auto p-4 sm:space-y-6 sm:p-6">
-        {/* Mode toolbar */}
-        <ModeSelector
-          modesData={modesQuery.data}
-          selectedMode={selectedMode}
-          onSelectMode={setSelectedMode}
-          onCreateMode={handleCreateMode}
-          onDeleteMode={handleDeleteMode}
-          onSetDefault={handleSetDefault}
-          onClearDefault={handleClearDefault}
-          isCreating={saveMode.isPending}
-          isDeleting={deleteMode.isPending}
-          isSettingDefault={setDefault.isPending || clearDefault.isPending}
-        />
+      <div className="config-grid-bg relative flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
+        <div className="space-y-4 sm:space-y-6">
+          {/* Mode toolbar */}
+          <ModeSelector
+            modesData={modesQuery.data}
+            selectedMode={selectedMode}
+            onSelectMode={setSelectedMode}
+            onCreateMode={handleCreateMode}
+            onDeleteMode={handleDeleteMode}
+            onSetDefault={handleSetDefault}
+            onClearDefault={handleClearDefault}
+            isCreating={saveMode.isPending}
+            isDeleting={deleteMode.isPending}
+            isSettingDefault={setDefault.isPending || clearDefault.isPending}
+          />
 
-        {/* Error banner */}
-        {error && (
-          <div className="bg-destructive/10 text-destructive border-destructive rounded-lg border-l-2 px-4 py-3 text-sm">
-            {error.message}
-          </div>
-        )}
+          {/* Error banner */}
+          {error && (
+            <div className="bg-destructive/10 text-destructive border-destructive rounded-lg border-l-2 px-4 py-3 text-sm">
+              {error.message}
+            </div>
+          )}
 
-        {/* Slot grid */}
-        {isLoading ? (
-          <div className="text-muted-foreground flex flex-col items-center justify-center gap-3 py-16">
-            <FontAwesomeIcon
-              icon={faSpinnerThird}
-              className="size-5 animate-spin"
-            />
-            <p className="text-sm">Loading configuration...</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {PROMPT_SLOTS.map((slot) => (
-              <PromptPanel
-                key={slot}
-                slot={slot}
-                value={currentOverrides[slot]}
-                onSave={(value) => handleSaveSlot(slot, value)}
-                isSaving={isSaving}
+          {/* Slot grid */}
+          {isLoading ? (
+            <div className="text-muted-foreground flex flex-col items-center justify-center gap-3 py-16">
+              <FontAwesomeIcon
+                icon={faSpinnerThird}
+                className="size-5 animate-spin"
               />
-            ))}
-          </div>
-        )}
+              <p className="text-sm">Loading configuration...</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {PROMPT_SLOTS.map((slot) => (
+                <PromptPanel
+                  key={slot}
+                  slot={slot}
+                  value={currentOverrides[slot]}
+                  onSave={(value) => handleSaveSlot(slot, value)}
+                  isSaving={isSaving}
+                  readOnly={selectedMode === null && !isAdmin}
+                />
+              ))}
+            </div>
+          )}
+        </div>
 
-        {/* Version footer */}
-        <p className="text-muted-foreground/60 pt-2 pb-4 text-center text-xs">
+        {/* Version footer — pushed to bottom */}
+        <p className="text-muted-foreground/60 mt-auto pt-6 pb-4 text-center text-xs">
           BT Servant Admin Portal v0.3.0
         </p>
       </div>
