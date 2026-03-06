@@ -117,11 +117,7 @@ export function ModeSelector({
           </Select>
         </div>
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowCreate(!showCreate)}
-        >
+        <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
           <Plus className="mr-1.5 size-3.5" />
           New Mode
         </Button>
