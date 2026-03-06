@@ -9,7 +9,7 @@ import {
   faScrewdriverWrench,
 } from "@fortawesome/pro-duotone-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Pencil, Save, X } from "lucide-react";
+import { Eye, Pencil, Save, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import {
@@ -140,30 +140,36 @@ export function PromptPanel({
 }: PromptPanelProps) {
   console.log(`[prompt-panel] render "${slot}":`, { value, hasValue: !!value });
 
-  const [editing, setEditing] = useState(false);
+  const [mode, setMode] = useState<"collapsed" | "viewing" | "editing">(
+    "collapsed"
+  );
   const [draft, setDraft] = useState(value ?? "");
 
   // Keep draft synced with value when not actively editing
   useEffect(() => {
-    if (!editing) {
+    if (mode !== "editing") {
       setDraft(value ?? "");
     }
-  }, [value, editing]);
+  }, [value, mode]);
+
+  const startView = useCallback(() => {
+    setMode("viewing");
+  }, []);
 
   const startEdit = useCallback(() => {
     console.log(`[prompt-panel] startEdit "${slot}":`, { value, draft });
     setDraft(value ?? "");
-    setEditing(true);
+    setMode("editing");
   }, [value, slot, draft]);
 
   const cancel = useCallback(() => {
-    setEditing(false);
+    setMode("collapsed");
     setDraft(value ?? "");
   }, [value]);
 
   const save = useCallback(() => {
     onSave(draft);
-    setEditing(false);
+    setMode("collapsed");
   }, [draft, onSave]);
 
   const overLimit = draft.length > MAX_SLOT_LENGTH;
@@ -175,7 +181,7 @@ export function PromptPanel({
     <Card
       className={cn(
         "gap-3 transition-shadow duration-200",
-        !editing && "hover:shadow-md"
+        mode === "collapsed" && "hover:shadow-md"
       )}
     >
       <CardHeader>
@@ -215,15 +221,24 @@ export function PromptPanel({
           </div>
         </div>
         <CardAction>
-          {!editing && !readOnly && (
-            <Button variant="ghost" size="icon-xs" onClick={startEdit}>
-              <Pencil className="size-4" />
-            </Button>
+          {mode === "collapsed" && (
+            <div className="flex gap-0.5">
+              {hasValue && (
+                <Button variant="ghost" size="icon-xs" onClick={startView}>
+                  <Eye className="size-4" />
+                </Button>
+              )}
+              {!readOnly && (
+                <Button variant="ghost" size="icon-xs" onClick={startEdit}>
+                  <Pencil className="size-4" />
+                </Button>
+              )}
+            </div>
           )}
         </CardAction>
       </CardHeader>
       <CardContent>
-        {editing ? (
+        {mode === "editing" ? (
           <div className="space-y-3">
             <Textarea
               value={draft}
@@ -264,6 +279,24 @@ export function PromptPanel({
                   {isSaving ? "Saving..." : "Save"}
                 </Button>
               </div>
+            </div>
+          </div>
+        ) : mode === "viewing" ? (
+          <div className="space-y-3">
+            <pre className="bg-background max-h-64 overflow-y-auto rounded-md border p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap dark:bg-white/[0.06]">
+              {value}
+            </pre>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="xs" onClick={cancel}>
+                <X className="mr-1 size-3" />
+                Close
+              </Button>
+              {!readOnly && (
+                <Button size="xs" onClick={startEdit}>
+                  <Pencil className="mr-1 size-3" />
+                  Edit
+                </Button>
+              )}
             </div>
           </div>
         ) : hasValue ? (
