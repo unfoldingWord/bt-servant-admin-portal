@@ -175,7 +175,9 @@ export function ManualConfigPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {PROMPT_SLOTS.map((slot) => (
+              {PROMPT_SLOTS.filter(
+                (slot) => slot !== "tool_guidance" || isAdmin
+              ).map((slot) => (
                 <PromptPanel
                   key={slot}
                   slot={slot}

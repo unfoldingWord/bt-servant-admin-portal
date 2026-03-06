@@ -21,7 +21,7 @@ export const PROMPT_SLOTS: PromptSlot[] = [
 
 export const SLOT_LABELS: Record<PromptSlot, string> = {
   identity: "Identity",
-  methodology: "Methodology",
+  methodology: "Teaching Methodology",
   tool_guidance: "Tool Guidance",
   instructions: "Instructions",
   client_instructions: "Client Instructions",
