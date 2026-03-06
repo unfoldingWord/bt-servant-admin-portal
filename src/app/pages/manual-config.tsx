@@ -106,7 +106,10 @@ export function ManualConfigPage() {
     modesQuery.isLoading ||
     (selectedMode !== null && modeQuery.isLoading);
 
-  const error = orgOverrides.error || modesQuery.error || modeQuery.error;
+  const error =
+    orgOverrides.error ||
+    modesQuery.error ||
+    (selectedMode !== null ? modeQuery.error : null);
 
   const isSaving = updateOrg.isPending || saveMode.isPending;
 

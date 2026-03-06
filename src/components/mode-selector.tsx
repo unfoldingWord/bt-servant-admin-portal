@@ -69,7 +69,8 @@ export function ModeSelector({
       .trim()
       .toLowerCase()
       .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9\-_]/g, "");
+      .replace(/[^a-z0-9\-_]/g, "")
+      .replace(/^-+|-+$/g, "");
     if (!slug) return;
     onCreateMode(slug, newLabel.trim(), newDescription.trim());
     setNewName("");
