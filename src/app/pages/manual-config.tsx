@@ -117,7 +117,7 @@ export function ManualConfigPage() {
   const isSaving = updateOrg.isPending || saveMode.isPending;
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden">
       {/* Header — pinned, never scrolls */}
       <div className="config-header border-border/50 shrink-0 border-b px-4 py-4 shadow-[0_2px_8px_rgba(0,0,0,0.06)] sm:px-6 sm:py-5 dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
         <h1 className="text-foreground text-lg font-semibold tracking-tight">
@@ -181,12 +181,12 @@ export function ManualConfigPage() {
             </div>
           )}
         </div>
-      </div>
 
-      {/* Version footer — pinned to bottom of viewport */}
-      <p className="text-muted-foreground/60 pointer-events-none absolute right-0 bottom-4 left-0 text-center text-xs">
-        BT Servant Admin Portal v0.3.0
-      </p>
+        {/* Version footer — pinned to bottom of grid area */}
+        <p className="text-muted-foreground/60 pointer-events-none sticky bottom-4 mt-auto pt-6 text-center text-xs">
+          BT Servant Admin Portal v0.3.0
+        </p>
+      </div>
     </div>
   );
 }
