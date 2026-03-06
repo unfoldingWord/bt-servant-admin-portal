@@ -138,29 +138,29 @@ export function PromptPanel({
   isSaving,
   readOnly = false,
 }: PromptPanelProps) {
-  console.log(`[prompt-panel] render "${slot}":`, { value, hasValue: !!value });
-
   const [mode, setMode] = useState<"collapsed" | "viewing" | "editing">(
     "collapsed"
   );
   const [draft, setDraft] = useState(value ?? "");
 
-  // Keep draft synced with value when not actively editing
+  // When value updates (after a successful save or external change),
+  // sync draft and collapse back from editing mode
   useEffect(() => {
-    if (mode !== "editing") {
-      setDraft(value ?? "");
+    setDraft(value ?? "");
+    if (mode === "editing") {
+      setMode("collapsed");
     }
-  }, [value, mode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to value changes
+  }, [value]);
 
   const startView = useCallback(() => {
     setMode("viewing");
   }, []);
 
   const startEdit = useCallback(() => {
-    console.log(`[prompt-panel] startEdit "${slot}":`, { value, draft });
     setDraft(value ?? "");
     setMode("editing");
-  }, [value, slot, draft]);
+  }, [value]);
 
   const cancel = useCallback(() => {
     setMode("collapsed");
@@ -169,7 +169,7 @@ export function PromptPanel({
 
   const save = useCallback(() => {
     onSave(draft);
-    setMode("collapsed");
+    // Panel collapses when `value` updates after successful save (via useEffect above)
   }, [draft, onSave]);
 
   const overLimit = draft.length > MAX_SLOT_LENGTH;

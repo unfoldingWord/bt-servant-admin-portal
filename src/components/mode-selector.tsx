@@ -65,7 +65,11 @@ export function ModeSelector({
   const isDefault = selectedMode !== null && selectedMode === defaultMode;
 
   const handleCreate = useCallback(() => {
-    const slug = newName.trim().toLowerCase().replace(/\s+/g, "-");
+    const slug = newName
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9\-_]/g, "");
     if (!slug) return;
     onCreateMode(slug, newLabel.trim(), newDescription.trim());
     setNewName("");

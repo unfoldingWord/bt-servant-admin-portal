@@ -27,26 +27,13 @@ export async function getOrgOverrides(
 
   const data = (await res.json()) as Record<string, unknown>;
 
-  console.log(
-    "[config-api] getOrgOverrides raw response:",
-    JSON.stringify(data)
-  );
-
   // Engine API may wrap overrides in { prompt_overrides: {...} } or { org, overrides: {...} }
-  let result: PromptOverrides;
   if ("prompt_overrides" in data && typeof data.prompt_overrides === "object") {
-    result = data.prompt_overrides as PromptOverrides;
+    return data.prompt_overrides as PromptOverrides;
   } else if ("overrides" in data && typeof data.overrides === "object") {
-    result = data.overrides as PromptOverrides;
-  } else {
-    result = data as unknown as PromptOverrides;
+    return data.overrides as PromptOverrides;
   }
-
-  console.log(
-    "[config-api] getOrgOverrides unwrapped:",
-    JSON.stringify(result)
-  );
-  return result;
+  return data as unknown as PromptOverrides;
 }
 
 export async function putOrgOverrides(
@@ -96,9 +83,7 @@ export async function listModes(signal?: AbortSignal): Promise<OrgModes> {
     throw new Error(`Failed to load modes (${res.status}): ${body}`);
   }
 
-  const data = (await res.json()) as OrgModes;
-  console.log("[config-api] listModes raw response:", JSON.stringify(data));
-  return data;
+  return (await res.json()) as OrgModes;
 }
 
 export async function getMode(
@@ -116,18 +101,12 @@ export async function getMode(
   }
 
   const data = (await res.json()) as Record<string, unknown>;
-  console.log("[config-api] getMode raw response:", JSON.stringify(data));
 
   // Engine API wraps in { org, mode: { label, description, overrides } }
-  let result: PromptMode;
   if ("mode" in data && typeof data.mode === "object") {
-    result = data.mode as PromptMode;
-  } else {
-    result = data as unknown as PromptMode;
+    return data.mode as PromptMode;
   }
-
-  console.log("[config-api] getMode unwrapped:", JSON.stringify(result));
-  return result;
+  return data as unknown as PromptMode;
 }
 
 export async function putMode(
@@ -135,10 +114,6 @@ export async function putMode(
   body: { label?: string; description?: string; overrides: PromptOverrides },
   signal?: AbortSignal
 ): Promise<PromptMode> {
-  console.log("[config-api] putMode request:", {
-    name,
-    body: JSON.stringify(body),
-  });
   const res = await fetch(`/api/config/modes/${encodeURIComponent(name)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },

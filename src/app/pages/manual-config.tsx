@@ -36,19 +36,13 @@ export function ManualConfigPage() {
   const clearDefault = useClearDefaultMode();
 
   // Current overrides based on selection
-  const currentOverrides = useMemo<PromptOverrides>(() => {
-    const result =
+  const currentOverrides = useMemo<PromptOverrides>(
+    () =>
       selectedMode !== null
         ? (modeQuery.data?.overrides ?? {})
-        : (orgOverrides.data ?? {});
-    console.log("[manual-config] currentOverrides:", {
-      selectedMode,
-      orgOverridesData: orgOverrides.data,
-      modeQueryData: modeQuery.data,
-      result,
-    });
-    return result;
-  }, [selectedMode, modeQuery.data?.overrides, orgOverrides.data]);
+        : (orgOverrides.data ?? {}),
+    [selectedMode, modeQuery.data?.overrides, orgOverrides.data]
+  );
 
   const handleSaveSlot = useCallback(
     (slot: PromptSlot, value: string) => {
@@ -72,20 +66,13 @@ export function ManualConfigPage() {
 
   const handleCreateMode = useCallback(
     (name: string, label: string, description: string) => {
-      const inheritedOverrides = orgOverrides.data ?? {};
-      console.log("[manual-config] handleCreateMode:", {
-        name,
-        label,
-        description,
-        inheritedOverrides,
-      });
       saveMode.mutate(
         {
           name,
           body: {
             label: label || undefined,
             description: description || undefined,
-            overrides: inheritedOverrides,
+            overrides: orgOverrides.data ?? {},
           },
         },
         { onSuccess: () => setSelectedMode(name) }

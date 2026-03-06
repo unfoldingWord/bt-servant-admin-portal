@@ -53,7 +53,7 @@ export async function handleConfig(
   session: SessionData,
   pathname: string
 ): Promise<Response> {
-  const org = session.org;
+  const org = encodeURIComponent(session.org);
 
   // /api/config/prompt-overrides → GET/PUT/DELETE
   if (pathname === "/api/config/prompt-overrides") {
