@@ -6,6 +6,7 @@ import {
   handleHistory,
   handlePoll,
 } from "./chat";
+import { handleConfig } from "./config";
 import type { Env } from "./helpers";
 import { errorResponse, requireSameOrigin } from "./helpers";
 
@@ -50,15 +51,28 @@ export default {
       }
 
       if (url.pathname === "/api/chat/stream") {
-        return handleEnqueue(request, env);
+        return handleEnqueue(request, env, session);
       }
       if (url.pathname === "/api/chat/history") {
         if (request.method === "DELETE") {
-          return handleDeleteHistory(request, env);
+          return handleDeleteHistory(request, env, session);
         }
-        return handleHistory(request, env);
+        return handleHistory(request, env, session);
       }
-      return handlePoll(request, env);
+      return handlePoll(request, env, session);
+    }
+
+    // Config endpoints — session required
+    if (url.pathname.startsWith("/api/config/")) {
+      const blocked = requireSameOrigin(request);
+      if (blocked) return blocked;
+
+      const session = await validateSession(request, env);
+      if (!session) {
+        return errorResponse("Unauthorized", 401);
+      }
+
+      return handleConfig(request, env, session, url.pathname);
     }
 
     if (url.pathname.startsWith("/api/")) {

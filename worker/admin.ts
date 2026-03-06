@@ -28,6 +28,7 @@ function safeUser(user: StoredUser) {
     id: user.id,
     email: user.email,
     name: user.name,
+    org: user.org,
     isAdmin: user.isAdmin ?? false,
   };
 }
@@ -45,6 +46,7 @@ async function createUser(request: Request, env: Env): Promise<Response> {
     email?: string;
     password?: string;
     name?: string;
+    org?: string;
     isAdmin?: boolean;
   };
   try {
@@ -56,9 +58,10 @@ async function createUser(request: Request, env: Env): Promise<Response> {
   const email = body.email?.trim().toLowerCase();
   const password = body.password;
   const name = body.name?.trim();
+  const org = body.org?.trim();
 
-  if (!email || !password || !name) {
-    return errorResponse("email, password, and name are required", 400);
+  if (!email || !password || !name || !org) {
+    return errorResponse("email, password, name, and org are required", 400);
   }
 
   const existing = await env.AUTH_KV.get(`user:${email}`);
@@ -72,6 +75,7 @@ async function createUser(request: Request, env: Env): Promise<Response> {
     id: crypto.randomUUID(),
     email,
     name,
+    org,
     passwordHash,
     salt,
     isAdmin: body.isAdmin ?? false,
@@ -123,7 +127,12 @@ async function updateUser(
     return errorResponse("User not found", 404);
   }
 
-  let body: { name?: string; password?: string; isAdmin?: boolean };
+  let body: {
+    name?: string;
+    org?: string;
+    password?: string;
+    isAdmin?: boolean;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -136,6 +145,13 @@ async function updateUser(
       return errorResponse("name cannot be empty", 400);
     }
     user.name = trimmed;
+  }
+  if (body.org !== undefined) {
+    const trimmed = body.org.trim();
+    if (!trimmed) {
+      return errorResponse("org cannot be empty", 400);
+    }
+    user.org = trimmed;
   }
   if (body.isAdmin !== undefined) {
     user.isAdmin = body.isAdmin;

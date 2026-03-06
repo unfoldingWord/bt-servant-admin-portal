@@ -1,28 +1,184 @@
-import { faPenToSquare } from "@fortawesome/pro-light-svg-icons";
+import { useCallback, useMemo, useState } from "react";
+import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
-export function ManualConfigPage() {
-  return (
-    <div className="bg-dot-grid relative flex min-h-full flex-col items-center justify-center p-8">
-      {/* Radial glow */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,oklch(0.541_0.168_248/0.08)_0%,transparent_60%)]" />
+import { useAuthStore } from "@/lib/auth-store";
+import {
+  useClearDefaultMode,
+  useDeleteMode,
+  useMode,
+  useModes,
+  useOrgOverrides,
+  useSaveMode,
+  useSetDefaultMode,
+  useUpdateOrgOverrides,
+} from "@/hooks/use-prompt-config";
+import type { PromptOverrides, PromptSlot } from "@/types/prompt-override";
+import { PROMPT_SLOTS } from "@/types/prompt-override";
+import { ModeSelector } from "@/components/mode-selector";
+import { PromptPanel } from "@/components/prompt-panel";
 
-      <div className="relative flex flex-col items-center gap-6">
-        <div className="bg-primary/10 ring-primary/20 flex size-20 items-center justify-center rounded-2xl ring-1">
-          <FontAwesomeIcon
-            icon={faPenToSquare}
-            className="text-primary text-4xl"
+export function ManualConfigPage() {
+  const orgName = useAuthStore((s) => s.user?.org);
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
+  const [selectedMode, setSelectedMode] = useState<string | null>(null);
+
+  // Queries
+  const orgOverrides = useOrgOverrides();
+  const modesQuery = useModes();
+  const modeQuery = useMode(selectedMode);
+
+  // Mutations
+  const updateOrg = useUpdateOrgOverrides();
+  const saveMode = useSaveMode();
+  const deleteMode = useDeleteMode();
+  const setDefault = useSetDefaultMode();
+  const clearDefault = useClearDefaultMode();
+
+  // Current overrides based on selection
+  const currentOverrides = useMemo<PromptOverrides>(
+    () =>
+      selectedMode !== null
+        ? (modeQuery.data?.overrides ?? {})
+        : (orgOverrides.data ?? {}),
+    [selectedMode, modeQuery.data?.overrides, orgOverrides.data]
+  );
+
+  const handleSaveSlot = useCallback(
+    (slot: PromptSlot, value: string) => {
+      const updated = { ...currentOverrides, [slot]: value || undefined };
+
+      if (selectedMode !== null) {
+        saveMode.mutate({
+          name: selectedMode,
+          body: {
+            label: modeQuery.data?.label,
+            description: modeQuery.data?.description,
+            overrides: updated,
+          },
+        });
+      } else {
+        updateOrg.mutate(updated);
+      }
+    },
+    [currentOverrides, selectedMode, modeQuery.data, saveMode, updateOrg]
+  );
+
+  const handleCreateMode = useCallback(
+    (name: string, label: string, description: string) => {
+      saveMode.mutate(
+        {
+          name,
+          body: {
+            label: label || undefined,
+            description: description || undefined,
+            overrides: orgOverrides.data ?? {},
+          },
+        },
+        { onSuccess: () => setSelectedMode(name) }
+      );
+    },
+    [saveMode, orgOverrides.data]
+  );
+
+  const handleDeleteMode = useCallback(
+    (name: string) => {
+      deleteMode.mutate(name, {
+        onSuccess: () => setSelectedMode(null),
+      });
+    },
+    [deleteMode]
+  );
+
+  const handleSetDefault = useCallback(
+    (name: string) => {
+      setDefault.mutate(name);
+    },
+    [setDefault]
+  );
+
+  const handleClearDefault = useCallback(() => {
+    clearDefault.mutate();
+  }, [clearDefault]);
+
+  const isLoading =
+    orgOverrides.isLoading ||
+    modesQuery.isLoading ||
+    (selectedMode !== null && modeQuery.isLoading);
+
+  const error =
+    orgOverrides.error ||
+    modesQuery.error ||
+    (selectedMode !== null ? modeQuery.error : null);
+
+  const isSaving = updateOrg.isPending || saveMode.isPending;
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* Header — pinned, never scrolls */}
+      <div className="config-header border-border/50 shrink-0 border-b px-4 py-4 shadow-[0_2px_8px_rgba(0,0,0,0.06)] sm:px-6 sm:py-5 dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
+        <h1 className="text-foreground text-lg font-semibold tracking-tight">
+          Prompt Configuration
+        </h1>
+        <p className="text-muted-foreground mt-1 text-[13px] leading-relaxed">
+          Manage prompt overrides for each slot at the org level or per mode.
+        </p>
+        {orgName && (
+          <span className="bg-primary/8 text-primary/80 ring-primary/15 dark:bg-primary/12 dark:text-primary/70 dark:ring-primary/20 mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1">
+            Org: <em className="ml-1 font-semibold not-italic">{orgName}</em>
+          </span>
+        )}
+      </div>
+
+      {/* Grid area — dot grid + subtle radial glow */}
+      <div className="config-grid-bg min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+        <div className="space-y-4 sm:space-y-6">
+          {/* Mode toolbar */}
+          <ModeSelector
+            modesData={modesQuery.data}
+            selectedMode={selectedMode}
+            onSelectMode={setSelectedMode}
+            onCreateMode={handleCreateMode}
+            onDeleteMode={handleDeleteMode}
+            onSetDefault={handleSetDefault}
+            onClearDefault={handleClearDefault}
+            isCreating={saveMode.isPending}
+            isDeleting={deleteMode.isPending}
+            isSettingDefault={setDefault.isPending || clearDefault.isPending}
           />
-        </div>
-        <div className="text-center">
-          <h1 className="text-foreground text-3xl font-bold tracking-tight">
-            Manual Configuration
-          </h1>
-          <p className="text-muted-foreground mt-3 max-w-md text-[15px] leading-relaxed">
-            Manually configure MCP servers and prompt overrides — identity,
-            methodology, tool guidance, instructions, memory instructions, and
-            closing prompt.
-          </p>
+
+          {/* Error banner */}
+          {error && (
+            <div className="bg-destructive/10 text-destructive border-destructive rounded-lg border-l-2 px-4 py-3 text-sm">
+              {error.message}
+            </div>
+          )}
+
+          {/* Slot grid */}
+          {isLoading ? (
+            <div className="text-muted-foreground flex flex-col items-center justify-center gap-3 py-16">
+              <FontAwesomeIcon
+                icon={faSpinnerThird}
+                className="size-5 animate-spin"
+              />
+              <p className="text-sm">Loading configuration...</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {PROMPT_SLOTS.filter(
+                (slot) => slot !== "tool_guidance" || isAdmin
+              ).map((slot) => (
+                <PromptPanel
+                  key={slot}
+                  slot={slot}
+                  value={currentOverrides[slot]}
+                  onSave={(value) => handleSaveSlot(slot, value)}
+                  isSaving={isSaving}
+                  readOnly={selectedMode === null && !isAdmin}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
