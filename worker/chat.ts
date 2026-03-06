@@ -2,8 +2,7 @@ import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
 import type { SessionData } from "./types";
 
-const ADMIN_USER_ID = "admin-test";
-const ADMIN_CLIENT_ID = "admin-portal";
+const CLIENT_ID = "admin-portal";
 
 export async function handleEnqueue(
   request: Request,
@@ -29,9 +28,9 @@ export async function handleEnqueue(
   const engineBody = {
     message: body.message,
     message_type: body.message_type || "text",
-    user_id: ADMIN_USER_ID,
+    user_id: session.userId,
     org: session.org,
-    client_id: ADMIN_CLIENT_ID,
+    client_id: CLIENT_ID,
   };
 
   const engineRes = await fetch(engineUrl, {
@@ -78,7 +77,7 @@ export async function handlePoll(
   }
 
   const params = new URLSearchParams({
-    user_id: ADMIN_USER_ID,
+    user_id: session.userId,
     message_id: messageId,
     org: session.org,
     cursor,
@@ -144,7 +143,7 @@ export async function handleHistory(
   );
 
   const params = new URLSearchParams({ limit, offset });
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${session.org}/users/${ADMIN_USER_ID}/history?${params.toString()}`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${session.org}/users/${session.userId}/history?${params.toString()}`;
 
   const engineRes = await fetch(engineUrl, {
     headers: {
@@ -181,7 +180,7 @@ export async function handleDeleteHistory(
     return errorResponse("Method not allowed", 405);
   }
 
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${session.org}/users/${ADMIN_USER_ID}/history`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${session.org}/users/${session.userId}/history`;
 
   const engineRes = await fetch(engineUrl, {
     method: "DELETE",

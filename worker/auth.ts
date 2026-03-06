@@ -1,4 +1,4 @@
-import { hashPassword, timingSafeEqual } from "./crypto";
+import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
 import type { SessionData, StoredUser } from "./types";
@@ -16,8 +16,12 @@ const RATE_LIMIT_MAX = 10; // max attempts per window
 // ---------------------------------------------------------------------------
 
 /** Per-IP rate limiting via KV using per-attempt keys to avoid race conditions. */
-async function isRateLimited(ip: string, env: Env): Promise<boolean> {
-  const prefix = `ratelimit:login:${ip}:`;
+async function isRateLimited(
+  ip: string,
+  env: Env,
+  namespace: string
+): Promise<boolean> {
+  const prefix = `ratelimit:${namespace}:${ip}:`;
   const list = await env.AUTH_KV.list({ prefix });
 
   if (list.keys.length >= RATE_LIMIT_MAX) return true;
@@ -93,7 +97,7 @@ export async function handleLogin(
   }
 
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  if (await isRateLimited(ip, env)) {
+  if (await isRateLimited(ip, env, "login")) {
     return errorResponse("Too many login attempts. Try again later.", 429);
   }
 
@@ -187,4 +191,68 @@ export async function handleMe(request: Request, env: Env): Promise<Response> {
       isAdmin: session.isAdmin ?? false,
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Change password
+// ---------------------------------------------------------------------------
+
+export async function handleChangePassword(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return errorResponse("Method not allowed", 405);
+  }
+
+  const session = await validateSession(request, env);
+  if (!session) {
+    return errorResponse("Unauthorized", 401);
+  }
+
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  if (await isRateLimited(ip, env, "change-password")) {
+    return errorResponse("Too many attempts. Try again later.", 429);
+  }
+
+  let body: { currentPassword?: string; newPassword?: string };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return errorResponse("Invalid JSON", 400);
+  }
+
+  const { currentPassword, newPassword } = body;
+
+  if (!currentPassword || !newPassword) {
+    return errorResponse("currentPassword and newPassword are required", 400);
+  }
+
+  if (newPassword.length < 8) {
+    return errorResponse("New password must be at least 8 characters", 400);
+  }
+
+  if (currentPassword === newPassword) {
+    return errorResponse("New password must differ from current password", 400);
+  }
+
+  const user = await env.AUTH_KV.get<StoredUser>(`user:${session.email}`, {
+    type: "json",
+  });
+  if (!user) {
+    return errorResponse("User not found", 404);
+  }
+
+  const currentHash = await hashPassword(currentPassword, user.salt);
+  if (!timingSafeEqual(currentHash, user.passwordHash)) {
+    return errorResponse("Current password is incorrect", 401);
+  }
+
+  const newSalt = generateSalt();
+  user.salt = newSalt;
+  user.passwordHash = await hashPassword(newPassword, newSalt);
+
+  await env.AUTH_KV.put(`user:${session.email}`, JSON.stringify(user));
+
+  return jsonResponse({ ok: true });
 }

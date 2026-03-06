@@ -1,5 +1,11 @@
 import { handleAdmin } from "./admin";
-import { handleLogin, handleLogout, handleMe, validateSession } from "./auth";
+import {
+  handleChangePassword,
+  handleLogin,
+  handleLogout,
+  handleMe,
+  validateSession,
+} from "./auth";
 import {
   handleDeleteHistory,
   handleEnqueue,
@@ -27,6 +33,9 @@ export default {
       }
       if (url.pathname === "/api/auth/me") {
         return handleMe(request, env);
+      }
+      if (url.pathname === "/api/auth/change-password") {
+        return handleChangePassword(request, env);
       }
       return errorResponse("Not found", 404);
     }

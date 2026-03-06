@@ -9,6 +9,7 @@ import { useNavigate } from "react-router";
 import { useUiStore } from "@/lib/ui-store";
 import { Separator } from "@/components/ui/separator";
 import { ActivityBarItem } from "@/components/activity-bar-item";
+import { ChangePasswordDialog } from "@/components/change-password-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/user-menu";
 
@@ -52,6 +53,7 @@ export function ActivityBar() {
 
       <div className="mt-auto flex flex-col items-center gap-1.5">
         <ThemeToggle />
+        <ChangePasswordDialog />
         <UserMenu />
       </div>
     </div>
