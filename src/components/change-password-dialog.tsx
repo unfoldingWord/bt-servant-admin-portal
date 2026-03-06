@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from "react";
-import { faLockKeyhole as faLockKeyholeLight } from "@fortawesome/pro-light-svg-icons";
+import { faCircleXmark } from "@fortawesome/pro-solid-svg-icons";
+import { faLockKeyhole } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 
@@ -12,20 +13,19 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 
 const MIN_PASSWORD_LENGTH = 8;
 
-export function ChangePasswordDialog() {
-  const [open, setOpen] = useState(false);
+export function ChangePasswordDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -43,7 +43,7 @@ export function ChangePasswordDialog() {
   }
 
   function handleOpenChange(nextOpen: boolean) {
-    setOpen(nextOpen);
+    onOpenChange(nextOpen);
     if (!nextOpen) resetForm();
   }
 
@@ -83,29 +83,35 @@ export function ChangePasswordDialog() {
     }
   }
 
-  const disabled = submitting || success;
+  const formDisabled = submitting || success;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DialogTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Change password"
-              className="text-muted-foreground hover:bg-accent hover:text-foreground size-10 rounded-md transition-all hover:shadow-sm active:scale-95"
-            >
-              <FontAwesomeIcon icon={faLockKeyholeLight} className="text-xl" />
-            </Button>
-          </DialogTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="right">Change password</TooltipContent>
-      </Tooltip>
+      <DialogContent className="gap-6 sm:max-w-sm" showCloseButton={false}>
+        {/* Circled X close button hanging off top-right corner */}
+        <button
+          type="button"
+          onClick={() => handleOpenChange(false)}
+          className="text-primary hover:text-primary/80 dark:text-muted-foreground dark:hover:text-foreground absolute -top-3 -right-3 z-10 transition-colors"
+          aria-label="Close"
+        >
+          <span className="relative flex items-center justify-center">
+            <span className="bg-background absolute size-4 rounded-full" />
+            <FontAwesomeIcon
+              icon={faCircleXmark}
+              className="relative text-2xl"
+            />
+          </span>
+        </button>
 
-      <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>Change password</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <FontAwesomeIcon
+              icon={faLockKeyhole}
+              className="text-muted-foreground text-base"
+            />
+            Change password
+          </DialogTitle>
           <DialogDescription>
             Enter your current password, then choose a new one.
           </DialogDescription>
@@ -114,7 +120,7 @@ export function ChangePasswordDialog() {
         <form
           id="change-password-form"
           onSubmit={(e) => void handleSubmit(e)}
-          className="grid gap-4 px-6"
+          className="grid gap-4"
         >
           <div className="grid gap-2">
             <Label htmlFor="current-password">Current password</Label>
@@ -125,7 +131,7 @@ export function ChangePasswordDialog() {
               required
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
-              disabled={disabled}
+              disabled={formDisabled}
             />
           </div>
 
@@ -138,7 +144,7 @@ export function ChangePasswordDialog() {
               required
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              disabled={disabled}
+              disabled={formDisabled}
             />
           </div>
 
@@ -151,7 +157,7 @@ export function ChangePasswordDialog() {
               required
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              disabled={disabled}
+              disabled={formDisabled}
             />
           </div>
 
@@ -163,7 +169,7 @@ export function ChangePasswordDialog() {
           )}
 
           {success && (
-            <div className="flex items-start gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2.5 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+            <div className="border-success/20 bg-success/10 text-success flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm font-medium">
               <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
               Password changed successfully.
             </div>
@@ -174,12 +180,18 @@ export function ChangePasswordDialog() {
           <Button
             type="button"
             variant="outline"
+            className="w-full sm:w-auto"
             onClick={() => handleOpenChange(false)}
             disabled={submitting}
           >
             Cancel
           </Button>
-          <Button type="submit" form="change-password-form" disabled={disabled}>
+          <Button
+            type="submit"
+            form="change-password-form"
+            className="w-full sm:w-auto"
+            disabled={formDisabled}
+          >
             {submitting ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
