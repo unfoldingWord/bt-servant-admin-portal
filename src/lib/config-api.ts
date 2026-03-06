@@ -96,7 +96,9 @@ export async function listModes(signal?: AbortSignal): Promise<OrgModes> {
     throw new Error(`Failed to load modes (${res.status}): ${body}`);
   }
 
-  return (await res.json()) as OrgModes;
+  const data = (await res.json()) as OrgModes;
+  console.log("[config-api] listModes raw response:", JSON.stringify(data));
+  return data;
 }
 
 export async function getMode(
@@ -113,9 +115,19 @@ export async function getMode(
     throw new Error(`Failed to load mode (${res.status}): ${body}`);
   }
 
-  const modeData = (await res.json()) as PromptMode;
-  console.log("[config-api] getMode raw response:", JSON.stringify(modeData));
-  return modeData;
+  const data = (await res.json()) as Record<string, unknown>;
+  console.log("[config-api] getMode raw response:", JSON.stringify(data));
+
+  // Engine API wraps in { org, mode: { label, description, overrides } }
+  let result: PromptMode;
+  if ("mode" in data && typeof data.mode === "object") {
+    result = data.mode as PromptMode;
+  } else {
+    result = data as unknown as PromptMode;
+  }
+
+  console.log("[config-api] getMode unwrapped:", JSON.stringify(result));
+  return result;
 }
 
 export async function putMode(
