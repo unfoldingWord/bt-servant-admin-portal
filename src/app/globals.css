@@ -192,7 +192,7 @@
 
 /* Login page — neutral grey matching the sidebar/card tone */
 .login-bg {
-  background: oklch(0.98 0 0);
+  background: oklch(0.93 0 0);
 }
 
 .dark .login-bg {
