@@ -145,36 +145,6 @@ export async function deleteMode(
   }
 }
 
-export async function setDefaultMode(
-  mode: string,
-  signal?: AbortSignal
-): Promise<void> {
-  const res = await fetch("/api/config/modes-default", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
-    body: JSON.stringify({ mode }),
-    signal,
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Failed to set default mode (${res.status}): ${body}`);
-  }
-}
-
-export async function clearDefaultMode(signal?: AbortSignal): Promise<void> {
-  const res = await fetch("/api/config/modes-default", {
-    method: "DELETE",
-    headers: SAME_ORIGIN_HEADERS,
-    signal,
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Failed to clear default mode (${res.status}): ${body}`);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Per-user mode
 // ---------------------------------------------------------------------------
@@ -184,15 +154,13 @@ export async function setUserMode(
   mode: string,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await fetch(
-    `/api/config/user-mode/${encodeURIComponent(userId)}`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
-      body: JSON.stringify({ mode }),
-      signal,
-    }
-  );
+  const url = `/api/config/user-mode/${encodeURIComponent(userId)}`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
+    body: JSON.stringify({ mode }),
+    signal,
+  });
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -204,14 +172,12 @@ export async function clearUserMode(
   userId: string,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await fetch(
-    `/api/config/user-mode/${encodeURIComponent(userId)}`,
-    {
-      method: "DELETE",
-      headers: SAME_ORIGIN_HEADERS,
-      signal,
-    }
-  );
+  const url = `/api/config/user-mode/${encodeURIComponent(userId)}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: SAME_ORIGIN_HEADERS,
+    signal,
+  });
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");

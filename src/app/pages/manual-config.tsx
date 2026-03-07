@@ -5,13 +5,11 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useAuthStore } from "@/lib/auth-store";
 import { useUiStore } from "@/lib/ui-store";
 import {
-  useClearDefaultMode,
   useDeleteMode,
   useMode,
   useModes,
   useOrgOverrides,
   useSaveMode,
-  useSetDefaultMode,
   useUpdateOrgOverrides,
 } from "@/hooks/use-prompt-config";
 import type { PromptOverrides, PromptSlot } from "@/types/prompt-override";
@@ -34,8 +32,6 @@ export function ManualConfigPage() {
   const updateOrg = useUpdateOrgOverrides();
   const saveMode = useSaveMode();
   const deleteMode = useDeleteMode();
-  const setDefault = useSetDefaultMode();
-  const clearDefault = useClearDefaultMode();
 
   // Current overrides based on selection
   const currentOverrides = useMemo<PromptOverrides>(
@@ -92,17 +88,6 @@ export function ManualConfigPage() {
     [deleteMode, setSelectedMode]
   );
 
-  const handleSetDefault = useCallback(
-    (name: string) => {
-      setDefault.mutate(name);
-    },
-    [setDefault]
-  );
-
-  const handleClearDefault = useCallback(() => {
-    clearDefault.mutate();
-  }, [clearDefault]);
-
   const isLoading =
     orgOverrides.isLoading ||
     modesQuery.isLoading ||
@@ -142,11 +127,8 @@ export function ManualConfigPage() {
             onSelectMode={setSelectedMode}
             onCreateMode={handleCreateMode}
             onDeleteMode={handleDeleteMode}
-            onSetDefault={handleSetDefault}
-            onClearDefault={handleClearDefault}
             isCreating={saveMode.isPending}
             isDeleting={deleteMode.isPending}
-            isSettingDefault={setDefault.isPending || clearDefault.isPending}
           />
 
           {/* Error banner */}

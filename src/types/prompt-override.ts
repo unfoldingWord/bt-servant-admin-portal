@@ -51,5 +51,4 @@ export interface PromptMode {
 
 export interface OrgModes {
   modes: PromptMode[];
-  default_mode?: string;
 }

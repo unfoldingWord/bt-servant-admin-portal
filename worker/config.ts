@@ -65,16 +65,6 @@ export async function handleConfig(
     );
   }
 
-  // /api/config/modes-default → PUT/DELETE
-  if (pathname === "/api/config/modes-default") {
-    return proxyToEngine(
-      request,
-      env,
-      `/api/v1/admin/orgs/${org}/modes-default`,
-      ["PUT", "DELETE"]
-    );
-  }
-
   // /api/config/modes/{name} → GET/PUT/DELETE
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);
   if (modeMatch?.[1]) {

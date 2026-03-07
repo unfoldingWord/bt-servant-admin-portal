@@ -85,26 +85,6 @@ export function useDeleteMode() {
   });
 }
 
-export function useSetDefaultMode() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (mode: string) => configApi.setDefaultMode(mode),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.modes });
-    },
-  });
-}
-
-export function useClearDefaultMode() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => configApi.clearDefaultMode(),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.modes });
-    },
-  });
-}
-
 export function useSetUserMode() {
   return useMutation({
     mutationFn: ({ userId, mode }: { userId: string; mode: string }) =>
