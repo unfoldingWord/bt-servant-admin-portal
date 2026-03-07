@@ -65,16 +65,6 @@ export async function handleConfig(
     );
   }
 
-  // /api/config/modes-default → PUT/DELETE
-  if (pathname === "/api/config/modes-default") {
-    return proxyToEngine(
-      request,
-      env,
-      `/api/v1/admin/orgs/${org}/modes-default`,
-      ["PUT", "DELETE"]
-    );
-  }
-
   // /api/config/modes/{name} → GET/PUT/DELETE
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);
   if (modeMatch?.[1]) {
@@ -84,6 +74,23 @@ export async function handleConfig(
       env,
       `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}`,
       ["GET", "PUT", "DELETE"]
+    );
+  }
+
+  // /api/config/user-mode/{userId} → PUT/DELETE (UUID v4 only)
+  const userModeMatch = pathname.match(/^\/api\/config\/user-mode\/(.+)$/);
+  if (userModeMatch?.[1]) {
+    const userId = decodeURIComponent(userModeMatch[1]);
+    const UUID_V4_RE =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!UUID_V4_RE.test(userId)) {
+      return errorResponse("Invalid user ID", 400);
+    }
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${org}/users/${encodeURIComponent(userId)}/mode`,
+      ["PUT", "DELETE"]
     );
   }
 

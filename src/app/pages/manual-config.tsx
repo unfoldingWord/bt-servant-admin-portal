@@ -1,16 +1,15 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
 import { useAuthStore } from "@/lib/auth-store";
+import { useUiStore } from "@/lib/ui-store";
 import {
-  useClearDefaultMode,
   useDeleteMode,
   useMode,
   useModes,
   useOrgOverrides,
   useSaveMode,
-  useSetDefaultMode,
   useUpdateOrgOverrides,
 } from "@/hooks/use-prompt-config";
 import type { PromptOverrides, PromptSlot } from "@/types/prompt-override";
@@ -21,7 +20,8 @@ import { PromptPanel } from "@/components/prompt-panel";
 export function ManualConfigPage() {
   const orgName = useAuthStore((s) => s.user?.org);
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
-  const [selectedMode, setSelectedMode] = useState<string | null>(null);
+  const selectedMode = useUiStore((s) => s.selectedMode);
+  const setSelectedMode = useUiStore((s) => s.setSelectedMode);
 
   // Queries
   const orgOverrides = useOrgOverrides();
@@ -32,8 +32,6 @@ export function ManualConfigPage() {
   const updateOrg = useUpdateOrgOverrides();
   const saveMode = useSaveMode();
   const deleteMode = useDeleteMode();
-  const setDefault = useSetDefaultMode();
-  const clearDefault = useClearDefaultMode();
 
   // Current overrides based on selection
   const currentOverrides = useMemo<PromptOverrides>(
@@ -78,7 +76,7 @@ export function ManualConfigPage() {
         { onSuccess: () => setSelectedMode(name) }
       );
     },
-    [saveMode, orgOverrides.data]
+    [saveMode, orgOverrides.data, setSelectedMode]
   );
 
   const handleDeleteMode = useCallback(
@@ -87,19 +85,8 @@ export function ManualConfigPage() {
         onSuccess: () => setSelectedMode(null),
       });
     },
-    [deleteMode]
+    [deleteMode, setSelectedMode]
   );
-
-  const handleSetDefault = useCallback(
-    (name: string) => {
-      setDefault.mutate(name);
-    },
-    [setDefault]
-  );
-
-  const handleClearDefault = useCallback(() => {
-    clearDefault.mutate();
-  }, [clearDefault]);
 
   const isLoading =
     orgOverrides.isLoading ||
@@ -140,11 +127,8 @@ export function ManualConfigPage() {
             onSelectMode={setSelectedMode}
             onCreateMode={handleCreateMode}
             onDeleteMode={handleDeleteMode}
-            onSetDefault={handleSetDefault}
-            onClearDefault={handleClearDefault}
             isCreating={saveMode.isPending}
             isDeleting={deleteMode.isPending}
-            isSettingDefault={setDefault.isPending || clearDefault.isPending}
           />
 
           {/* Error banner */}

@@ -145,11 +145,17 @@ export async function deleteMode(
   }
 }
 
-export async function setDefaultMode(
+// ---------------------------------------------------------------------------
+// Per-user mode
+// ---------------------------------------------------------------------------
+
+export async function setUserMode(
+  userId: string,
   mode: string,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await fetch("/api/config/modes-default", {
+  const url = `/api/config/user-mode/${encodeURIComponent(userId)}`;
+  const res = await fetch(url, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
     body: JSON.stringify({ mode }),
@@ -158,12 +164,16 @@ export async function setDefaultMode(
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Failed to set default mode (${res.status}): ${body}`);
+    throw new Error(`Failed to set user mode (${res.status}): ${body}`);
   }
 }
 
-export async function clearDefaultMode(signal?: AbortSignal): Promise<void> {
-  const res = await fetch("/api/config/modes-default", {
+export async function clearUserMode(
+  userId: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const url = `/api/config/user-mode/${encodeURIComponent(userId)}`;
+  const res = await fetch(url, {
     method: "DELETE",
     headers: SAME_ORIGIN_HEADERS,
     signal,
@@ -171,6 +181,6 @@ export async function clearDefaultMode(signal?: AbortSignal): Promise<void> {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Failed to clear default mode (${res.status}): ${body}`);
+    throw new Error(`Failed to clear user mode (${res.status}): ${body}`);
   }
 }

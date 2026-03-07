@@ -1,9 +1,8 @@
 import { useCallback, useState } from "react";
 import { faLayerGroup } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Plus, Star, StarOff, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 
-import { cn } from "@/lib/utils";
 import type { OrgModes } from "@/types/prompt-override";
 import {
   AlertDialog,
@@ -16,7 +15,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,11 +34,8 @@ interface ModeSelectorProps {
   onSelectMode: (mode: string | null) => void;
   onCreateMode: (name: string, label: string, description: string) => void;
   onDeleteMode: (name: string) => void;
-  onSetDefault: (name: string) => void;
-  onClearDefault: () => void;
   isCreating: boolean;
   isDeleting: boolean;
-  isSettingDefault: boolean;
 }
 
 export function ModeSelector({
@@ -49,11 +44,8 @@ export function ModeSelector({
   onSelectMode,
   onCreateMode,
   onDeleteMode,
-  onSetDefault,
-  onClearDefault,
   isCreating,
   isDeleting,
-  isSettingDefault,
 }: ModeSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -61,8 +53,6 @@ export function ModeSelector({
   const [newDescription, setNewDescription] = useState("");
 
   const modes = modesData?.modes ?? [];
-  const defaultMode = modesData?.default_mode;
-  const isDefault = selectedMode !== null && selectedMode === defaultMode;
 
   const handleCreate = useCallback(() => {
     const slug = newName
@@ -105,17 +95,7 @@ export function ModeSelector({
               {modes.length > 0 && <SelectSeparator />}
               {modes.map((m) => (
                 <SelectItem key={m.name} value={m.name}>
-                  <span className="flex items-center gap-2">
-                    {m.label || m.name}
-                    {m.name === defaultMode && (
-                      <Badge
-                        variant="secondary"
-                        className="px-1.5 py-0 text-[10px]"
-                      >
-                        default
-                      </Badge>
-                    )}
-                  </span>
+                  {m.label || m.name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -129,26 +109,6 @@ export function ModeSelector({
 
         {selectedMode !== null && (
           <div className="border-border flex items-center gap-1 sm:border-l sm:pl-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() =>
-                isDefault ? onClearDefault() : onSetDefault(selectedMode)
-              }
-              disabled={isSettingDefault}
-              className={cn(
-                isDefault &&
-                  "text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
-              )}
-            >
-              {isDefault ? (
-                <StarOff className="mr-1.5 size-3.5" />
-              ) : (
-                <Star className="mr-1.5 size-3.5" />
-              )}
-              {isDefault ? "Remove Default" : "Set as Default"}
-            </Button>
-
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button

@@ -9,6 +9,12 @@ interface UiState {
   testChatOpen: boolean;
   setTestChatOpen: (open: boolean) => void;
   toggleTestChat: () => void;
+  selectedMode: string | null;
+  setSelectedMode: (mode: string | null) => void;
+  chatMode: string | null;
+  chatModeSeeded: boolean;
+  setChatMode: (mode: string | null) => void;
+  testChatUserId: string;
 }
 
 export const useUiStore = create<UiState>()(
@@ -17,9 +23,28 @@ export const useUiStore = create<UiState>()(
       activeSection: "baruch",
       setActiveSection: (activeSection) => set({ activeSection }),
       testChatOpen: false,
-      setTestChatOpen: (testChatOpen) => set({ testChatOpen }),
+      setTestChatOpen: (open) =>
+        set((state) => ({
+          testChatOpen: open,
+          // Seed chat mode from config page mode only on first open
+          ...(open && !state.testChatOpen && !state.chatModeSeeded
+            ? { chatMode: state.selectedMode, chatModeSeeded: true }
+            : {}),
+        })),
       toggleTestChat: () =>
-        set((state) => ({ testChatOpen: !state.testChatOpen })),
+        set((state) => ({
+          testChatOpen: !state.testChatOpen,
+          // Seed chat mode from config page mode only on first open
+          ...(!state.testChatOpen && !state.chatModeSeeded
+            ? { chatMode: state.selectedMode, chatModeSeeded: true }
+            : {}),
+        })),
+      selectedMode: null,
+      setSelectedMode: (selectedMode) => set({ selectedMode }),
+      chatMode: null,
+      chatModeSeeded: false,
+      setChatMode: (chatMode) => set({ chatMode }),
+      testChatUserId: crypto.randomUUID(),
     }),
     {
       name: "bt-servant-ui",

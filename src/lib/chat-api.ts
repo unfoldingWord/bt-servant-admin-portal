@@ -10,12 +10,13 @@ const SAME_ORIGIN_HEADERS = {
 
 export async function enqueueMessage(
   message: string,
+  userId: string,
   signal?: AbortSignal
 ): Promise<EnqueueResponse> {
   const res = await fetch("/api/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
-    body: JSON.stringify({ message, message_type: "text" }),
+    body: JSON.stringify({ message, message_type: "text", user_id: userId }),
     signal,
   });
 
@@ -30,9 +31,14 @@ export async function enqueueMessage(
 export async function pollEvents(
   messageId: string,
   cursor: string,
+  userId: string,
   signal?: AbortSignal
 ): Promise<PollResponse> {
-  const params = new URLSearchParams({ message_id: messageId, cursor });
+  const params = new URLSearchParams({
+    message_id: messageId,
+    cursor,
+    user_id: userId,
+  });
   const res = await fetch(`/api/chat/stream/poll?${params.toString()}`, {
     headers: SAME_ORIGIN_HEADERS,
     signal,
@@ -47,6 +53,7 @@ export async function pollEvents(
 }
 
 export async function fetchHistory(
+  userId: string,
   limit = 50,
   offset = 0,
   signal?: AbortSignal
@@ -54,6 +61,7 @@ export async function fetchHistory(
   const params = new URLSearchParams({
     limit: String(limit),
     offset: String(offset),
+    user_id: userId,
   });
   const res = await fetch(`/api/chat/history?${params.toString()}`, {
     headers: SAME_ORIGIN_HEADERS,
@@ -68,8 +76,12 @@ export async function fetchHistory(
   return (await res.json()) as ChatHistoryResponse;
 }
 
-export async function deleteHistory(signal?: AbortSignal): Promise<void> {
-  const res = await fetch("/api/chat/history", {
+export async function deleteHistory(
+  userId: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const params = new URLSearchParams({ user_id: userId });
+  const res = await fetch(`/api/chat/history?${params.toString()}`, {
     method: "DELETE",
     headers: SAME_ORIGIN_HEADERS,
     signal,

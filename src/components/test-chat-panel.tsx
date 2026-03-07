@@ -14,8 +14,20 @@ import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/lib/theme-store";
 import { useUiStore } from "@/lib/ui-store";
 import { useTestChat } from "@/hooks/use-test-chat";
+import {
+  useModes,
+  useSetUserMode,
+  useClearUserMode,
+} from "@/hooks/use-prompt-config";
 import { useAnimatedText } from "@/hooks/use-animated-text";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Tooltip,
   TooltipContent,
@@ -154,8 +166,40 @@ function ThinkingIndicator({ status }: { status: string | null }) {
 }
 
 export function TestChatPanel() {
+  const testChatOpen = useUiStore((s) => s.testChatOpen);
   const setTestChatOpen = useUiStore((s) => s.setTestChatOpen);
+  const chatMode = useUiStore((s) => s.chatMode);
+  const setChatMode = useUiStore((s) => s.setChatMode);
+  const testChatUserId = useUiStore((s) => s.testChatUserId);
   const theme = useThemeStore((s) => s.theme);
+  const modesQuery = useModes();
+  const { mutate: setUserModeMutate } = useSetUserMode();
+  const { mutate: clearUserModeMutate } = useClearUserMode();
+
+  // Sync the seeded chatMode to the backend on first open
+  const syncedRef = useRef(false);
+  useEffect(() => {
+    if (testChatOpen && !syncedRef.current) {
+      syncedRef.current = true;
+      const mode = useUiStore.getState().chatMode;
+      if (mode) {
+        setUserModeMutate({ userId: testChatUserId, mode });
+      }
+    }
+  }, [testChatOpen, testChatUserId, setUserModeMutate]);
+
+  const handleModeChange = useCallback(
+    (value: string) => {
+      const mode = value === "__org__" ? null : value;
+      setChatMode(mode);
+      if (mode) {
+        setUserModeMutate({ userId: testChatUserId, mode });
+      } else {
+        clearUserModeMutate(testChatUserId);
+      }
+    },
+    [setChatMode, testChatUserId, setUserModeMutate, clearUserModeMutate]
+  );
   const {
     messages,
     isLoading,
@@ -198,9 +242,29 @@ export function TestChatPanel() {
     <div className="bg-card flex h-full flex-col">
       {/* Header */}
       <div className="border-border/50 flex h-12 shrink-0 items-center justify-between border-b px-4">
-        <span className="text-foreground text-sm font-semibold tracking-tight">
-          BT Servant Chat
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-foreground text-sm font-semibold tracking-tight">
+            BT Servant Chat
+          </span>
+          {modesQuery.data && modesQuery.data.modes.length > 0 && (
+            <Select
+              value={chatMode ?? "__org__"}
+              onValueChange={handleModeChange}
+            >
+              <SelectTrigger size="sm" className="h-7 w-32 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__org__">Org Defaults</SelectItem>
+                {modesQuery.data.modes.map((m) => (
+                  <SelectItem key={m.name} value={m.name}>
+                    {m.label || m.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
         <div className="flex items-center gap-1">
           {hasMessages && (
             <Tooltip>
@@ -215,7 +279,10 @@ export function TestChatPanel() {
                   <FontAwesomeIcon icon={faTrashCan} className="size-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">
+              <TooltipContent
+                side="bottom"
+                className="right-0 left-auto translate-x-0"
+              >
                 Clear conversation history
               </TooltipContent>
             </Tooltip>
@@ -311,7 +378,7 @@ export function TestChatPanel() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Chat with BT Servant…"
+              placeholder="Test Prompt Configuration"
               disabled={isLoading}
               className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent text-sm outline-none disabled:opacity-50"
             />
