@@ -11,6 +11,8 @@ interface UiState {
   toggleTestChat: () => void;
   selectedMode: string | null;
   setSelectedMode: (mode: string | null) => void;
+  chatMode: string | null;
+  setChatMode: (mode: string | null) => void;
   testChatUserId: string;
 }
 
@@ -20,11 +22,24 @@ export const useUiStore = create<UiState>()(
       activeSection: "baruch",
       setActiveSection: (activeSection) => set({ activeSection }),
       testChatOpen: false,
-      setTestChatOpen: (testChatOpen) => set({ testChatOpen }),
+      setTestChatOpen: (open) =>
+        set((state) => ({
+          testChatOpen: open,
+          // Seed chat mode from config page mode when opening
+          ...(open && !state.testChatOpen
+            ? { chatMode: state.selectedMode }
+            : {}),
+        })),
       toggleTestChat: () =>
-        set((state) => ({ testChatOpen: !state.testChatOpen })),
+        set((state) => ({
+          testChatOpen: !state.testChatOpen,
+          // Seed chat mode from config page mode when opening
+          ...(!state.testChatOpen ? { chatMode: state.selectedMode } : {}),
+        })),
       selectedMode: null,
       setSelectedMode: (selectedMode) => set({ selectedMode }),
+      chatMode: null,
+      setChatMode: (chatMode) => set({ chatMode }),
       testChatUserId: crypto.randomUUID(),
     }),
     {

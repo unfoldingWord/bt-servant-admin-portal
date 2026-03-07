@@ -167,8 +167,8 @@ function ThinkingIndicator({ status }: { status: string | null }) {
 
 export function TestChatPanel() {
   const setTestChatOpen = useUiStore((s) => s.setTestChatOpen);
-  const selectedMode = useUiStore((s) => s.selectedMode);
-  const setSelectedMode = useUiStore((s) => s.setSelectedMode);
+  const chatMode = useUiStore((s) => s.chatMode);
+  const setChatMode = useUiStore((s) => s.setChatMode);
   const testChatUserId = useUiStore((s) => s.testChatUserId);
   const theme = useThemeStore((s) => s.theme);
   const modesQuery = useModes();
@@ -178,14 +178,14 @@ export function TestChatPanel() {
   const handleModeChange = useCallback(
     (value: string) => {
       const mode = value === "__org__" ? null : value;
-      setSelectedMode(mode);
+      setChatMode(mode);
       if (mode) {
         setUserMode.mutate({ userId: testChatUserId, mode });
       } else {
         clearUserMode.mutate(testChatUserId);
       }
     },
-    [setSelectedMode, testChatUserId, setUserMode, clearUserMode]
+    [setChatMode, testChatUserId, setUserMode, clearUserMode]
   );
   const {
     messages,
@@ -235,7 +235,7 @@ export function TestChatPanel() {
           </span>
           {modesQuery.data && modesQuery.data.modes.length > 0 && (
             <Select
-              value={selectedMode ?? "__org__"}
+              value={chatMode ?? "__org__"}
               onValueChange={handleModeChange}
             >
               <SelectTrigger size="sm" className="h-7 w-32 text-xs">
