@@ -50,7 +50,7 @@ export function LoginPage() {
       </div>
 
       {/* Login card */}
-      <Card className="animate-in fade-in w-full max-w-sm shadow-xl [animation-duration:500ms] dark:shadow-black/40">
+      <Card className="animate-in fade-in dark:bg-card w-full max-w-sm bg-white shadow-xl [animation-duration:500ms] dark:shadow-black/40">
         <CardHeader className="items-center justify-items-center text-center">
           <div className="relative -mb-1 flex size-14 items-center justify-center">
             <span
@@ -73,13 +73,13 @@ export function LoginPage() {
             </span>
             <FontAwesomeIcon
               icon={faScrewdriverWrench}
-              className="absolute -right-1.5 bottom-2.5 text-sm text-slate-500 drop-shadow-sm dark:text-slate-300"
+              className="text-muted-foreground absolute -right-1.5 bottom-2.5 text-sm drop-shadow-sm"
             />
           </div>
           <CardTitle className="text-2xl font-bold tracking-tight">
             BT Servant
           </CardTitle>
-          <p className="text-muted-foreground/60 text-xs font-medium tracking-widest uppercase">
+          <p className="text-muted-foreground/80 text-xs font-medium tracking-widest uppercase">
             Admin Portal
           </p>
         </CardHeader>
@@ -122,7 +122,7 @@ export function LoginPage() {
 
             <Button
               type="submit"
-              className="mt-8 h-11 w-full"
+              className="mt-6 h-11 w-full"
               disabled={submitting}
             >
               {submitting ? (
@@ -139,8 +139,8 @@ export function LoginPage() {
       </Card>
 
       {/* Version footer */}
-      <p className="text-primary/50 dark:text-muted-foreground/60 mt-3 text-xs">
-        BT Servant Admin Portal v0.3.0
+      <p className="text-muted-foreground/60 mt-3 text-xs">
+        BT Servant Admin Portal v0.4.1
       </p>
     </div>
   );

@@ -28,7 +28,7 @@ export function ThemeToggle({
       className="text-muted-foreground hover:!text-primary size-10 rounded-md transition-all hover:!bg-transparent active:scale-95"
     >
       <FontAwesomeIcon
-        icon={theme === "dark" ? faMoonLight : faSunBrightLight}
+        icon={theme === "dark" ? faSunBrightLight : faMoonLight}
         className="text-xl"
       />
     </Button>

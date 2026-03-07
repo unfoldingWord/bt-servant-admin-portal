@@ -36,6 +36,27 @@ export async function logout(): Promise<void> {
   });
 }
 
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  const res = await fetch("/api/auth/change-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+
+  if (!res.ok) {
+    const body = await res
+      .json()
+      .catch(() => ({ error: "Failed to change password" }));
+    throw new Error(
+      (body as { error?: string }).error ||
+        `Failed to change password (${res.status})`
+    );
+  }
+}
+
 export async function fetchMe(): Promise<AuthUser | null> {
   const res = await fetch("/api/auth/me", {
     headers: SAME_ORIGIN_HEADERS,

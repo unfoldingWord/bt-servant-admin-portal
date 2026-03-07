@@ -22,6 +22,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -60,6 +61,7 @@
   --accent: oklch(0.918 0 0);
   --accent-foreground: oklch(0.318 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  --success: oklch(0.527 0.154 150);
   --border: oklch(0.918 0 0);
   --input: oklch(0.844 0 0);
   --ring: oklch(0.475 0.157 248);
@@ -94,6 +96,7 @@
   --accent: oklch(0.249 0.01 248);
   --accent-foreground: oklch(1 0 0);
   --destructive: oklch(0.637 0.237 25);
+  --success: oklch(0.75 0.168 152);
   --border: oklch(0.249 0.01 248);
   --input: oklch(0.278 0.01 248);
   --ring: oklch(0.541 0.168 248);
@@ -192,7 +195,12 @@
 
 /* Login page — neutral grey matching the sidebar/card tone */
 .login-bg {
-  background: oklch(0.98 0 0);
+  background: linear-gradient(
+    135deg,
+    oklch(0.94 0.008 248) 0%,
+    oklch(0.92 0.012 260) 50%,
+    oklch(0.94 0.005 240) 100%
+  );
 }
 
 .dark .login-bg {

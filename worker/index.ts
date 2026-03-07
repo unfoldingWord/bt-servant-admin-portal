@@ -1,5 +1,11 @@
 import { handleAdmin } from "./admin";
-import { handleLogin, handleLogout, handleMe, validateSession } from "./auth";
+import {
+  handleChangePassword,
+  handleLogin,
+  handleLogout,
+  handleMe,
+  validateSession,
+} from "./auth";
 import {
   handleDeleteHistory,
   handleEnqueue,
@@ -14,7 +20,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // Auth endpoints — no session required
+    // Auth endpoints (some require session — see individual handlers)
     if (url.pathname.startsWith("/api/auth/")) {
       const blocked = requireSameOrigin(request);
       if (blocked) return blocked;
@@ -27,6 +33,9 @@ export default {
       }
       if (url.pathname === "/api/auth/me") {
         return handleMe(request, env);
+      }
+      if (url.pathname === "/api/auth/change-password") {
+        return handleChangePassword(request, env);
       }
       return errorResponse("Not found", 404);
     }
