@@ -140,7 +140,7 @@ export function LoginPage() {
 
       {/* Version footer */}
       <p className="text-muted-foreground/60 mt-3 text-xs">
-        BT Servant Admin Portal v0.5.0
+        BT Servant Admin Portal v0.5.1
       </p>
     </div>
   );

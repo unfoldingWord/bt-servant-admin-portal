@@ -64,7 +64,7 @@ export function UserMenu() {
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <p className="text-muted-foreground/50 px-2 py-1.5 text-[10px]">
-            BAP v0.5.0
+            BAP v0.5.1
           </p>
         </DropdownMenuContent>
       </DropdownMenu>
