@@ -132,6 +132,15 @@
   }
 }
 
+/* Prevent iOS Safari auto-zoom on input focus (requires >= 16px) */
+@supports (-webkit-overflow-scrolling: touch) {
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}
+
 /* Font Awesome FOUC prevention */
 .svg-inline--fa {
   display: inline-block;
