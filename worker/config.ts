@@ -87,10 +87,15 @@ export async function handleConfig(
     );
   }
 
-  // /api/config/user-mode/{userId} → PUT/DELETE
+  // /api/config/user-mode/{userId} → PUT/DELETE (UUID v4 only)
   const userModeMatch = pathname.match(/^\/api\/config\/user-mode\/(.+)$/);
   if (userModeMatch?.[1]) {
     const userId = decodeURIComponent(userModeMatch[1]);
+    const UUID_V4_RE =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!UUID_V4_RE.test(userId)) {
+      return errorResponse("Invalid user ID", 400);
+    }
     return proxyToEngine(
       request,
       env,
