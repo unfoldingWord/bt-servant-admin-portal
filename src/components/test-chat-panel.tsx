@@ -183,10 +183,12 @@ export function TestChatPanel() {
       const mode = useUiStore.getState().chatMode;
       if (mode) {
         setUserModeMutate({ userId: testChatUserId, mode });
+      } else {
+        clearUserModeMutate(testChatUserId);
       }
     }
     prevOpenRef.current = testChatOpen;
-  }, [testChatOpen, testChatUserId, setUserModeMutate]);
+  }, [testChatOpen, testChatUserId, setUserModeMutate, clearUserModeMutate]);
 
   const handleModeChange = useCallback(
     (value: string) => {
