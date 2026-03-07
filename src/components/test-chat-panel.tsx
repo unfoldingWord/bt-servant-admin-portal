@@ -172,20 +172,20 @@ export function TestChatPanel() {
   const testChatUserId = useUiStore((s) => s.testChatUserId);
   const theme = useThemeStore((s) => s.theme);
   const modesQuery = useModes();
-  const setUserMode = useSetUserMode();
-  const clearUserMode = useClearUserMode();
+  const { mutate: setUserModeMutate } = useSetUserMode();
+  const { mutate: clearUserModeMutate } = useClearUserMode();
 
   const handleModeChange = useCallback(
     (value: string) => {
       const mode = value === "__org__" ? null : value;
       setChatMode(mode);
       if (mode) {
-        setUserMode.mutate({ userId: testChatUserId, mode });
+        setUserModeMutate({ userId: testChatUserId, mode });
       } else {
-        clearUserMode.mutate(testChatUserId);
+        clearUserModeMutate(testChatUserId);
       }
     },
-    [setChatMode, testChatUserId, setUserMode, clearUserMode]
+    [setChatMode, testChatUserId, setUserModeMutate, clearUserModeMutate]
   );
   const {
     messages,

@@ -4,6 +4,19 @@ import type { SessionData } from "./types";
 
 const CLIENT_ID = "admin-portal";
 
+// Only accept user_id overrides that are valid UUID v4 (from crypto.randomUUID).
+// This prevents IDOR — real user IDs from the auth system are not UUIDs.
+const UUID_V4_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function resolveUserId(
+  override: string | null | undefined,
+  session: SessionData
+): string {
+  if (override && UUID_V4_RE.test(override)) return override;
+  return session.userId;
+}
+
 export async function handleEnqueue(
   request: Request,
   env: Env,
@@ -28,7 +41,7 @@ export async function handleEnqueue(
   const engineBody = {
     message: body.message,
     message_type: body.message_type || "text",
-    user_id: body.user_id || session.userId,
+    user_id: resolveUserId(body.user_id, session),
     org: session.org,
     client_id: CLIENT_ID,
   };
@@ -77,7 +90,7 @@ export async function handlePoll(
   }
 
   const params = new URLSearchParams({
-    user_id: url.searchParams.get("user_id") || session.userId,
+    user_id: resolveUserId(url.searchParams.get("user_id"), session),
     message_id: messageId,
     org: session.org,
     cursor,
@@ -142,7 +155,7 @@ export async function handleHistory(
     Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0)
   );
 
-  const userId = url.searchParams.get("user_id") || session.userId;
+  const userId = resolveUserId(url.searchParams.get("user_id"), session);
   const params = new URLSearchParams({ limit, offset });
   const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${session.org}/users/${userId}/history?${params.toString()}`;
 
@@ -182,7 +195,7 @@ export async function handleDeleteHistory(
   }
 
   const url = new URL(request.url);
-  const userId = url.searchParams.get("user_id") || session.userId;
+  const userId = resolveUserId(url.searchParams.get("user_id"), session);
   const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${session.org}/users/${userId}/history`;
 
   const engineRes = await fetch(engineUrl, {
