@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
 import { useAuthStore } from "@/lib/auth-store";
+import { useUiStore } from "@/lib/ui-store";
 import {
   useClearDefaultMode,
   useDeleteMode,
@@ -21,7 +22,8 @@ import { PromptPanel } from "@/components/prompt-panel";
 export function ManualConfigPage() {
   const orgName = useAuthStore((s) => s.user?.org);
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
-  const [selectedMode, setSelectedMode] = useState<string | null>(null);
+  const selectedMode = useUiStore((s) => s.selectedMode);
+  const setSelectedMode = useUiStore((s) => s.setSelectedMode);
 
   // Queries
   const orgOverrides = useOrgOverrides();
@@ -78,7 +80,7 @@ export function ManualConfigPage() {
         { onSuccess: () => setSelectedMode(name) }
       );
     },
-    [saveMode, orgOverrides.data]
+    [saveMode, orgOverrides.data, setSelectedMode]
   );
 
   const handleDeleteMode = useCallback(
@@ -87,7 +89,7 @@ export function ManualConfigPage() {
         onSuccess: () => setSelectedMode(null),
       });
     },
-    [deleteMode]
+    [deleteMode, setSelectedMode]
   );
 
   const handleSetDefault = useCallback(

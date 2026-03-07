@@ -6,6 +6,7 @@ import {
   fetchHistory,
   pollEvents,
 } from "@/lib/chat-api";
+import { useUiStore } from "@/lib/ui-store";
 import type { ChatHistoryEntry, ChatMessage, SSEEvent } from "@/types/chat";
 
 const POLL_INTERVAL_ACTIVE = 600;
@@ -13,6 +14,7 @@ const POLL_INTERVAL_IDLE = 1500;
 const POLL_TIMEOUT = 120_000;
 
 export function useTestChat() {
+  const testChatUserId = useUiStore((s) => s.testChatUserId);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
@@ -38,7 +40,7 @@ export function useTestChat() {
     const controller = new AbortController();
     setIsLoadingHistory(true);
 
-    fetchHistory(50, 0, controller.signal)
+    fetchHistory(testChatUserId, 50, 0, controller.signal)
       .then((data) => {
         const historyMessages: ChatMessage[] = [];
         data.entries.forEach((entry: ChatHistoryEntry, i: number) => {
@@ -76,7 +78,7 @@ export function useTestChat() {
     return () => {
       controller.abort();
     };
-  }, []);
+  }, [testChatUserId]);
 
   // Called by the component when AnimatedText finishes catching up
   const finalizeComplete = useCallback(() => {
@@ -105,7 +107,12 @@ export function useTestChat() {
           throw new Error("Response timed out after 2 minutes");
         }
 
-        const response = await pollEvents(messageId, cursor, signal);
+        const response = await pollEvents(
+          messageId,
+          cursor,
+          testChatUserId,
+          signal
+        );
         cursor = response.cursor;
 
         for (const rawEvent of response.events) {
@@ -163,7 +170,7 @@ export function useTestChat() {
 
       return { finalText: accumulated, hadStreaming: accumulated.length > 0 };
     },
-    []
+    [testChatUserId]
   );
 
   const sendMessage = useCallback(
@@ -191,7 +198,11 @@ export function useTestChat() {
       setStatusMessage(null);
 
       try {
-        const { message_id } = await enqueueMessage(trimmed, controller.signal);
+        const { message_id } = await enqueueMessage(
+          trimmed,
+          testChatUserId,
+          controller.signal
+        );
 
         const { finalText, hadStreaming } = await pollLoop(
           message_id,
@@ -231,7 +242,7 @@ export function useTestChat() {
         setStatusMessage(null);
       }
     },
-    [isLoading, pollLoop]
+    [isLoading, pollLoop, testChatUserId]
   );
 
   const clearMessages = useCallback(() => {
@@ -244,11 +255,11 @@ export function useTestChat() {
     setStatusMessage(null);
     setError(null);
 
-    deleteHistory().catch((err) => {
+    deleteHistory(testChatUserId).catch((err) => {
       console.warn("[useTestChat] Failed to delete server history:", err);
       setError("Failed to clear server history. It may reappear on reload.");
     });
-  }, []);
+  }, [testChatUserId]);
 
   const streamingCreatedAt = useRef(new Date());
 

@@ -13,7 +13,7 @@ export async function handleEnqueue(
     return errorResponse("Method not allowed", 405);
   }
 
-  let body: { message?: string; message_type?: string };
+  let body: { message?: string; message_type?: string; user_id?: string };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -28,7 +28,7 @@ export async function handleEnqueue(
   const engineBody = {
     message: body.message,
     message_type: body.message_type || "text",
-    user_id: session.userId,
+    user_id: body.user_id || session.userId,
     org: session.org,
     client_id: CLIENT_ID,
   };
@@ -77,7 +77,7 @@ export async function handlePoll(
   }
 
   const params = new URLSearchParams({
-    user_id: session.userId,
+    user_id: url.searchParams.get("user_id") || session.userId,
     message_id: messageId,
     org: session.org,
     cursor,
@@ -142,8 +142,9 @@ export async function handleHistory(
     Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0)
   );
 
+  const userId = url.searchParams.get("user_id") || session.userId;
   const params = new URLSearchParams({ limit, offset });
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${session.org}/users/${session.userId}/history?${params.toString()}`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${session.org}/users/${userId}/history?${params.toString()}`;
 
   const engineRes = await fetch(engineUrl, {
     headers: {
@@ -180,7 +181,9 @@ export async function handleDeleteHistory(
     return errorResponse("Method not allowed", 405);
   }
 
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${session.org}/users/${session.userId}/history`;
+  const url = new URL(request.url);
+  const userId = url.searchParams.get("user_id") || session.userId;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${session.org}/users/${userId}/history`;
 
   const engineRes = await fetch(engineUrl, {
     method: "DELETE",

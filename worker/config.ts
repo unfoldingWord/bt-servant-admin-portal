@@ -87,6 +87,18 @@ export async function handleConfig(
     );
   }
 
+  // /api/config/user-mode/{userId} → PUT/DELETE
+  const userModeMatch = pathname.match(/^\/api\/config\/user-mode\/(.+)$/);
+  if (userModeMatch?.[1]) {
+    const userId = decodeURIComponent(userModeMatch[1]);
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${org}/users/${encodeURIComponent(userId)}/mode`,
+      ["PUT", "DELETE"]
+    );
+  }
+
   // /api/config/modes → GET
   if (pathname === "/api/config/modes") {
     return proxyToEngine(request, env, `/api/v1/admin/orgs/${org}/modes`, [

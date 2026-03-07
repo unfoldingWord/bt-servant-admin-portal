@@ -9,6 +9,9 @@ interface UiState {
   testChatOpen: boolean;
   setTestChatOpen: (open: boolean) => void;
   toggleTestChat: () => void;
+  selectedMode: string | null;
+  setSelectedMode: (mode: string | null) => void;
+  testChatUserId: string;
 }
 
 export const useUiStore = create<UiState>()(
@@ -20,6 +23,9 @@ export const useUiStore = create<UiState>()(
       setTestChatOpen: (testChatOpen) => set({ testChatOpen }),
       toggleTestChat: () =>
         set((state) => ({ testChatOpen: !state.testChatOpen })),
+      selectedMode: null,
+      setSelectedMode: (selectedMode) => set({ selectedMode }),
+      testChatUserId: crypto.randomUUID(),
     }),
     {
       name: "bt-servant-ui",

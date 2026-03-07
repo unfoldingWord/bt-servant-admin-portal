@@ -174,3 +174,47 @@ export async function clearDefaultMode(signal?: AbortSignal): Promise<void> {
     throw new Error(`Failed to clear default mode (${res.status}): ${body}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Per-user mode
+// ---------------------------------------------------------------------------
+
+export async function setUserMode(
+  userId: string,
+  mode: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const res = await fetch(
+    `/api/config/user-mode/${encodeURIComponent(userId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
+      body: JSON.stringify({ mode }),
+      signal,
+    }
+  );
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Failed to set user mode (${res.status}): ${body}`);
+  }
+}
+
+export async function clearUserMode(
+  userId: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const res = await fetch(
+    `/api/config/user-mode/${encodeURIComponent(userId)}`,
+    {
+      method: "DELETE",
+      headers: SAME_ORIGIN_HEADERS,
+      signal,
+    }
+  );
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Failed to clear user mode (${res.status}): ${body}`);
+  }
+}

@@ -104,3 +104,16 @@ export function useClearDefaultMode() {
     },
   });
 }
+
+export function useSetUserMode() {
+  return useMutation({
+    mutationFn: ({ userId, mode }: { userId: string; mode: string }) =>
+      configApi.setUserMode(userId, mode),
+  });
+}
+
+export function useClearUserMode() {
+  return useMutation({
+    mutationFn: (userId: string) => configApi.clearUserMode(userId),
+  });
+}
