@@ -210,11 +210,6 @@ export async function handleChangePassword(
     return errorResponse("Unauthorized", 401);
   }
 
-  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  if (await isRateLimited(ip, env, "change-password")) {
-    return errorResponse("Too many attempts. Try again later.", 429);
-  }
-
   let body: { currentPassword?: string; newPassword?: string };
   try {
     body = (await request.json()) as typeof body;
@@ -232,8 +227,18 @@ export async function handleChangePassword(
     return errorResponse("New password must be at least 8 characters", 400);
   }
 
+  if (newPassword.length > 128) {
+    return errorResponse("New password must be at most 128 characters", 400);
+  }
+
   if (currentPassword === newPassword) {
     return errorResponse("New password must differ from current password", 400);
+  }
+
+  // Rate-limit after input validation so malformed requests don't burn slots
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  if (await isRateLimited(ip, env, "change-password")) {
+    return errorResponse("Too many attempts. Try again later.", 429);
   }
 
   const user = await env.AUTH_KV.get<StoredUser>(`user:${session.email}`, {
@@ -253,6 +258,19 @@ export async function handleChangePassword(
   user.passwordHash = await hashPassword(newPassword, newSalt);
 
   await env.AUTH_KV.put(`user:${session.email}`, JSON.stringify(user));
+
+  // Invalidate all other sessions for this user
+  const currentSessionId = getSessionId(request);
+  const sessionKeys = await env.AUTH_KV.list({ prefix: "session:" });
+  const deletePromises: Promise<void>[] = [];
+  for (const key of sessionKeys.keys) {
+    if (key.name === `session:${currentSessionId}`) continue;
+    const sess = await env.AUTH_KV.get<SessionData>(key.name, { type: "json" });
+    if (sess?.email === session.email) {
+      deletePromises.push(env.AUTH_KV.delete(key.name));
+    }
+  }
+  await Promise.all(deletePromises);
 
   return jsonResponse({ ok: true });
 }

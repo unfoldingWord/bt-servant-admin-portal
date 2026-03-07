@@ -20,7 +20,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // Auth endpoints — no session required
+    // Auth endpoints (some require session — see individual handlers)
     if (url.pathname.startsWith("/api/auth/")) {
       const blocked = requireSameOrigin(request);
       if (blocked) return blocked;

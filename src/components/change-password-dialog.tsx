@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const MIN_PASSWORD_LENGTH = 8;
+const MAX_PASSWORD_LENGTH = 128;
 
 export function ChangePasswordDialog({
   open,
@@ -52,6 +53,8 @@ export function ChangePasswordDialog({
     if (!newPassword) return "New password is required";
     if (newPassword.length < MIN_PASSWORD_LENGTH)
       return `New password must be at least ${String(MIN_PASSWORD_LENGTH)} characters`;
+    if (newPassword.length > MAX_PASSWORD_LENGTH)
+      return `New password must be at most ${String(MAX_PASSWORD_LENGTH)} characters`;
     if (newPassword !== confirmPassword) return "Passwords do not match";
     if (currentPassword === newPassword)
       return "New password must differ from your current password";
