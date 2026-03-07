@@ -176,19 +176,17 @@ export function TestChatPanel() {
   const { mutate: setUserModeMutate } = useSetUserMode();
   const { mutate: clearUserModeMutate } = useClearUserMode();
 
-  // Sync the seeded chatMode to the backend when the panel opens
-  const prevOpenRef = useRef(false);
+  // Sync the seeded chatMode to the backend on first open
+  const syncedRef = useRef(false);
   useEffect(() => {
-    if (testChatOpen && !prevOpenRef.current) {
+    if (testChatOpen && !syncedRef.current) {
+      syncedRef.current = true;
       const mode = useUiStore.getState().chatMode;
       if (mode) {
         setUserModeMutate({ userId: testChatUserId, mode });
-      } else {
-        clearUserModeMutate(testChatUserId);
       }
     }
-    prevOpenRef.current = testChatOpen;
-  }, [testChatOpen, testChatUserId, setUserModeMutate, clearUserModeMutate]);
+  }, [testChatOpen, testChatUserId, setUserModeMutate]);
 
   const handleModeChange = useCallback(
     (value: string) => {

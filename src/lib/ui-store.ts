@@ -12,6 +12,7 @@ interface UiState {
   selectedMode: string | null;
   setSelectedMode: (mode: string | null) => void;
   chatMode: string | null;
+  chatModeSeeded: boolean;
   setChatMode: (mode: string | null) => void;
   testChatUserId: string;
 }
@@ -25,20 +26,23 @@ export const useUiStore = create<UiState>()(
       setTestChatOpen: (open) =>
         set((state) => ({
           testChatOpen: open,
-          // Seed chat mode from config page mode when opening
-          ...(open && !state.testChatOpen
-            ? { chatMode: state.selectedMode }
+          // Seed chat mode from config page mode only on first open
+          ...(open && !state.testChatOpen && !state.chatModeSeeded
+            ? { chatMode: state.selectedMode, chatModeSeeded: true }
             : {}),
         })),
       toggleTestChat: () =>
         set((state) => ({
           testChatOpen: !state.testChatOpen,
-          // Seed chat mode from config page mode when opening
-          ...(!state.testChatOpen ? { chatMode: state.selectedMode } : {}),
+          // Seed chat mode from config page mode only on first open
+          ...(!state.testChatOpen && !state.chatModeSeeded
+            ? { chatMode: state.selectedMode, chatModeSeeded: true }
+            : {}),
         })),
       selectedMode: null,
       setSelectedMode: (selectedMode) => set({ selectedMode }),
       chatMode: null,
+      chatModeSeeded: false,
       setChatMode: (chatMode) => set({ chatMode }),
       testChatUserId: crypto.randomUUID(),
     }),
