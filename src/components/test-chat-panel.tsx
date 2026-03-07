@@ -166,6 +166,7 @@ function ThinkingIndicator({ status }: { status: string | null }) {
 }
 
 export function TestChatPanel() {
+  const testChatOpen = useUiStore((s) => s.testChatOpen);
   const setTestChatOpen = useUiStore((s) => s.setTestChatOpen);
   const chatMode = useUiStore((s) => s.chatMode);
   const setChatMode = useUiStore((s) => s.setChatMode);
@@ -174,6 +175,18 @@ export function TestChatPanel() {
   const modesQuery = useModes();
   const { mutate: setUserModeMutate } = useSetUserMode();
   const { mutate: clearUserModeMutate } = useClearUserMode();
+
+  // Sync the seeded chatMode to the backend when the panel opens
+  const prevOpenRef = useRef(false);
+  useEffect(() => {
+    if (testChatOpen && !prevOpenRef.current) {
+      const mode = useUiStore.getState().chatMode;
+      if (mode) {
+        setUserModeMutate({ userId: testChatUserId, mode });
+      }
+    }
+    prevOpenRef.current = testChatOpen;
+  }, [testChatOpen, testChatUserId, setUserModeMutate]);
 
   const handleModeChange = useCallback(
     (value: string) => {
