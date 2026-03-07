@@ -261,16 +261,28 @@ export async function handleChangePassword(
 
   // Invalidate all other sessions for this user
   const currentSessionId = getSessionId(request);
-  const sessionKeys = await env.AUTH_KV.list({ prefix: "session:" });
+  let cursor: string | undefined;
   const deletePromises: Promise<void>[] = [];
-  for (const key of sessionKeys.keys) {
-    if (key.name === `session:${currentSessionId}`) continue;
-    const sess = await env.AUTH_KV.get<SessionData>(key.name, { type: "json" });
-    if (sess?.email === session.email) {
-      deletePromises.push(env.AUTH_KV.delete(key.name));
-    }
-  }
-  await Promise.all(deletePromises);
+  do {
+    const page = await env.AUTH_KV.list({
+      prefix: "session:",
+      cursor,
+    });
+
+    const reads = page.keys
+      .filter((key) => key.name !== `session:${currentSessionId}`)
+      .map(async (key) => {
+        const sess = await env.AUTH_KV.get<SessionData>(key.name, {
+          type: "json",
+        });
+        if (sess?.email === session.email) {
+          deletePromises.push(env.AUTH_KV.delete(key.name));
+        }
+      });
+    await Promise.all(reads);
+
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
 
   return jsonResponse({ ok: true });
 }
