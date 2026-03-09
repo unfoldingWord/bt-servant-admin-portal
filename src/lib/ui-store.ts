@@ -48,7 +48,7 @@ export const useUiStore = create<UiState>()(
     }),
     {
       name: "bt-servant-ui",
-      partialize: (state) => ({ testChatOpen: state.testChatOpen }),
+      partialize: () => ({}),
     }
   )
 );
