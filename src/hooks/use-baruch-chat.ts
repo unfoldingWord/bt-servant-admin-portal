@@ -106,7 +106,8 @@ export function useBaruchChat() {
     async function runInitiation() {
       const res = await baruchInitiateConversation(controller.signal);
 
-      const reader = res.body!.getReader();
+      if (!res.body) throw new Error("Initiate response has no body");
+      const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let accumulated = "";
       let sseBuffer = "";
