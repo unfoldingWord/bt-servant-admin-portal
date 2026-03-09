@@ -7,6 +7,13 @@ import {
   validateSession,
 } from "./auth";
 import {
+  handleBaruchDeleteHistory,
+  handleBaruchEnqueue,
+  handleBaruchHistory,
+  handleBaruchInitiate,
+  handleBaruchPoll,
+} from "./baruch";
+import {
   handleDeleteHistory,
   handleEnqueue,
   handleHistory,
@@ -82,6 +89,36 @@ export default {
       }
 
       return handleConfig(request, env, session, url.pathname);
+    }
+
+    // Baruch chat endpoints — session required
+    if (
+      url.pathname === "/api/baruch/stream" ||
+      url.pathname === "/api/baruch/stream/poll" ||
+      url.pathname === "/api/baruch/history" ||
+      url.pathname === "/api/baruch/initiate"
+    ) {
+      const blocked = requireSameOrigin(request);
+      if (blocked) return blocked;
+
+      const session = await validateSession(request, env);
+      if (!session) {
+        return errorResponse("Unauthorized", 401);
+      }
+
+      if (url.pathname === "/api/baruch/stream") {
+        return handleBaruchEnqueue(request, env, session);
+      }
+      if (url.pathname === "/api/baruch/initiate") {
+        return handleBaruchInitiate(request, env, session);
+      }
+      if (url.pathname === "/api/baruch/history") {
+        if (request.method === "DELETE") {
+          return handleBaruchDeleteHistory(request, env, session);
+        }
+        return handleBaruchHistory(request, env, session);
+      }
+      return handleBaruchPoll(request, env, session);
     }
 
     if (url.pathname.startsWith("/api/")) {

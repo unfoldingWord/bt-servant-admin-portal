@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  deleteHistory,
-  enqueueMessage,
-  fetchHistory,
-  pollEvents,
-} from "@/lib/chat-api";
+  baruchDeleteHistory,
+  baruchEnqueueMessage,
+  baruchFetchHistory,
+  baruchInitiateConversation,
+  baruchPollEvents,
+} from "@/lib/baruch-api";
+import { useAuthStore } from "@/lib/auth-store";
 import type { ChatHistoryEntry, ChatMessage, SSEEvent } from "@/types/chat";
 
 const POLL_INTERVAL_ACTIVE = 600;
 const POLL_INTERVAL_IDLE = 1500;
 const POLL_TIMEOUT = 120_000;
 
-export function useTestChat(userId: string) {
+export function useBaruchChat() {
+  const userId = useAuthStore((s) => s.user?.id ?? "");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
@@ -20,9 +23,12 @@ export function useTestChat(userId: string) {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [needsInitiation, setNeedsInitiation] = useState(false);
+  const [isInitiating, setIsInitiating] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const pendingCompleteRef = useRef<{ message: ChatMessage } | null>(null);
+  const initiatingRef = useRef(false);
 
   // Abort polling on unmount
   useEffect(() => {
@@ -31,14 +37,20 @@ export function useTestChat(userId: string) {
     };
   }, []);
 
-  // Load conversation history on mount.
+  // Load conversation history on mount (or when userId becomes available).
   // No ref gate — the AbortController cleanup handles StrictMode's
   // double-invocation: the first fetch is aborted, the second succeeds.
   useEffect(() => {
+    // Guard: skip API call until auth has resolved and we have a real userId
+    if (!userId) {
+      setIsLoadingHistory(false);
+      return;
+    }
+
     const controller = new AbortController();
     setIsLoadingHistory(true);
 
-    fetchHistory(userId, 50, 0, controller.signal)
+    baruchFetchHistory(50, 0, controller.signal)
       .then((data) => {
         const historyMessages: ChatMessage[] = [];
         data.entries.forEach((entry: ChatHistoryEntry, i: number) => {
@@ -46,12 +58,14 @@ export function useTestChat(userId: string) {
             ? new Date(entry.created_at)
             : new Date(entry.timestamp);
 
-          historyMessages.push({
-            id: `history-user-${i}`,
-            role: "user",
-            content: entry.user_message,
-            createdAt: timestamp,
-          });
+          if (entry.user_message) {
+            historyMessages.push({
+              id: `history-user-${i}`,
+              role: "user",
+              content: entry.user_message,
+              createdAt: timestamp,
+            });
+          }
           historyMessages.push({
             id: `history-assistant-${i}`,
             role: "assistant",
@@ -59,13 +73,16 @@ export function useTestChat(userId: string) {
             createdAt: timestamp,
           });
         });
+        if (historyMessages.length === 0) {
+          setNeedsInitiation(true);
+        }
         setMessages((prev) =>
           prev.length > 0 ? [...historyMessages, ...prev] : historyMessages
         );
       })
       .catch((err) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
-        console.warn("[useTestChat] Failed to load history:", err);
+        console.warn("[useBaruchChat] Failed to load history:", err);
       })
       .finally(() => {
         if (!controller.signal.aborted) {
@@ -77,6 +94,91 @@ export function useTestChat(userId: string) {
       controller.abort();
     };
   }, [userId]);
+
+  // Initiate conversation when history is empty
+  useEffect(() => {
+    if (!needsInitiation || initiatingRef.current) return;
+
+    initiatingRef.current = true;
+    const controller = new AbortController();
+    setIsInitiating(true);
+
+    async function runInitiation() {
+      const res = await baruchInitiateConversation(controller.signal);
+
+      if (!res.body) throw new Error("Initiate response has no body");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
+      let sseBuffer = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split("\n");
+          sseBuffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            let event: SSEEvent;
+            try {
+              event = JSON.parse(line.slice(6)) as SSEEvent;
+            } catch {
+              continue;
+            }
+            switch (event.type) {
+              case "progress":
+                accumulated += event.text;
+                setStreamingText(accumulated);
+                break;
+              case "complete": {
+                const finalText =
+                  event.response.responses.join("\n\n") || accumulated;
+                const finalMessage: ChatMessage = {
+                  id: `initiation-${Date.now()}`,
+                  role: "assistant",
+                  content: finalText,
+                  createdAt: new Date(),
+                };
+                if (accumulated) {
+                  pendingCompleteRef.current = { message: finalMessage };
+                  setIsCompleting(true);
+                } else {
+                  setMessages((prev) => [...prev, finalMessage]);
+                }
+                break;
+              }
+              case "error":
+                throw new Error(event.error);
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      setNeedsInitiation(false);
+      setIsInitiating(false);
+      initiatingRef.current = false;
+    }
+
+    runInitiation().catch((err: unknown) => {
+      initiatingRef.current = false;
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      console.warn("[useBaruchChat] Failed to initiate conversation:", err);
+      setNeedsInitiation(false);
+      setIsInitiating(false);
+      setError(
+        err instanceof Error ? err.message : "Failed to start conversation"
+      );
+    });
+
+    return () => {
+      controller.abort();
+      initiatingRef.current = false;
+    };
+  }, [needsInitiation]);
 
   // Called by the component when AnimatedText finishes catching up
   const finalizeComplete = useCallback(() => {
@@ -105,7 +207,7 @@ export function useTestChat(userId: string) {
           throw new Error("Response timed out after 2 minutes");
         }
 
-        const response = await pollEvents(messageId, cursor, userId, signal);
+        const response = await baruchPollEvents(messageId, cursor, signal);
         cursor = response.cursor;
 
         for (const rawEvent of response.events) {
@@ -115,7 +217,7 @@ export function useTestChat(userId: string) {
             parsed = JSON.parse(rawEvent.data) as SSEEvent;
           } catch (e) {
             console.warn(
-              "[useTestChat] malformed SSE event data:",
+              "[useBaruchChat] malformed SSE event data:",
               rawEvent.data,
               e
             );
@@ -163,7 +265,7 @@ export function useTestChat(userId: string) {
 
       return { finalText: accumulated, hadStreaming: accumulated.length > 0 };
     },
-    [userId]
+    []
   );
 
   const sendMessage = useCallback(
@@ -191,9 +293,8 @@ export function useTestChat(userId: string) {
       setStatusMessage(null);
 
       try {
-        const { message_id } = await enqueueMessage(
+        const { message_id } = await baruchEnqueueMessage(
           trimmed,
-          userId,
           controller.signal
         );
 
@@ -219,11 +320,9 @@ export function useTestChat(userId: string) {
         } else {
           pendingCompleteRef.current = { message: assistantMessage };
           // Don't call setStreamingText(finalText) here — the animation is
-          // already playing the accumulated text.  Feeding a different string
-          // (responses.join) causes useAnimatedText to detect a divergence and
-          // reset the animation from the beginning.  Instead, let the animation
-          // finish with what it has; finalizeComplete will swap in the permanent
-          // message (which carries the canonical finalText) once it catches up.
+          // already playing the accumulated text. Let the animation finish;
+          // finalizeComplete will swap in the permanent message once it
+          // catches up.
           setIsCompleting(true);
           setStatusMessage(null);
         }
@@ -235,30 +334,36 @@ export function useTestChat(userId: string) {
         setStatusMessage(null);
       }
     },
-    [isLoading, pollLoop, userId]
+    [isLoading, pollLoop]
   );
 
   const clearMessages = useCallback(() => {
     abortRef.current?.abort();
     pendingCompleteRef.current = null;
+    initiatingRef.current = false;
     setMessages([]);
     setIsLoading(false);
     setIsCompleting(false);
+    setIsInitiating(false);
     setStreamingText("");
     setStatusMessage(null);
     setError(null);
 
-    deleteHistory(userId).catch((err) => {
-      console.warn("[useTestChat] Failed to delete server history:", err);
+    setNeedsInitiation(true);
+    baruchDeleteHistory().catch((err) => {
+      console.warn("[useBaruchChat] Failed to delete server history:", err);
       setError("Failed to clear server history. It may reappear on reload.");
     });
-  }, [userId]);
+  }, []);
 
   const streamingCreatedAt = useRef(new Date());
 
   const allMessages = useMemo(() => {
     if (!streamingText) return messages;
 
+    // streamingText is accumulated mid-stream. useBaruchChat appends a
+    // synthetic "streaming" message to allMessages so components don't need
+    // to render streamingText directly — they just render allMessages.
     const streamingMessage: ChatMessage = {
       id: "streaming",
       role: "assistant",
@@ -273,8 +378,12 @@ export function useTestChat(userId: string) {
     messages: allMessages,
     isLoading,
     isLoadingHistory,
+    isInitiating,
     isCompleting,
     statusMessage,
+    // streamingText is intentionally not returned — consumers render
+    // allMessages (which already contains the synthetic streaming entry).
+    // It is kept in state only for the useEffect auto-scroll dependency.
     streamingText,
     error,
     sendMessage,

@@ -15,6 +15,7 @@ interface ActivityBarItemProps {
   label: string;
   isActive: boolean;
   onClick: () => void;
+  disabled?: boolean;
 }
 
 export function ActivityBarItem({
@@ -23,6 +24,7 @@ export function ActivityBarItem({
   label,
   isActive,
   onClick,
+  disabled,
 }: ActivityBarItemProps) {
   return (
     <Tooltip>
@@ -32,6 +34,7 @@ export function ActivityBarItem({
           size="icon"
           onClick={onClick}
           aria-label={label}
+          disabled={disabled}
           className={cn(
             "text-muted-foreground relative size-10 rounded-md transition-all",
             "hover:bg-accent hover:text-foreground hover:shadow-sm",
