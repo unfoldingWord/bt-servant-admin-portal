@@ -110,9 +110,13 @@ export function useBaruchChat() {
         setMessages((prev) => [...prev, assistantMessage]);
         setNeedsInitiation(false);
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.warn("[useBaruchChat] Failed to initiate conversation:", err);
+        setNeedsInitiation(false);
+        setError(
+          err instanceof Error ? err.message : "Failed to start conversation"
+        );
       });
 
     return () => {
