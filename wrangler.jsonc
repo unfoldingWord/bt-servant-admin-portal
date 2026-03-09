@@ -10,6 +10,7 @@
   },
   "vars": {
     "ENGINE_BASE_URL": "https://api.btservant.ai",
+    "BARUCH_BASE_URL": "https://baruch.btservant.ai",
   },
   "kv_namespaces": [
     {
@@ -22,6 +23,7 @@
       "name": "bt-servant-admin-portal-dev",
       "vars": {
         "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
+        "BARUCH_BASE_URL": "https://baruch-staging.btservant.ai",
       },
       "kv_namespaces": [
         {
@@ -34,6 +36,7 @@
       "name": "bt-servant-admin-portal-staging",
       "vars": {
         "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
+        "BARUCH_BASE_URL": "https://baruch-staging.btservant.ai",
       },
       "kv_namespaces": [
         {

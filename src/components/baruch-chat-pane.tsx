@@ -9,8 +9,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
 import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/lib/theme-store";
-import { useAuthStore } from "@/lib/auth-store";
-import { useTestChat } from "@/hooks/use-test-chat";
+import { useBaruchChat } from "@/hooks/use-baruch-chat";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -24,7 +23,6 @@ import {
 } from "@/components/chat-message";
 
 export function BaruchChatPane() {
-  const userId = useAuthStore((s) => s.user?.id ?? "");
   const theme = useThemeStore((s) => s.theme);
 
   const {
@@ -33,12 +31,15 @@ export function BaruchChatPane() {
     isLoadingHistory,
     isCompleting,
     statusMessage,
+    // streamingText is used only for auto-scroll — the hook embeds the
+    // in-flight text into allMessages as a synthetic streaming entry so
+    // components render a single list without special-casing the stream.
     streamingText,
     error,
     sendMessage,
     clearMessages,
     finalizeComplete,
-  } = useTestChat(userId);
+  } = useBaruchChat();
 
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
