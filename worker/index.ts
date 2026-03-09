@@ -10,6 +10,7 @@ import {
   handleBaruchDeleteHistory,
   handleBaruchEnqueue,
   handleBaruchHistory,
+  handleBaruchInitiate,
   handleBaruchPoll,
 } from "./baruch";
 import {
@@ -94,7 +95,8 @@ export default {
     if (
       url.pathname === "/api/baruch/stream" ||
       url.pathname === "/api/baruch/stream/poll" ||
-      url.pathname === "/api/baruch/history"
+      url.pathname === "/api/baruch/history" ||
+      url.pathname === "/api/baruch/initiate"
     ) {
       const blocked = requireSameOrigin(request);
       if (blocked) return blocked;
@@ -106,6 +108,9 @@ export default {
 
       if (url.pathname === "/api/baruch/stream") {
         return handleBaruchEnqueue(request, env, session);
+      }
+      if (url.pathname === "/api/baruch/initiate") {
+        return handleBaruchInitiate(request, env, session);
       }
       if (url.pathname === "/api/baruch/history") {
         if (request.method === "DELETE") {

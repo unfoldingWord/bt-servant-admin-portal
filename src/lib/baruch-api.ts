@@ -68,6 +68,23 @@ export async function baruchFetchHistory(
   return (await res.json()) as ChatHistoryResponse;
 }
 
+export async function baruchInitiateConversation(
+  signal?: AbortSignal
+): Promise<{ response: string }> {
+  const res = await fetch("/api/baruch/initiate", {
+    method: "POST",
+    headers: SAME_ORIGIN_HEADERS,
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Initiate failed (${res.status}): ${body}`);
+  }
+
+  return (await res.json()) as { response: string };
+}
+
 export async function baruchDeleteHistory(signal?: AbortSignal): Promise<void> {
   const res = await fetch("/api/baruch/history", {
     method: "DELETE",
