@@ -29,6 +29,7 @@ export function BaruchChatPane() {
     messages,
     isLoading,
     isLoadingHistory,
+    isInitiating,
     isCompleting,
     statusMessage,
     // streamingText is used only for auto-scroll — the hook embeds the
@@ -45,6 +46,7 @@ export function BaruchChatPane() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const hasMessages = messages.length > 0;
+  const isBusy = isLoading || isInitiating;
 
   const handleAnimationCaughtUp = useCallback(() => {
     finalizeComplete();
@@ -76,8 +78,8 @@ export function BaruchChatPane() {
             "flex flex-col items-center justify-center"
         )}
       >
-        {hasMessages ? (
-          <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-6">
+        {hasMessages || isInitiating ? (
+          <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-2 py-6">
             {messages.map((msg) =>
               msg.role === "user" ? (
                 <UserMessage key={msg.id} message={msg} />
@@ -89,6 +91,9 @@ export function BaruchChatPane() {
                   onAnimationCaughtUp={handleAnimationCaughtUp}
                 />
               )
+            )}
+            {isInitiating && (
+              <ThinkingIndicator status="Starting conversation…" />
             )}
             {isLoading && !streamingText && (
               <ThinkingIndicator status={statusMessage} />
@@ -156,18 +161,18 @@ export function BaruchChatPane() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask Baruch…"
-              disabled={isLoading}
+              disabled={isBusy}
               className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent text-sm outline-none disabled:opacity-50"
             />
             <button
               type="submit"
-              disabled={isLoading || !input.trim()}
-              aria-label={isLoading ? "Sending…" : "Send message"}
+              disabled={isBusy || !input.trim()}
+              aria-label={isBusy ? "Sending…" : "Send message"}
               className="text-muted-foreground hover:text-foreground ml-3 transition-colors disabled:opacity-30"
             >
               <FontAwesomeIcon
                 icon={isLoading ? faSpinnerThird : faPaperPlaneTop}
-                className={cn("size-4", isLoading && "animate-spin")}
+                className={cn("size-4", isBusy && "animate-spin")}
               />
             </button>
           </div>

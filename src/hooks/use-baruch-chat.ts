@@ -24,6 +24,7 @@ export function useBaruchChat() {
   const [streamingText, setStreamingText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [needsInitiation, setNeedsInitiation] = useState(false);
+  const [isInitiating, setIsInitiating] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const pendingCompleteRef = useRef<{ message: ChatMessage } | null>(null);
@@ -98,22 +99,29 @@ export function useBaruchChat() {
     if (!needsInitiation) return;
 
     const controller = new AbortController();
+    setIsInitiating(true);
 
     baruchInitiateConversation(controller.signal)
       .then(({ response }) => {
-        const assistantMessage: ChatMessage = {
+        const finalMessage: ChatMessage = {
           id: `initiation-${Date.now()}`,
           role: "assistant",
           content: response,
           createdAt: new Date(),
         };
-        setMessages((prev) => [...prev, assistantMessage]);
+        // Feed through the streaming animation path so the greeting
+        // types in rather than dropping in all at once.
+        pendingCompleteRef.current = { message: finalMessage };
         setNeedsInitiation(false);
+        setIsInitiating(false);
+        setStreamingText(response);
+        setIsCompleting(true);
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.warn("[useBaruchChat] Failed to initiate conversation:", err);
         setNeedsInitiation(false);
+        setIsInitiating(false);
         setError(
           err instanceof Error ? err.message : "Failed to start conversation"
         );
@@ -287,6 +295,7 @@ export function useBaruchChat() {
     setMessages([]);
     setIsLoading(false);
     setIsCompleting(false);
+    setIsInitiating(false);
     setStreamingText("");
     setStatusMessage(null);
     setError(null);
@@ -320,6 +329,7 @@ export function useBaruchChat() {
     messages: allMessages,
     isLoading,
     isLoadingHistory,
+    isInitiating,
     isCompleting,
     statusMessage,
     // streamingText is intentionally not returned — consumers render

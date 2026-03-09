@@ -79,9 +79,14 @@ export function LoginPage() {
           <CardTitle className="text-2xl font-bold tracking-tight">
             BT Servant
           </CardTitle>
-          <p className="text-muted-foreground/80 text-xs font-medium tracking-widest uppercase">
-            Admin Portal
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-muted-foreground/80 text-xs font-medium tracking-widest uppercase">
+              Admin Portal
+            </p>
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-amber-600 uppercase dark:bg-amber-400/15 dark:text-amber-400">
+              Beta
+            </span>
+          </div>
         </CardHeader>
 
         <CardContent>

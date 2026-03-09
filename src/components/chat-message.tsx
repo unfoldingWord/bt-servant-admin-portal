@@ -59,7 +59,7 @@ const markdownComponents = {
 export function UserMessage({ message }: { message: ChatMessage }) {
   return (
     <div className="flex w-full justify-end">
-      <div className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl rounded-br-md px-3.5 py-2.5 text-sm leading-relaxed">
+      <div className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl rounded-br-md px-3.5 py-2.5 text-base leading-relaxed">
         <p className="whitespace-pre-wrap">{message.content}</p>
       </div>
     </div>
@@ -109,7 +109,7 @@ export function AssistantMessage({
   onAnimationCaughtUp: () => void;
 }) {
   return (
-    <div className="text-foreground pl-1 text-sm leading-relaxed">
+    <div className="text-foreground pl-1 text-base leading-relaxed">
       {message.isStreaming ? (
         <>
           <AnimatedText
@@ -130,7 +130,7 @@ export function AssistantMessage({
 
 export function ThinkingIndicator({ status }: { status: string | null }) {
   return (
-    <div className="text-muted-foreground flex items-center gap-2 pl-1 text-sm">
+    <div className="text-muted-foreground flex items-center gap-2 pl-1 text-base">
       <FontAwesomeIcon icon={faSpinnerThird} className="size-3 animate-spin" />
       <span>{status || "Thinking…"}</span>
     </div>
