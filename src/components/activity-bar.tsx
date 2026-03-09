@@ -13,7 +13,7 @@ import { UserMenu } from "@/components/user-menu";
 
 export function ActivityBar() {
   const navigate = useNavigate();
-  const { activeSection, setActiveSection, testChatOpen, toggleTestChat } =
+  const { activeSection, setActiveSection, setTestChatOpen, toggleTestChat } =
     useUiStore();
 
   return (
@@ -26,6 +26,7 @@ export function ActivityBar() {
           isActive={activeSection === "baruch"}
           onClick={() => {
             setActiveSection("baruch");
+            setTestChatOpen(false);
             void navigate("/");
           }}
         />
@@ -45,6 +46,7 @@ export function ActivityBar() {
           activeIcon={faCommentsSolid}
           label="Chat with BT Servant"
           isActive={testChatOpen}
+          disabled={activeSection === "baruch"}
           onClick={toggleTestChat}
         />
       </div>
