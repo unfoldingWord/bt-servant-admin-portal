@@ -7,7 +7,7 @@ import { useUiStore } from "@/lib/ui-store";
 
 export function useAuth() {
   const { user, isLoading, setUser } = useAuthStore();
-  const setTestChatOpen = useUiStore((s) => s.setTestChatOpen);
+  const resetUi = useUiStore((s) => s.reset);
   const navigate = useNavigate();
 
   const login = useCallback(
@@ -23,11 +23,11 @@ export function useAuth() {
     try {
       await authApi.logout();
     } finally {
-      setTestChatOpen(false);
+      resetUi();
       setUser(null);
       void navigate("/login", { replace: true });
     }
-  }, [setTestChatOpen, setUser, navigate]);
+  }, [resetUi, setUser, navigate]);
 
   return {
     user,

@@ -14,12 +14,21 @@ interface UiState {
   chatModeSeeded: boolean;
   setChatMode: (mode: string | null) => void;
   testChatUserId: string;
+  reset: () => void;
 }
 
-export const useUiStore = create<UiState>()((set) => ({
-  activeSection: "baruch",
-  setActiveSection: (activeSection) => set({ activeSection }),
+const initialState = {
+  activeSection: "baruch" as Section,
   testChatOpen: false,
+  selectedMode: null,
+  chatMode: null,
+  chatModeSeeded: false,
+  testChatUserId: crypto.randomUUID(),
+};
+
+export const useUiStore = create<UiState>()((set) => ({
+  ...initialState,
+  setActiveSection: (activeSection) => set({ activeSection }),
   setTestChatOpen: (open) =>
     set((state) => ({
       testChatOpen: open,
@@ -36,10 +45,7 @@ export const useUiStore = create<UiState>()((set) => ({
         ? { chatMode: state.selectedMode, chatModeSeeded: true }
         : {}),
     })),
-  selectedMode: null,
   setSelectedMode: (selectedMode) => set({ selectedMode }),
-  chatMode: null,
-  chatModeSeeded: false,
   setChatMode: (chatMode) => set({ chatMode }),
-  testChatUserId: crypto.randomUUID(),
+  reset: () => set({ ...initialState, testChatUserId: crypto.randomUUID() }),
 }));
