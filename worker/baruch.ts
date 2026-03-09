@@ -217,13 +217,13 @@ export async function handleBaruchInitiate(
     return errorResponse("Failed to initiate conversation", 502);
   }
 
-  const data: unknown = await baruchRes.json();
-  if (!data || typeof data !== "object" || !("response" in data)) {
-    console.error("Baruch initiate returned unexpected shape:", data);
-    return errorResponse("Unexpected Baruch response", 502);
-  }
-
-  return jsonResponse({ response: (data as { response: string }).response });
+  return new Response(baruchRes.body, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }
 
 export async function handleBaruchDeleteHistory(

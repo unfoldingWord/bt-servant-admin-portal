@@ -93,7 +93,7 @@ export function BaruchChatPane() {
                 />
               )
             )}
-            {isInitiating && (
+            {isInitiating && !streamingText && (
               <ThinkingIndicator status="Starting conversation…" />
             )}
             {isLoading && !streamingText && (

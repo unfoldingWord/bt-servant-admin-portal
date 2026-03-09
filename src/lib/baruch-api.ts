@@ -70,7 +70,7 @@ export async function baruchFetchHistory(
 
 export async function baruchInitiateConversation(
   signal?: AbortSignal
-): Promise<{ response: string }> {
+): Promise<Response> {
   const res = await fetch("/api/baruch/initiate", {
     method: "POST",
     headers: SAME_ORIGIN_HEADERS,
@@ -82,7 +82,7 @@ export async function baruchInitiateConversation(
     throw new Error(`Initiate failed (${res.status}): ${body}`);
   }
 
-  return (await res.json()) as { response: string };
+  return res;
 }
 
 export async function baruchDeleteHistory(signal?: AbortSignal): Promise<void> {

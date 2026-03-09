@@ -101,29 +101,73 @@ export function useBaruchChat() {
     const controller = new AbortController();
     setIsInitiating(true);
 
-    baruchInitiateConversation(controller.signal)
-      .then(({ response }) => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `initiation-${Date.now()}`,
-            role: "assistant",
-            content: response,
-            createdAt: new Date(),
-          },
-        ]);
-        setNeedsInitiation(false);
-        setIsInitiating(false);
-      })
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        console.warn("[useBaruchChat] Failed to initiate conversation:", err);
-        setNeedsInitiation(false);
-        setIsInitiating(false);
-        setError(
-          err instanceof Error ? err.message : "Failed to start conversation"
-        );
-      });
+    async function runInitiation() {
+      const res = await baruchInitiateConversation(controller.signal);
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
+      let sseBuffer = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split("\n");
+          sseBuffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            let event: SSEEvent;
+            try {
+              event = JSON.parse(line.slice(6)) as SSEEvent;
+            } catch {
+              continue;
+            }
+            switch (event.type) {
+              case "progress":
+                accumulated += event.text;
+                setStreamingText(accumulated);
+                break;
+              case "complete": {
+                const finalText =
+                  event.response.responses.join("\n\n") || accumulated;
+                const finalMessage: ChatMessage = {
+                  id: `initiation-${Date.now()}`,
+                  role: "assistant",
+                  content: finalText,
+                  createdAt: new Date(),
+                };
+                if (accumulated) {
+                  pendingCompleteRef.current = { message: finalMessage };
+                  setIsCompleting(true);
+                } else {
+                  setMessages((prev) => [...prev, finalMessage]);
+                }
+                break;
+              }
+              case "error":
+                throw new Error(event.error);
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      setNeedsInitiation(false);
+      setIsInitiating(false);
+    }
+
+    runInitiation().catch((err: unknown) => {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      console.warn("[useBaruchChat] Failed to initiate conversation:", err);
+      setNeedsInitiation(false);
+      setIsInitiating(false);
+      setError(
+        err instanceof Error ? err.message : "Failed to start conversation"
+      );
+    });
 
     return () => {
       controller.abort();
