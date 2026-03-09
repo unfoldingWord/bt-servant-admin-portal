@@ -17,12 +17,27 @@ interface UiState {
   reset: () => void;
 }
 
-const initialState = {
-  activeSection: "baruch" as Section,
+// Explicit Pick ensures initialState stays in sync with UiState as fields are added.
+// Note: testChatUserId is intentionally omitted — reset() generates a fresh UUID
+// each call so sessions are always isolated; the value here is just a placeholder.
+type InitialUiState = Pick<
+  UiState,
+  | "activeSection"
+  | "testChatOpen"
+  | "selectedMode"
+  | "chatMode"
+  | "chatModeSeeded"
+  | "testChatUserId"
+>;
+
+const initialState: InitialUiState = {
+  activeSection: "baruch",
   testChatOpen: false,
   selectedMode: null,
   chatMode: null,
   chatModeSeeded: false,
+  // Placeholder — reset() always generates a fresh UUID; this value is only
+  // used for the very first session (before any logout occurs).
   testChatUserId: crypto.randomUUID(),
 };
 
@@ -47,5 +62,7 @@ export const useUiStore = create<UiState>()((set) => ({
     })),
   setSelectedMode: (selectedMode) => set({ selectedMode }),
   setChatMode: (chatMode) => set({ chatMode }),
+  // Resets all session-scoped UI state and generates a new testChatUserId so
+  // the next user's chat session is fully isolated from the previous one.
   reset: () => set({ ...initialState, testChatUserId: crypto.randomUUID() }),
 }));
