@@ -67,7 +67,7 @@ export function UserMenu() {
             <p className="text-muted-foreground/50 text-[10px]">
               BAP v{__APP_VERSION__}
             </p>
-            <span className="rounded-full bg-amber-500/15 px-1.5 py-px text-[9px] font-semibold tracking-wide text-amber-600 uppercase dark:bg-amber-400/15 dark:text-amber-400">
+            <span className="rounded-full bg-amber-500/15 px-1.5 py-px text-[9px] font-semibold tracking-wide text-amber-700 uppercase dark:bg-amber-400/20 dark:text-amber-300">
               Beta
             </span>
           </div>
