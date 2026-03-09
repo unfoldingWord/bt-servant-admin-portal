@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-const CHARS_PER_TICK = 2;
+const CHARS_PER_TICK = 4;
 const TICK_MS = 16; // ~60fps
 
 /**
@@ -12,7 +12,7 @@ export function useAnimatedText(
   text: string,
   charsPerTick: number = CHARS_PER_TICK
 ): [string, boolean] {
-  const [displayedLength, setDisplayedLength] = useState(text.length);
+  const [displayedLength, setDisplayedLength] = useState(0);
   // Track previous text to detect resets
   const [prevText, setPrevText] = useState(text);
 
