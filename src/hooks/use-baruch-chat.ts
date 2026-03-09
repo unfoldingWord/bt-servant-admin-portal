@@ -28,6 +28,7 @@ export function useBaruchChat() {
 
   const abortRef = useRef<AbortController | null>(null);
   const pendingCompleteRef = useRef<{ message: ChatMessage } | null>(null);
+  const initiationDripRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Abort polling on unmount
   useEffect(() => {
@@ -109,13 +110,23 @@ export function useBaruchChat() {
           content: response,
           createdAt: new Date(),
         };
-        // Feed through the streaming animation path so the greeting
-        // types in rather than dropping in all at once.
         pendingCompleteRef.current = { message: finalMessage };
         setNeedsInitiation(false);
         setIsInitiating(false);
-        setStreamingText(response);
-        setIsCompleting(true);
+
+        // Drip text character-by-character so useAnimatedText has deltas
+        // to animate — setting the full text at once would skip the effect.
+        let index = 0;
+        const DRIP_CHARS = 5; // ~300 chars/sec at 60fps
+        initiationDripRef.current = setInterval(() => {
+          index = Math.min(index + DRIP_CHARS, response.length);
+          setStreamingText(response.slice(0, index));
+          if (index >= response.length) {
+            clearInterval(initiationDripRef.current!);
+            initiationDripRef.current = null;
+            setIsCompleting(true);
+          }
+        }, 16);
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -129,6 +140,10 @@ export function useBaruchChat() {
 
     return () => {
       controller.abort();
+      if (initiationDripRef.current) {
+        clearInterval(initiationDripRef.current);
+        initiationDripRef.current = null;
+      }
     };
   }, [needsInitiation]);
 
@@ -292,6 +307,10 @@ export function useBaruchChat() {
   const clearMessages = useCallback(() => {
     abortRef.current?.abort();
     pendingCompleteRef.current = null;
+    if (initiationDripRef.current) {
+      clearInterval(initiationDripRef.current);
+      initiationDripRef.current = null;
+    }
     setMessages([]);
     setIsLoading(false);
     setIsCompleting(false);

@@ -75,6 +75,7 @@ export function BaruchChatPane() {
           "chat-scrollbar flex-1 overflow-y-auto",
           !hasMessages &&
             !isLoadingHistory &&
+            !isInitiating &&
             "flex flex-col items-center justify-center"
         )}
       >
