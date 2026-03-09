@@ -13,13 +13,10 @@ import { UserMenu } from "@/components/user-menu";
 
 export function ActivityBar() {
   const navigate = useNavigate();
-  const {
-    activeSection,
-    setActiveSection,
-    testChatOpen,
-    setTestChatOpen,
-    toggleTestChat,
-  } = useUiStore();
+  const activeSection = useUiStore((s) => s.activeSection);
+  const setActiveSection = useUiStore((s) => s.setActiveSection);
+  const testChatOpen = useUiStore((s) => s.testChatOpen);
+  const toggleTestChat = useUiStore((s) => s.toggleTestChat);
 
   return (
     <div className="bg-card relative z-10 flex h-full w-12 flex-col items-center py-3 shadow-[2px_0_12px_rgba(0,0,0,0.2)]">
@@ -31,7 +28,6 @@ export function ActivityBar() {
           isActive={activeSection === "baruch"}
           onClick={() => {
             setActiveSection("baruch");
-            setTestChatOpen(false);
             void navigate("/");
           }}
         />
@@ -51,7 +47,6 @@ export function ActivityBar() {
           activeIcon={faCommentsSolid}
           label="Chat with BT Servant"
           isActive={testChatOpen}
-          disabled={activeSection === "baruch"}
           onClick={toggleTestChat}
         />
       </div>
