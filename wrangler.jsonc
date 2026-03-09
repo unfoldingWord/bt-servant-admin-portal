@@ -23,7 +23,7 @@
       "name": "bt-servant-admin-portal-dev",
       "vars": {
         "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
-        "BARUCH_BASE_URL": "https://dev-baruch.btservant.ai",
+        "BARUCH_BASE_URL": "https://baruch-dev.unfoldingword.workers.dev",
       },
       "kv_namespaces": [
         {
