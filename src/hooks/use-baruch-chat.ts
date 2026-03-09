@@ -103,17 +103,17 @@ export function useBaruchChat() {
 
     baruchInitiateConversation(controller.signal)
       .then(({ response }) => {
-        const finalMessage: ChatMessage = {
-          id: `initiation-${Date.now()}`,
-          role: "assistant",
-          content: response,
-          createdAt: new Date(),
-        };
-        pendingCompleteRef.current = { message: finalMessage };
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `initiation-${Date.now()}`,
+            role: "assistant",
+            content: response,
+            createdAt: new Date(),
+          },
+        ]);
         setNeedsInitiation(false);
         setIsInitiating(false);
-        setStreamingText(response);
-        setIsCompleting(true);
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
