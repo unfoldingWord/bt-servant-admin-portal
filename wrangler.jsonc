@@ -25,6 +25,12 @@
         "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
         "BARUCH_BASE_URL": "https://baruch-dev.unfoldingword.workers.dev",
       },
+      "services": [
+        {
+          "binding": "BARUCH",
+          "service": "baruch-dev",
+        },
+      ],
       "kv_namespaces": [
         {
           "binding": "AUTH_KV",

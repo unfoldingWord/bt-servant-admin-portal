@@ -4,6 +4,19 @@ import type { SessionData } from "./types";
 
 const CLIENT_ID = "admin-portal";
 
+// Use service binding when available (avoids Cloudflare orange-to-orange
+// subrequest restrictions); fall back to plain fetch for staging/prod.
+function baruchFetch(
+  env: Env,
+  url: string,
+  init?: RequestInit
+): Promise<Response> {
+  if (env.BARUCH) {
+    return env.BARUCH.fetch(new Request(url, init));
+  }
+  return fetch(url, init);
+}
+
 export async function handleBaruchEnqueue(
   request: Request,
   env: Env,
@@ -34,7 +47,7 @@ export async function handleBaruchEnqueue(
     is_admin: session.isAdmin,
   };
 
-  const baruchRes = await fetch(baruchUrl, {
+  const baruchRes = await baruchFetch(env, baruchUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -86,7 +99,7 @@ export async function handleBaruchPoll(
 
   const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/chat/queue/poll?${params.toString()}`;
 
-  const baruchRes = await fetch(baruchUrl, {
+  const baruchRes = await baruchFetch(env, baruchUrl, {
     headers: {
       Authorization: `Bearer ${env.BARUCH_API_KEY}`,
     },
@@ -146,7 +159,7 @@ export async function handleBaruchHistory(
   const params = new URLSearchParams({ limit, offset });
   const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/orgs/${session.org}/users/${session.userId}/history?${params.toString()}`;
 
-  const baruchRes = await fetch(baruchUrl, {
+  const baruchRes = await baruchFetch(env, baruchUrl, {
     headers: {
       Authorization: `Bearer ${env.BARUCH_API_KEY}`,
     },
@@ -189,7 +202,7 @@ export async function handleBaruchInitiate(
     is_admin: session.isAdmin,
   };
 
-  const baruchRes = await fetch(baruchUrl, {
+  const baruchRes = await baruchFetch(env, baruchUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -224,7 +237,7 @@ export async function handleBaruchDeleteHistory(
 
   const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/orgs/${session.org}/users/${session.userId}/history`;
 
-  const baruchRes = await fetch(baruchUrl, {
+  const baruchRes = await baruchFetch(env, baruchUrl, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${env.BARUCH_API_KEY}`,

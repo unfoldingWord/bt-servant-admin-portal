@@ -3,6 +3,7 @@ export interface Env {
   ENGINE_API_KEY: string;
   BARUCH_BASE_URL: string;
   BARUCH_API_KEY: string;
+  BARUCH?: Fetcher;
   AUTH_KV: KVNamespace;
   ADMIN_SECRET: string;
 }
