@@ -18,8 +18,9 @@ interface UiState {
 }
 
 // Explicit Pick ensures initialState stays in sync with UiState as fields are added.
-// Note: testChatUserId is intentionally omitted — reset() generates a fresh UUID
-// each call so sessions are always isolated; the value here is just a placeholder.
+// Note: testChatUserId is included but treated as a placeholder — reset() always
+// generates a fresh UUID so sessions are isolated; the value here seeds the very
+// first session before any logout occurs.
 type InitialUiState = Pick<
   UiState,
   | "activeSection"
