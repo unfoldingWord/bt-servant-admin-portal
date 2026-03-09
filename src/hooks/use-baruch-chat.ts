@@ -25,6 +25,7 @@ export function useBaruchChat() {
   const [error, setError] = useState<string | null>(null);
   const [needsInitiation, setNeedsInitiation] = useState(false);
   const [isInitiating, setIsInitiating] = useState(false);
+  const [initiationText, setInitiationText] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const pendingCompleteRef = useRef<{ message: ChatMessage } | null>(null);
@@ -113,20 +114,9 @@ export function useBaruchChat() {
         pendingCompleteRef.current = { message: finalMessage };
         setNeedsInitiation(false);
         setIsInitiating(false);
-
-        // Drip text character-by-character so useAnimatedText has deltas
-        // to animate — setting the full text at once would skip the effect.
-        let index = 0;
-        const DRIP_CHARS = 5; // ~300 chars/sec at 60fps
-        initiationDripRef.current = setInterval(() => {
-          index = Math.min(index + DRIP_CHARS, response.length);
-          setStreamingText(response.slice(0, index));
-          if (index >= response.length) {
-            clearInterval(initiationDripRef.current!);
-            initiationDripRef.current = null;
-            setIsCompleting(true);
-          }
-        }, 16);
+        // Trigger the drip effect via separate state so the needsInitiation
+        // effect cleanup (which fires when needsInitiation→false) can't kill it.
+        setInitiationText(response);
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -140,12 +130,34 @@ export function useBaruchChat() {
 
     return () => {
       controller.abort();
+    };
+  }, [needsInitiation]);
+
+  // Drip initiation text character-by-character into streamingText so
+  // useAnimatedText has incremental deltas to animate.
+  useEffect(() => {
+    if (!initiationText) return;
+
+    const DRIP_CHARS = 5; // ~300 chars/sec at 60fps
+    let index = 0;
+    initiationDripRef.current = setInterval(() => {
+      index = Math.min(index + DRIP_CHARS, initiationText.length);
+      setStreamingText(initiationText.slice(0, index));
+      if (index >= initiationText.length) {
+        clearInterval(initiationDripRef.current!);
+        initiationDripRef.current = null;
+        setInitiationText(null);
+        setIsCompleting(true);
+      }
+    }, 16);
+
+    return () => {
       if (initiationDripRef.current) {
         clearInterval(initiationDripRef.current);
         initiationDripRef.current = null;
       }
     };
-  }, [needsInitiation]);
+  }, [initiationText]);
 
   // Called by the component when AnimatedText finishes catching up
   const finalizeComplete = useCallback(() => {
@@ -315,6 +327,7 @@ export function useBaruchChat() {
     setIsLoading(false);
     setIsCompleting(false);
     setIsInitiating(false);
+    setInitiationText(null);
     setStreamingText("");
     setStatusMessage(null);
     setError(null);
