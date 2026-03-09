@@ -35,7 +35,7 @@ jobs:
         run: npm run build
 
       - name: Deploy to Cloudflare Workers (staging)
-        run: npx wrangler deploy --env staging
+        run: npx wrangler deploy --env staging --var ENGINE_BASE_URL:https://staging-api.btservant.ai --var BARUCH_BASE_URL:https://staging-baruch.btservant.ai
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
