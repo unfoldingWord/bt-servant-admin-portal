@@ -172,6 +172,47 @@ export async function handleBaruchHistory(
   return jsonResponse(data);
 }
 
+export async function handleBaruchInitiate(
+  request: Request,
+  env: Env,
+  session: SessionData
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return errorResponse("Method not allowed", 405);
+  }
+
+  const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/chat/initiate`;
+  const baruchBody = {
+    user_id: session.userId,
+    org: session.org,
+    client_id: CLIENT_ID,
+    is_admin: session.isAdmin,
+  };
+
+  const baruchRes = await fetch(baruchUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${env.BARUCH_API_KEY}`,
+    },
+    body: JSON.stringify(baruchBody),
+  });
+
+  if (!baruchRes.ok) {
+    const text = await baruchRes.text().catch(() => "");
+    console.error(`Baruch initiate failed (${baruchRes.status}): ${text}`);
+    return errorResponse("Failed to initiate conversation", 502);
+  }
+
+  const data: unknown = await baruchRes.json();
+  if (!data || typeof data !== "object" || !("response" in data)) {
+    console.error("Baruch initiate returned unexpected shape:", data);
+    return errorResponse("Unexpected Baruch response", 502);
+  }
+
+  return jsonResponse({ response: (data as { response: string }).response });
+}
+
 export async function handleBaruchDeleteHistory(
   request: Request,
   env: Env,

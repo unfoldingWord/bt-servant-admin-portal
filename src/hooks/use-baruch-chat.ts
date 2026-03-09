@@ -4,6 +4,7 @@ import {
   baruchDeleteHistory,
   baruchEnqueueMessage,
   baruchFetchHistory,
+  baruchInitiateConversation,
   baruchPollEvents,
 } from "@/lib/baruch-api";
 import { useAuthStore } from "@/lib/auth-store";
@@ -22,6 +23,7 @@ export function useBaruchChat() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [needsInitiation, setNeedsInitiation] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const pendingCompleteRef = useRef<{ message: ChatMessage } | null>(null);
@@ -54,12 +56,14 @@ export function useBaruchChat() {
             ? new Date(entry.created_at)
             : new Date(entry.timestamp);
 
-          historyMessages.push({
-            id: `history-user-${i}`,
-            role: "user",
-            content: entry.user_message,
-            createdAt: timestamp,
-          });
+          if (entry.user_message) {
+            historyMessages.push({
+              id: `history-user-${i}`,
+              role: "user",
+              content: entry.user_message,
+              createdAt: timestamp,
+            });
+          }
           historyMessages.push({
             id: `history-assistant-${i}`,
             role: "assistant",
@@ -67,6 +71,9 @@ export function useBaruchChat() {
             createdAt: timestamp,
           });
         });
+        if (historyMessages.length === 0) {
+          setNeedsInitiation(true);
+        }
         setMessages((prev) =>
           prev.length > 0 ? [...historyMessages, ...prev] : historyMessages
         );
@@ -85,6 +92,33 @@ export function useBaruchChat() {
       controller.abort();
     };
   }, [userId]);
+
+  // Initiate conversation when history is empty
+  useEffect(() => {
+    if (!needsInitiation) return;
+
+    const controller = new AbortController();
+
+    baruchInitiateConversation(controller.signal)
+      .then(({ response }) => {
+        const assistantMessage: ChatMessage = {
+          id: `initiation-${Date.now()}`,
+          role: "assistant",
+          content: response,
+          createdAt: new Date(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        setNeedsInitiation(false);
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.warn("[useBaruchChat] Failed to initiate conversation:", err);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [needsInitiation]);
 
   // Called by the component when AnimatedText finishes catching up
   const finalizeComplete = useCallback(() => {
@@ -253,6 +287,7 @@ export function useBaruchChat() {
     setStatusMessage(null);
     setError(null);
 
+    setNeedsInitiation(true);
     baruchDeleteHistory().catch((err) => {
       console.warn("[useBaruchChat] Failed to delete server history:", err);
       setError("Failed to clear server history. It may reappear on reload.");
