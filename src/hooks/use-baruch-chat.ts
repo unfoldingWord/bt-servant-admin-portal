@@ -28,6 +28,7 @@ export function useBaruchChat() {
 
   const abortRef = useRef<AbortController | null>(null);
   const pendingCompleteRef = useRef<{ message: ChatMessage } | null>(null);
+  const initiatingRef = useRef(false);
 
   // Abort polling on unmount
   useEffect(() => {
@@ -96,8 +97,9 @@ export function useBaruchChat() {
 
   // Initiate conversation when history is empty
   useEffect(() => {
-    if (!needsInitiation) return;
+    if (!needsInitiation || initiatingRef.current) return;
 
+    initiatingRef.current = true;
     const controller = new AbortController();
     setIsInitiating(true);
 
@@ -157,9 +159,11 @@ export function useBaruchChat() {
 
       setNeedsInitiation(false);
       setIsInitiating(false);
+      initiatingRef.current = false;
     }
 
     runInitiation().catch((err: unknown) => {
+      initiatingRef.current = false;
       if (err instanceof DOMException && err.name === "AbortError") return;
       console.warn("[useBaruchChat] Failed to initiate conversation:", err);
       setNeedsInitiation(false);
@@ -171,6 +175,7 @@ export function useBaruchChat() {
 
     return () => {
       controller.abort();
+      initiatingRef.current = false;
     };
   }, [needsInitiation]);
 
@@ -334,6 +339,7 @@ export function useBaruchChat() {
   const clearMessages = useCallback(() => {
     abortRef.current?.abort();
     pendingCompleteRef.current = null;
+    initiatingRef.current = false;
     setMessages([]);
     setIsLoading(false);
     setIsCompleting(false);
