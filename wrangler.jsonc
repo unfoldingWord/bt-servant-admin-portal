@@ -12,6 +12,12 @@
     "ENGINE_BASE_URL": "https://api.btservant.ai",
     "BARUCH_BASE_URL": "https://baruch.btservant.ai",
   },
+  "services": [
+    {
+      "binding": "BARUCH",
+      "service": "baruch",
+    },
+  ],
   "kv_namespaces": [
     {
       "binding": "AUTH_KV",
@@ -44,6 +50,12 @@
         "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
         "BARUCH_BASE_URL": "https://staging-baruch.btservant.ai",
       },
+      "services": [
+        {
+          "binding": "BARUCH",
+          "service": "baruch-staging",
+        },
+      ],
       "kv_namespaces": [
         {
           "binding": "AUTH_KV",
