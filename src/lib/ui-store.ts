@@ -2,6 +2,10 @@ import { create } from "zustand";
 
 import type { Section } from "@/types/ui";
 
+export const CHAT_PANEL_MIN_WIDTH = 280;
+export const CHAT_PANEL_MAX_WIDTH = 800;
+export const CHAT_PANEL_DEFAULT_WIDTH = 340;
+
 interface UiState {
   activeSection: Section;
   setActiveSection: (section: Section) => void;
@@ -14,6 +18,9 @@ interface UiState {
   chatModeSeeded: boolean;
   setChatMode: (mode: string | null) => void;
   testChatUserId: string;
+  testChatPanelWidth: number;
+  setTestChatPanelWidth: (width: number) => void;
+  persistTestChatPanelWidth: () => void;
   reset: () => void;
 }
 
@@ -29,7 +36,22 @@ type InitialUiState = Pick<
   | "chatMode"
   | "chatModeSeeded"
   | "testChatUserId"
+  | "testChatPanelWidth"
 >;
+
+function loadPersistedWidth(): number {
+  const stored = localStorage.getItem("testChatPanelWidth");
+  if (stored) {
+    const parsed = Number(stored);
+    if (
+      !Number.isNaN(parsed) &&
+      parsed >= CHAT_PANEL_MIN_WIDTH &&
+      parsed <= CHAT_PANEL_MAX_WIDTH
+    )
+      return parsed;
+  }
+  return CHAT_PANEL_DEFAULT_WIDTH;
+}
 
 const initialState: InitialUiState = {
   activeSection: "baruch",
@@ -40,6 +62,7 @@ const initialState: InitialUiState = {
   // Placeholder — reset() always generates a fresh UUID; this value is only
   // used for the very first session (before any logout occurs).
   testChatUserId: crypto.randomUUID(),
+  testChatPanelWidth: loadPersistedWidth(),
 };
 
 export const useUiStore = create<UiState>()((set) => ({
@@ -63,7 +86,25 @@ export const useUiStore = create<UiState>()((set) => ({
     })),
   setSelectedMode: (selectedMode) => set({ selectedMode }),
   setChatMode: (chatMode) => set({ chatMode }),
+  setTestChatPanelWidth: (width) => {
+    const clamped = Math.max(
+      CHAT_PANEL_MIN_WIDTH,
+      Math.min(CHAT_PANEL_MAX_WIDTH, width)
+    );
+    set({ testChatPanelWidth: clamped });
+  },
+  persistTestChatPanelWidth: () => {
+    const { testChatPanelWidth } = useUiStore.getState();
+    localStorage.setItem("testChatPanelWidth", String(testChatPanelWidth));
+  },
   // Resets all session-scoped UI state and generates a new testChatUserId so
   // the next user's chat session is fully isolated from the previous one.
-  reset: () => set({ ...initialState, testChatUserId: crypto.randomUUID() }),
+  // testChatPanelWidth is intentionally preserved — it's a UI preference, not
+  // session state.
+  reset: () =>
+    set((state) => ({
+      ...initialState,
+      testChatUserId: crypto.randomUUID(),
+      testChatPanelWidth: state.testChatPanelWidth,
+    })),
 }));
