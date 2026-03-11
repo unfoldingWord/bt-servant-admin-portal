@@ -78,7 +78,10 @@ export default {
         return handleHistory(request, env, session);
       }
       if (url.pathname === "/api/chat/memory") {
-        return handleDeleteMemory(request, env, session);
+        if (request.method === "DELETE") {
+          return handleDeleteMemory(request, env, session);
+        }
+        return errorResponse("Method not allowed", 405);
       }
       return handlePoll(request, env, session);
     }
