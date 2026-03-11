@@ -9,7 +9,7 @@ import {
   faScrewdriverWrench,
 } from "@fortawesome/pro-duotone-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Eye, Pencil, Save, X } from "lucide-react";
+import { Eye, Maximize2, Pencil, Save, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import {
@@ -26,6 +26,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 
 const SLOT_ICONS = {
@@ -142,6 +149,7 @@ export function PromptPanel({
     "collapsed"
   );
   const [draft, setDraft] = useState(value ?? "");
+  const [expanded, setExpanded] = useState(false);
 
   // When value updates (after a successful save or external change),
   // sync draft and collapse back from editing mode
@@ -149,6 +157,7 @@ export function PromptPanel({
     setDraft(value ?? "");
     if (mode === "editing") {
       setMode("collapsed");
+      setExpanded(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to value changes
   }, [value]);
@@ -171,6 +180,17 @@ export function PromptPanel({
     onSave(draft);
     // Panel collapses when `value` updates after successful save (via useEffect above)
   }, [draft, onSave]);
+
+  const handleExpandedOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && mode === "editing") {
+        setDraft(value ?? "");
+        setMode("collapsed");
+      }
+      setExpanded(open);
+    },
+    [mode, value]
+  );
 
   const overLimit = draft.length > MAX_SLOT_LENGTH;
   const hasValue = !!value;
@@ -240,14 +260,26 @@ export function PromptPanel({
       <CardContent>
         {mode === "editing" ? (
           <div className="space-y-3">
-            <Textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              rows={6}
-              className="bg-background max-h-64 resize-y font-mono text-xs leading-relaxed dark:bg-white/[0.06]"
-              placeholder={`Enter ${SLOT_LABELS[slot].toLowerCase()} override...`}
-              autoFocus
-            />
+            <div className="group relative">
+              <Textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={6}
+                className="bg-background max-h-64 resize-y font-mono text-xs leading-relaxed dark:bg-white/[0.06]"
+                placeholder={`Enter ${SLOT_LABELS[slot].toLowerCase()} override...`}
+                autoFocus
+              />
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="absolute right-2 bottom-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
+                onClick={() => setExpanded(true)}
+                title="Expand"
+                type="button"
+              >
+                <Maximize2 className="size-3" />
+              </Button>
+            </div>
             <div className="flex items-center justify-between">
               <span
                 className={cn(
@@ -283,9 +315,21 @@ export function PromptPanel({
           </div>
         ) : mode === "viewing" ? (
           <div className="space-y-3">
-            <pre className="bg-background max-h-64 overflow-y-auto rounded-md border p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap dark:bg-white/[0.06]">
-              {value}
-            </pre>
+            <div className="group relative">
+              <pre className="bg-background max-h-64 overflow-y-auto rounded-md border p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap dark:bg-white/[0.06]">
+                {value}
+              </pre>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="absolute right-2 bottom-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
+                onClick={() => setExpanded(true)}
+                title="Expand"
+                type="button"
+              >
+                <Maximize2 className="size-3" />
+              </Button>
+            </div>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="xs" onClick={cancel}>
                 <X className="mr-1 size-3" />
@@ -307,6 +351,113 @@ export function PromptPanel({
           </p>
         )}
       </CardContent>
+
+      <Dialog open={expanded} onOpenChange={handleExpandedOpenChange}>
+        <DialogContent
+          showCloseButton={false}
+          className="flex h-[80vh] w-[80vw] max-w-[80vw] flex-col gap-0 p-0"
+        >
+          <DialogHeader className="flex-row items-center gap-2.5 border-b px-6 py-4">
+            <div
+              className="slot-icon flex size-8 shrink-0 items-center justify-center rounded-md"
+              style={
+                {
+                  "--icon-bg": colors.bg,
+                  "--icon-bg-dark": darkColors.bg,
+                  "--icon-fa-primary": colors.primary,
+                  "--icon-fa-primary-dark": darkColors.primary,
+                  "--icon-fa-secondary": colors.secondary,
+                  "--icon-fa-secondary-dark": darkColors.secondary,
+                  backgroundColor: "var(--icon-bg)",
+                } as React.CSSProperties
+              }
+            >
+              <FontAwesomeIcon
+                icon={SLOT_ICONS[slot]}
+                className="text-sm"
+                style={{
+                  "--fa-primary-color": "var(--icon-fa-primary)",
+                  "--fa-primary-opacity": "1",
+                  "--fa-secondary-color": "var(--icon-fa-secondary)",
+                  "--fa-secondary-opacity": "0.7",
+                }}
+              />
+            </div>
+            <DialogTitle className="text-sm">{SLOT_LABELS[slot]}</DialogTitle>
+          </DialogHeader>
+
+          <div className="min-h-0 flex-1 p-6">
+            {mode === "editing" ? (
+              <Textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                className="bg-background h-full resize-none font-mono text-xs leading-relaxed dark:bg-white/[0.06]"
+                placeholder={`Enter ${SLOT_LABELS[slot].toLowerCase()} override...`}
+              />
+            ) : (
+              <pre className="bg-background h-full overflow-y-auto rounded-md border p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap dark:bg-white/[0.06]">
+                {value}
+              </pre>
+            )}
+          </div>
+
+          <DialogFooter className="border-t px-6 py-4">
+            {mode === "editing" ? (
+              <>
+                <span
+                  className={cn(
+                    "mr-auto text-xs tabular-nums",
+                    overLimit
+                      ? "text-destructive font-medium"
+                      : "text-muted-foreground"
+                  )}
+                >
+                  {draft.length.toLocaleString()}/
+                  {MAX_SLOT_LENGTH.toLocaleString()}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => {
+                    setDraft(value ?? "");
+                    setMode("collapsed");
+                    setExpanded(false);
+                  }}
+                  disabled={isSaving}
+                >
+                  <X className="mr-1 size-3" />
+                  Cancel
+                </Button>
+                <Button
+                  size="xs"
+                  onClick={save}
+                  disabled={isSaving || overLimit}
+                >
+                  <Save className="mr-1 size-3" />
+                  {isSaving ? "Saving..." : "Save"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setExpanded(false)}
+                >
+                  <X className="mr-1 size-3" />
+                  Close
+                </Button>
+                {!readOnly && (
+                  <Button size="xs" onClick={startEdit}>
+                    <Pencil className="mr-1 size-3" />
+                    Edit
+                  </Button>
+                )}
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
