@@ -51,7 +51,7 @@ function renderNormalizedText(text: string): React.ReactNode {
         {normalizeSupDigit(match[0])}
       </sup>
     );
-    lastIndex = SUPER_DIGIT_RE.lastIndex;
+    lastIndex = re.lastIndex;
   }
 
   if (lastIndex < text.length) {
