@@ -9,7 +9,7 @@ import {
   faScrewdriverWrench,
 } from "@fortawesome/pro-duotone-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Eye, Pencil, Save, X } from "lucide-react";
+import { Database, Eye, Pencil, Save, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import {
@@ -129,6 +129,7 @@ interface PromptPanelProps {
   onSave: (value: string) => void;
   isSaving: boolean;
   readOnly?: boolean;
+  onViewMemory?: () => void;
 }
 
 export function PromptPanel({
@@ -137,6 +138,7 @@ export function PromptPanel({
   onSave,
   isSaving,
   readOnly = false,
+  onViewMemory,
 }: PromptPanelProps) {
   const [mode, setMode] = useState<"collapsed" | "viewing" | "editing">(
     "collapsed"
@@ -223,6 +225,16 @@ export function PromptPanel({
         <CardAction>
           {mode === "collapsed" && (
             <div className="flex gap-0.5">
+              {onViewMemory && (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={onViewMemory}
+                  title="View user memory"
+                >
+                  <Database className="size-4" />
+                </Button>
+              )}
               {hasValue && (
                 <Button variant="ghost" size="icon-xs" onClick={startView}>
                   <Eye className="size-4" />

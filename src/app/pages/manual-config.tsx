@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
@@ -16,12 +16,14 @@ import type { PromptOverrides, PromptSlot } from "@/types/prompt-override";
 import { PROMPT_SLOTS } from "@/types/prompt-override";
 import { ModeSelector } from "@/components/mode-selector";
 import { PromptPanel } from "@/components/prompt-panel";
+import { UserMemoryDialog } from "@/components/user-memory-dialog";
 
 export function ManualConfigPage() {
   const orgName = useAuthStore((s) => s.user?.org);
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
   const selectedMode = useUiStore((s) => s.selectedMode);
   const setSelectedMode = useUiStore((s) => s.setSelectedMode);
+  const [memoryDialogOpen, setMemoryDialogOpen] = useState(false);
 
   // Queries
   const orgOverrides = useOrgOverrides();
@@ -159,12 +161,21 @@ export function ManualConfigPage() {
                   onSave={(value) => handleSaveSlot(slot, value)}
                   isSaving={isSaving}
                   readOnly={selectedMode === null && !isAdmin}
+                  onViewMemory={
+                    slot === "memory_instructions"
+                      ? () => setMemoryDialogOpen(true)
+                      : undefined
+                  }
                 />
               ))}
             </div>
           )}
         </div>
       </div>
+      <UserMemoryDialog
+        open={memoryDialogOpen}
+        onOpenChange={setMemoryDialogOpen}
+      />
     </div>
   );
 }
