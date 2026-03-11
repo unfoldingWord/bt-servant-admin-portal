@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 interface UseResizeHandleOptions {
   onResize: (width: number) => void;
+  onCommit?: () => void;
   currentWidth: number;
   minWidth: number;
   maxWidth: number;
@@ -9,6 +10,7 @@ interface UseResizeHandleOptions {
 
 export function useResizeHandle({
   onResize,
+  onCommit,
   currentWidth,
   minWidth,
   maxWidth,
@@ -45,6 +47,7 @@ export function useResizeHandle({
 
     function onMouseUp() {
       setIsResizing(false);
+      onCommit?.();
     }
 
     document.addEventListener("mousemove", onMouseMove);
@@ -56,7 +59,7 @@ export function useResizeHandle({
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
     };
-  }, [isResizing, minWidth, maxWidth, onResize]);
+  }, [isResizing, minWidth, maxWidth, onResize, onCommit]);
 
   return { handleMouseDown, isResizing };
 }

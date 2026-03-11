@@ -1,7 +1,7 @@
 import { Outlet } from "react-router";
 
 import { cn } from "@/lib/utils";
-import { useUiStore } from "@/lib/ui-store";
+import { useUiStore, CHAT_PANEL_MIN_WIDTH, CHAT_PANEL_MAX_WIDTH } from "@/lib/ui-store";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useResizeHandle } from "@/hooks/use-resize-handle";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -10,14 +10,32 @@ import { ActivityBar } from "@/components/activity-bar";
 import { TestChatPanel } from "@/components/test-chat-panel";
 
 export function AppShell() {
-  const { testChatOpen, setTestChatOpen, testChatPanelWidth, setTestChatPanelWidth } = useUiStore();
+  const {
+    testChatOpen,
+    setTestChatOpen,
+    testChatPanelWidth,
+    setTestChatPanelWidth,
+    persistTestChatPanelWidth,
+  } = useUiStore();
   const isDesktop = useMediaQuery("(min-width: 768px)");
   const { handleMouseDown, isResizing } = useResizeHandle({
     onResize: setTestChatPanelWidth,
+    onCommit: persistTestChatPanelWidth,
     currentWidth: testChatPanelWidth,
-    minWidth: 280,
-    maxWidth: 800,
+    minWidth: CHAT_PANEL_MIN_WIDTH,
+    maxWidth: CHAT_PANEL_MAX_WIDTH,
   });
+
+  function handleResizeKeyDown(e: React.KeyboardEvent) {
+    const step = e.shiftKey ? 50 : 10;
+    if (e.key === "ArrowLeft") {
+      setTestChatPanelWidth(testChatPanelWidth + step);
+      persistTestChatPanelWidth();
+    } else if (e.key === "ArrowRight") {
+      setTestChatPanelWidth(testChatPanelWidth - step);
+      persistTestChatPanelWidth();
+    }
+  }
 
   return (
     <TooltipProvider>
@@ -37,9 +55,17 @@ export function AppShell() {
             style={{ width: testChatPanelWidth }}
           >
             <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize chat panel"
+              aria-valuenow={testChatPanelWidth}
+              aria-valuemin={CHAT_PANEL_MIN_WIDTH}
+              aria-valuemax={CHAT_PANEL_MAX_WIDTH}
+              tabIndex={0}
               onMouseDown={handleMouseDown}
+              onKeyDown={handleResizeKeyDown}
               className={cn(
-                "absolute left-0 top-0 z-10 h-full w-1.5 cursor-col-resize transition-colors",
+                "absolute left-0 top-0 z-10 h-full w-1.5 cursor-col-resize transition-colors focus:outline-none focus-visible:bg-primary/50",
                 isResizing ? "bg-primary" : "hover:bg-border"
               )}
             />

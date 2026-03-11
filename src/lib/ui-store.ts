@@ -2,6 +2,10 @@ import { create } from "zustand";
 
 import type { Section } from "@/types/ui";
 
+export const CHAT_PANEL_MIN_WIDTH = 280;
+export const CHAT_PANEL_MAX_WIDTH = 800;
+export const CHAT_PANEL_DEFAULT_WIDTH = 340;
+
 interface UiState {
   activeSection: Section;
   setActiveSection: (section: Section) => void;
@@ -16,6 +20,7 @@ interface UiState {
   testChatUserId: string;
   testChatPanelWidth: number;
   setTestChatPanelWidth: (width: number) => void;
+  persistTestChatPanelWidth: () => void;
   reset: () => void;
 }
 
@@ -38,9 +43,14 @@ function loadPersistedWidth(): number {
   const stored = localStorage.getItem("testChatPanelWidth");
   if (stored) {
     const parsed = Number(stored);
-    if (!Number.isNaN(parsed) && parsed >= 280 && parsed <= 800) return parsed;
+    if (
+      !Number.isNaN(parsed) &&
+      parsed >= CHAT_PANEL_MIN_WIDTH &&
+      parsed <= CHAT_PANEL_MAX_WIDTH
+    )
+      return parsed;
   }
-  return 340;
+  return CHAT_PANEL_DEFAULT_WIDTH;
 }
 
 const initialState: InitialUiState = {
@@ -77,9 +87,15 @@ export const useUiStore = create<UiState>()((set) => ({
   setSelectedMode: (selectedMode) => set({ selectedMode }),
   setChatMode: (chatMode) => set({ chatMode }),
   setTestChatPanelWidth: (width) => {
-    const clamped = Math.max(280, Math.min(800, width));
-    localStorage.setItem("testChatPanelWidth", String(clamped));
+    const clamped = Math.max(
+      CHAT_PANEL_MIN_WIDTH,
+      Math.min(CHAT_PANEL_MAX_WIDTH, width)
+    );
     set({ testChatPanelWidth: clamped });
+  },
+  persistTestChatPanelWidth: () => {
+    const { testChatPanelWidth } = useUiStore.getState();
+    localStorage.setItem("testChatPanelWidth", String(testChatPanelWidth));
   },
   // Resets all session-scoped UI state and generates a new testChatUserId so
   // the next user's chat session is fully isolated from the previous one.
