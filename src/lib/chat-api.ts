@@ -92,3 +92,20 @@ export async function deleteHistory(
     throw new Error(`Delete history failed (${res.status}): ${body}`);
   }
 }
+
+export async function deleteMemory(
+  userId: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const params = new URLSearchParams({ user_id: userId });
+  const res = await fetch(`/api/chat/memory?${params.toString()}`, {
+    method: "DELETE",
+    headers: SAME_ORIGIN_HEADERS,
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Delete memory failed (${res.status}): ${body}`);
+  }
+}

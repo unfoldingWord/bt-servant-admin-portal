@@ -15,6 +15,7 @@ import {
 } from "./baruch";
 import {
   handleDeleteHistory,
+  handleDeleteMemory,
   handleEnqueue,
   handleHistory,
   handlePoll,
@@ -56,7 +57,8 @@ export default {
     if (
       url.pathname === "/api/chat/stream" ||
       url.pathname === "/api/chat/stream/poll" ||
-      url.pathname === "/api/chat/history"
+      url.pathname === "/api/chat/history" ||
+      url.pathname === "/api/chat/memory"
     ) {
       const blocked = requireSameOrigin(request);
       if (blocked) return blocked;
@@ -74,6 +76,12 @@ export default {
           return handleDeleteHistory(request, env, session);
         }
         return handleHistory(request, env, session);
+      }
+      if (url.pathname === "/api/chat/memory") {
+        if (request.method === "DELETE") {
+          return handleDeleteMemory(request, env, session);
+        }
+        return errorResponse("Method not allowed", 405);
       }
       return handlePoll(request, env, session);
     }
