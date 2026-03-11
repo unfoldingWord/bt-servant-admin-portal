@@ -215,3 +215,32 @@ export async function handleDeleteHistory(
 
   return jsonResponse({ success: true });
 }
+
+export async function handleDeleteMemory(
+  request: Request,
+  env: Env,
+  session: SessionData
+): Promise<Response> {
+  if (request.method !== "DELETE") {
+    return errorResponse("Method not allowed", 405);
+  }
+
+  const url = new URL(request.url);
+  const userId = resolveUserId(url.searchParams.get("user_id"), session);
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${session.org}/users/${userId}/memory`;
+
+  const engineRes = await fetch(engineUrl, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${env.ENGINE_API_KEY}`,
+    },
+  });
+
+  if (!engineRes.ok) {
+    const text = await engineRes.text().catch(() => "");
+    console.error(`Engine delete memory failed (${engineRes.status}): ${text}`);
+    return errorResponse("Failed to delete memory", 502);
+  }
+
+  return jsonResponse({ success: true });
+}
