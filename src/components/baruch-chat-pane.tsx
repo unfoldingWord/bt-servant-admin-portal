@@ -44,6 +44,7 @@ export function BaruchChatPane() {
 
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const hasMessages = messages.length > 0;
   const isBusy = isLoading || isInitiating;
@@ -59,11 +60,31 @@ export function BaruchChatPane() {
     }
   }, [messages, streamingText, isLoading]);
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  // Restore focus to the input after a response completes
+  const prevBusyRef = useRef(false);
+  useEffect(() => {
+    if (prevBusyRef.current && !isBusy) {
+      inputRef.current?.focus();
+    }
+    prevBusyRef.current = isBusy;
+  }, [isBusy]);
+
+  function doSubmit() {
     if (!input.trim() || isLoading) return;
     void sendMessage(input);
     setInput("");
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    doSubmit();
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      doSubmit();
+    }
   }
 
   return (
@@ -156,14 +177,15 @@ export function BaruchChatPane() {
           onSubmit={handleSubmit}
           className="mx-auto flex w-full max-w-2xl items-center gap-2"
         >
-          <div className="bg-card ring-border focus-within:ring-primary/50 flex flex-1 items-center rounded-xl px-4 py-2.5 ring-1 transition-all">
-            <input
-              type="text"
+          <div className="bg-card ring-border focus-within:ring-primary/50 flex flex-1 items-center rounded-xl px-4 ring-1 transition-all">
+            <textarea
+              ref={inputRef}
+              rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
               placeholder="Ask Baruch…"
-              disabled={isBusy}
-              className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent text-sm outline-none disabled:opacity-50"
+              className="text-foreground placeholder:text-muted-foreground max-h-32 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-sm outline-none [field-sizing:content]"
             />
             <button
               type="submit"
