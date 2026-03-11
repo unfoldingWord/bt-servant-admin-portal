@@ -47,7 +47,7 @@ function renderNormalizedText(text: string): React.ReactNode {
       parts.push(text.slice(lastIndex, match.index));
     }
     parts.push(
-      <sup key={match.index} className="text-[0.75em] align-super">
+      <sup key={match.index} className="align-super text-[0.75em]">
         {normalizeSupDigit(match[0])}
       </sup>
     );

@@ -273,7 +273,7 @@ export function TestChatPanel() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Test Prompt Configuration"
-              className="text-foreground placeholder:text-muted-foreground max-h-32 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-sm outline-none [field-sizing:content]"
+              className="text-foreground placeholder:text-muted-foreground [field-sizing:content] max-h-32 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-sm outline-none"
             />
             <button
               type="submit"
