@@ -1,3 +1,4 @@
+import { useCallback, useRef } from "react";
 import { Outlet } from "react-router";
 
 import { cn } from "@/lib/utils";
@@ -26,14 +27,20 @@ export function AppShell() {
     maxWidth: CHAT_PANEL_MAX_WIDTH,
   });
 
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const debouncedPersist = useCallback(() => {
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(persistTestChatPanelWidth, 300);
+  }, [persistTestChatPanelWidth]);
+
   function handleResizeKeyDown(e: React.KeyboardEvent) {
     const step = e.shiftKey ? 50 : 10;
     if (e.key === "ArrowLeft") {
       setTestChatPanelWidth(testChatPanelWidth + step);
-      persistTestChatPanelWidth();
+      debouncedPersist();
     } else if (e.key === "ArrowRight") {
       setTestChatPanelWidth(testChatPanelWidth - step);
-      persistTestChatPanelWidth();
+      debouncedPersist();
     }
   }
 
