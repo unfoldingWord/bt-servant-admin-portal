@@ -29,6 +29,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -272,12 +273,12 @@ export function PromptPanel({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                className="absolute right-2 bottom-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
+                className="absolute right-2 bottom-2 size-11 opacity-100 transition-opacity sm:size-6 sm:opacity-0 sm:group-hover:opacity-100"
                 onClick={() => setExpanded(true)}
                 title="Expand"
                 type="button"
               >
-                <Maximize2 className="size-3" />
+                <Maximize2 className="size-4 sm:size-3" />
               </Button>
             </div>
             <div className="flex items-center justify-between">
@@ -322,12 +323,12 @@ export function PromptPanel({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                className="absolute right-2 bottom-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
+                className="absolute right-2 bottom-2 size-11 opacity-100 transition-opacity sm:size-6 sm:opacity-0 sm:group-hover:opacity-100"
                 onClick={() => setExpanded(true)}
                 title="Expand"
                 type="button"
               >
-                <Maximize2 className="size-3" />
+                <Maximize2 className="size-4 sm:size-3" />
               </Button>
             </div>
             <div className="flex justify-end gap-2">
@@ -384,6 +385,10 @@ export function PromptPanel({
               />
             </div>
             <DialogTitle className="text-sm">{SLOT_LABELS[slot]}</DialogTitle>
+            <DialogDescription className="sr-only">
+              Expanded editor for the {SLOT_LABELS[slot].toLowerCase()} prompt
+              slot
+            </DialogDescription>
           </DialogHeader>
 
           <div className="min-h-0 flex-1 p-6">
