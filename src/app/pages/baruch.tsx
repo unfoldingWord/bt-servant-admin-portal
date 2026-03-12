@@ -5,8 +5,8 @@ export function BaruchPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PageHeader
-        title="Baruch Configuration Guide"
-        subtitle="Talk to Baruch to configure your BT Servant agent — name, identity, teaching methodology, tool guidance, instructions, memory instructions, and closing prompt."
+        title="Baruch Configuration Agent"
+        subtitle="Chat with Baruch to configure your BT Servant agent."
       />
 
       {/* Chat area — dot grid background */}
