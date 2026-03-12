@@ -2,6 +2,9 @@ import type { Env } from "./helpers";
 import { errorResponse } from "./helpers";
 import type { SessionData } from "./types";
 
+const UUID_V4_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 // ---------------------------------------------------------------------------
 // Proxy helper — forwards request to Engine API
 // ---------------------------------------------------------------------------
@@ -81,8 +84,6 @@ export async function handleConfig(
   const userModeMatch = pathname.match(/^\/api\/config\/user-mode\/(.+)$/);
   if (userModeMatch?.[1]) {
     const userId = decodeURIComponent(userModeMatch[1]);
-    const UUID_V4_RE =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     if (!UUID_V4_RE.test(userId)) {
       return errorResponse("Invalid user ID", 400);
     }
@@ -91,6 +92,21 @@ export async function handleConfig(
       env,
       `/api/v1/admin/orgs/${org}/users/${encodeURIComponent(userId)}/mode`,
       ["PUT", "DELETE"]
+    );
+  }
+
+  // /api/config/user-memory/{userId} → GET/DELETE (UUID v4 only)
+  const userMemoryMatch = pathname.match(/^\/api\/config\/user-memory\/(.+)$/);
+  if (userMemoryMatch?.[1]) {
+    const userId = decodeURIComponent(userMemoryMatch[1]);
+    if (!UUID_V4_RE.test(userId)) {
+      return errorResponse("Invalid user ID", 400);
+    }
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${org}/users/${encodeURIComponent(userId)}/memory`,
+      ["GET", "DELETE"]
     );
   }
 
