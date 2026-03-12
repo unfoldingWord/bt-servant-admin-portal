@@ -1,3 +1,4 @@
+import type { MemoryResponse } from "@/types/memory";
 import type {
   OrgModes,
   PromptMode,
@@ -142,6 +143,45 @@ export async function deleteMode(
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`Failed to delete mode (${res.status}): ${body}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-user memory
+// ---------------------------------------------------------------------------
+
+export async function getUserMemory(
+  userId: string,
+  signal?: AbortSignal
+): Promise<MemoryResponse> {
+  const url = `/api/config/user-memory/${encodeURIComponent(userId)}`;
+  const res = await fetch(url, {
+    headers: SAME_ORIGIN_HEADERS,
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Failed to load user memory (${res.status}): ${body}`);
+  }
+
+  return (await res.json()) as MemoryResponse;
+}
+
+export async function deleteUserMemory(
+  userId: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const url = `/api/config/user-memory/${encodeURIComponent(userId)}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: SAME_ORIGIN_HEADERS,
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Failed to delete user memory (${res.status}): ${body}`);
   }
 }
 
