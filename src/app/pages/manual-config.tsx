@@ -1,9 +1,10 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
 import { useAuthStore } from "@/lib/auth-store";
 import { useUiStore } from "@/lib/ui-store";
+import { PageHeader } from "@/components/page-header";
 import {
   useDeleteMode,
   useMode,
@@ -16,12 +17,13 @@ import type { PromptOverrides, PromptSlot } from "@/types/prompt-override";
 import { PROMPT_SLOTS } from "@/types/prompt-override";
 import { ModeSelector } from "@/components/mode-selector";
 import { PromptPanel } from "@/components/prompt-panel";
+import { UserMemoryDialog } from "@/components/user-memory-dialog";
 
 export function ManualConfigPage() {
-  const orgName = useAuthStore((s) => s.user?.org);
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
   const selectedMode = useUiStore((s) => s.selectedMode);
   const setSelectedMode = useUiStore((s) => s.setSelectedMode);
+  const [memoryDialogOpen, setMemoryDialogOpen] = useState(false);
 
   // Queries
   const orgOverrides = useOrgOverrides();
@@ -102,20 +104,10 @@ export function ManualConfigPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Header — pinned, never scrolls */}
-      <div className="config-header border-border/50 shrink-0 border-b px-4 py-4 shadow-[0_2px_8px_rgba(0,0,0,0.06)] sm:px-6 sm:py-5 dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
-        <h1 className="text-foreground text-lg font-semibold tracking-tight">
-          Prompt Configuration
-        </h1>
-        <p className="text-muted-foreground mt-1 text-[13px] leading-relaxed">
-          Manage prompt overrides for each slot at the org level or per mode.
-        </p>
-        {orgName && (
-          <span className="bg-primary/8 text-primary/80 ring-primary/15 dark:bg-primary/12 dark:text-primary/70 dark:ring-primary/20 mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1">
-            Org: <em className="ml-1 font-semibold not-italic">{orgName}</em>
-          </span>
-        )}
-      </div>
+      <PageHeader
+        title="Prompt Configuration"
+        subtitle="Manage prompt overrides for each slot at the org level or per mode."
+      />
 
       {/* Grid area — dot grid + subtle radial glow */}
       <div className="config-grid-bg min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
@@ -159,12 +151,21 @@ export function ManualConfigPage() {
                   onSave={(value) => handleSaveSlot(slot, value)}
                   isSaving={isSaving}
                   readOnly={selectedMode === null && !isAdmin}
+                  onViewMemory={
+                    slot === "memory_instructions"
+                      ? () => setMemoryDialogOpen(true)
+                      : undefined
+                  }
                 />
               ))}
             </div>
           )}
         </div>
       </div>
+      <UserMemoryDialog
+        open={memoryDialogOpen}
+        onOpenChange={setMemoryDialogOpen}
+      />
     </div>
   );
 }

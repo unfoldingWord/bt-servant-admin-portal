@@ -25,5 +25,4 @@ npm-debug.log*
 *.tsbuildinfo
 
 # claude code
-.claude/worktrees
-.claude/settings.local.json
+.claude/

@@ -7,15 +7,80 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useAnimatedText } from "@/hooks/use-animated-text";
 import type { ChatMessage } from "@/types/chat";
 
+/**
+ * Unicode superscript digits → regular digits mapping.
+ * Used to normalize verse numbers like ¹⁸ into <sup>18</sup> so they
+ * render at a uniform height instead of the staircase effect caused by
+ * some fonts rendering adjacent unicode superscripts at different levels.
+ */
+const SUPER_DIGIT_MAP: Record<string, string> = {
+  "\u2070": "0",
+  "\u00B9": "1",
+  "\u00B2": "2",
+  "\u00B3": "3",
+  "\u2074": "4",
+  "\u2075": "5",
+  "\u2076": "6",
+  "\u2077": "7",
+  "\u2078": "8",
+  "\u2079": "9",
+};
+const SUPER_DIGIT_TEST = /[\u2070\u00B9\u00B2\u00B3\u2074-\u2079]/;
+
+function normalizeSupDigit(match: string): string {
+  return Array.from(match)
+    .map((ch) => SUPER_DIGIT_MAP[ch] ?? ch)
+    .join("");
+}
+
+/** Split a string into text segments and <sup> elements for verse numbers. */
+function renderNormalizedText(text: string): React.ReactNode {
+  if (!SUPER_DIGIT_TEST.test(text)) return text;
+
+  const re = /[\u2070\u00B9\u00B2\u00B3\u2074-\u2079]+/g;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    parts.push(
+      <sup key={match.index} className="align-super text-[0.75em]">
+        {normalizeSupDigit(match[0])}
+      </sup>
+    );
+    lastIndex = re.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts;
+}
+
+/** Recursively walk React children, normalizing text nodes. */
+function normalizeChildren(children: React.ReactNode): React.ReactNode {
+  if (typeof children === "string") return renderNormalizedText(children);
+  if (Array.isArray(children)) return children.map(normalizeChildren);
+  return children;
+}
+
 const markdownComponents = {
   p: ({ children }: { children?: React.ReactNode }) => (
-    <p className="mb-2 last:mb-0">{children}</p>
+    <p className="mb-2 last:mb-0">{normalizeChildren(children)}</p>
   ),
   ul: ({ children }: { children?: React.ReactNode }) => (
-    <ul className="mb-2 list-disc space-y-1 pl-4 last:mb-0">{children}</ul>
+    <ul className="mb-2 list-disc space-y-1 pl-4 last:mb-0">
+      {normalizeChildren(children)}
+    </ul>
   ),
   ol: ({ children }: { children?: React.ReactNode }) => (
-    <ol className="mb-2 list-decimal space-y-1 pl-4 last:mb-0">{children}</ol>
+    <ol className="mb-2 list-decimal space-y-1 pl-4 last:mb-0">
+      {normalizeChildren(children)}
+    </ol>
   ),
   code: ({
     className,
@@ -42,7 +107,7 @@ const markdownComponents = {
     );
   },
   strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong className="font-semibold">{children}</strong>
+    <strong className="font-semibold">{normalizeChildren(children)}</strong>
   ),
   a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
     <a
@@ -51,7 +116,7 @@ const markdownComponents = {
       rel="noopener noreferrer"
       className="text-primary underline underline-offset-2"
     >
-      {children}
+      {normalizeChildren(children)}
     </a>
   ),
 };

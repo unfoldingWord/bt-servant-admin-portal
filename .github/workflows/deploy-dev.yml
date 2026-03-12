@@ -41,30 +41,13 @@ jobs:
             c.name = 'bt-servant-admin-portal-dev';
             c.kv_namespaces = [{ binding: 'AUTH_KV', id: 'fe1fdafdb04a4fa085b38c0a79e7a590' }];
             c.services = [{ binding: 'BARUCH', service: 'baruch-dev' }];
+            c.vars = { ENGINE_BASE_URL: 'https://staging-api.btservant.ai', BARUCH_BASE_URL: 'https://baruch-dev.unfoldingword.workers.dev' };
             fs.writeFileSync(p, JSON.stringify(c));
-            console.log('Patched:', JSON.stringify({ name: c.name, services: c.services, kv: c.kv_namespaces }));
+            console.log('Patched:', JSON.stringify({ name: c.name, services: c.services, kv: c.kv_namespaces, vars: c.vars }));
           "
 
       - name: Deploy to Cloudflare Workers (dev)
-        run: npx wrangler deploy --var ENGINE_BASE_URL:https://staging-api.btservant.ai --var BARUCH_BASE_URL:https://baruch-dev.unfoldingword.workers.dev
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Set ENGINE_API_KEY secret
-        run: echo "${{ secrets.ENGINE_API_KEY_DEV }}" | npx wrangler secret put ENGINE_API_KEY --env dev
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Set BARUCH_API_KEY secret
-        run: echo "${{ secrets.BARUCH_API_KEY_DEV }}" | npx wrangler secret put BARUCH_API_KEY --env dev
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Set ADMIN_SECRET secret
-        run: echo "${{ secrets.ADMIN_SECRET_DEV }}" | npx wrangler secret put ADMIN_SECRET --env dev
+        run: npx wrangler deploy --config dist/bt_servant_admin_portal/wrangler.json
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

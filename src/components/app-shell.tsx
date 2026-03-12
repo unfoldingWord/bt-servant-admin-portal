@@ -2,7 +2,11 @@ import { useCallback, useRef } from "react";
 import { Outlet } from "react-router";
 
 import { cn } from "@/lib/utils";
-import { useUiStore, CHAT_PANEL_MIN_WIDTH, CHAT_PANEL_MAX_WIDTH } from "@/lib/ui-store";
+import {
+  useUiStore,
+  CHAT_PANEL_MIN_WIDTH,
+  CHAT_PANEL_MAX_WIDTH,
+} from "@/lib/ui-store";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useResizeHandle } from "@/hooks/use-resize-handle";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -72,7 +76,7 @@ export function AppShell() {
               onMouseDown={handleMouseDown}
               onKeyDown={handleResizeKeyDown}
               className={cn(
-                "absolute left-0 top-0 z-10 h-full w-1.5 cursor-col-resize transition-colors focus:outline-none focus-visible:bg-primary/50",
+                "focus-visible:bg-primary/50 absolute top-0 left-0 z-10 h-full w-1.5 cursor-col-resize transition-colors focus:outline-none",
                 isResizing ? "bg-primary" : "hover:bg-border"
               )}
             />

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   deleteHistory,
+  deleteMemory,
   enqueueMessage,
   fetchHistory,
   pollEvents,
@@ -248,10 +249,17 @@ export function useTestChat(userId: string) {
     setStatusMessage(null);
     setError(null);
 
-    deleteHistory(userId).catch((err) => {
-      console.warn("[useTestChat] Failed to delete server history:", err);
-      setError("Failed to clear server history. It may reappear on reload.");
-    });
+    Promise.allSettled([deleteHistory(userId), deleteMemory(userId)]).then(
+      (results) => {
+        const failures = results
+          .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+          .map((r) => (r.reason as Error).message);
+        if (failures.length > 0) {
+          console.warn("[useTestChat] Failed to clear server data:", failures);
+          setError("Failed to clear server data. It may reappear on reload.");
+        }
+      }
+    );
   }, [userId]);
 
   const streamingCreatedAt = useRef(new Date());

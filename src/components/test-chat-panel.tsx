@@ -86,6 +86,7 @@ export function TestChatPanel() {
 
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const hasMessages = messages.length > 0;
 
@@ -102,11 +103,31 @@ export function TestChatPanel() {
     }
   }, [messages, streamingText, isLoading]);
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  // Restore focus to the input after a response completes
+  const prevLoadingRef = useRef(false);
+  useEffect(() => {
+    if (prevLoadingRef.current && !isLoading) {
+      inputRef.current?.focus();
+    }
+    prevLoadingRef.current = isLoading;
+  }, [isLoading]);
+
+  function doSubmit() {
     if (!input.trim() || isLoading) return;
     void sendMessage(input);
     setInput("");
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    doSubmit();
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      doSubmit();
+    }
   }
 
   return (
@@ -244,14 +265,15 @@ export function TestChatPanel() {
       {/* Input */}
       <div className="border-border/50 bg-card shrink-0 border-t p-3">
         <form onSubmit={handleSubmit}>
-          <div className="bg-background ring-border focus-within:ring-primary/50 flex h-10 items-center rounded-lg px-3 ring-1 transition-all">
-            <input
-              type="text"
+          <div className="bg-background ring-border focus-within:ring-primary/50 flex items-center rounded-lg px-3 ring-1 transition-all">
+            <textarea
+              ref={inputRef}
+              rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
               placeholder="Test Prompt Configuration"
-              disabled={isLoading}
-              className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent text-sm outline-none disabled:opacity-50"
+              className="text-foreground placeholder:text-muted-foreground [field-sizing:content] max-h-32 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-sm outline-none"
             />
             <button
               type="submit"
