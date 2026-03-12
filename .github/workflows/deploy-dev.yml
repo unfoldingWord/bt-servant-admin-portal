@@ -29,24 +29,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build application
-        run: npm run build
-
-      - name: Patch wrangler config for dev environment
-        run: |
-          node -e "
-            const fs = require('fs');
-            const p = 'dist/bt_servant_admin_portal/wrangler.json';
-            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
-            c.name = 'bt-servant-admin-portal-dev';
-            c.kv_namespaces = [{ binding: 'AUTH_KV', id: 'fe1fdafdb04a4fa085b38c0a79e7a590' }];
-            c.services = [{ binding: 'BARUCH', service: 'baruch-dev' }];
-            fs.writeFileSync(p, JSON.stringify(c));
-            console.log('Patched:', JSON.stringify({ name: c.name, services: c.services, kv: c.kv_namespaces }));
-          "
-
       - name: Deploy to Cloudflare Workers (dev)
-        run: npx wrangler deploy --var ENGINE_BASE_URL:https://staging-api.btservant.ai --var BARUCH_BASE_URL:https://baruch-dev.unfoldingword.workers.dev
+        run: npx wrangler deploy --env dev
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
