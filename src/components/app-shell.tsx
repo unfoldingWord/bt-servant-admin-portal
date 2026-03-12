@@ -36,10 +36,10 @@ export function AppShell() {
   function handleResizeKeyDown(e: React.KeyboardEvent) {
     const step = e.shiftKey ? 50 : 10;
     if (e.key === "ArrowLeft") {
-      setTestChatPanelWidth(testChatPanelWidth + step);
+      setTestChatPanelWidth(useUiStore.getState().testChatPanelWidth + step);
       debouncedPersist();
     } else if (e.key === "ArrowRight") {
-      setTestChatPanelWidth(testChatPanelWidth - step);
+      setTestChatPanelWidth(useUiStore.getState().testChatPanelWidth - step);
       debouncedPersist();
     }
   }
