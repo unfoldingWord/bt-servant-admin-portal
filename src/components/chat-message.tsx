@@ -73,10 +73,14 @@ const markdownComponents = {
     <p className="mb-2 last:mb-0">{normalizeChildren(children)}</p>
   ),
   ul: ({ children }: { children?: React.ReactNode }) => (
-    <ul className="mb-2 list-disc space-y-1 pl-4 last:mb-0">{children}</ul>
+    <ul className="mb-2 list-disc space-y-1 pl-4 last:mb-0">
+      {normalizeChildren(children)}
+    </ul>
   ),
   ol: ({ children }: { children?: React.ReactNode }) => (
-    <ol className="mb-2 list-decimal space-y-1 pl-4 last:mb-0">{children}</ol>
+    <ol className="mb-2 list-decimal space-y-1 pl-4 last:mb-0">
+      {normalizeChildren(children)}
+    </ol>
   ),
   code: ({
     className,
@@ -103,7 +107,7 @@ const markdownComponents = {
     );
   },
   strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong className="font-semibold">{children}</strong>
+    <strong className="font-semibold">{normalizeChildren(children)}</strong>
   ),
   a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
     <a
@@ -112,7 +116,7 @@ const markdownComponents = {
       rel="noopener noreferrer"
       className="text-primary underline underline-offset-2"
     >
-      {children}
+      {normalizeChildren(children)}
     </a>
   ),
 };
