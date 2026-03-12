@@ -194,33 +194,40 @@ function ClearMemoryButton({ userId }: ClearMemoryButtonProps) {
   const deleteMutation = useDeleteUserMemory();
 
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button variant="destructive" size="sm">
-          <Trash2 className="mr-1 size-3" />
-          Clear Memory
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Clear all memory?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This will permanently delete all memory entries for this user. This
-            action cannot be undone.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={() => deleteMutation.mutate(userId)}
-            disabled={deleteMutation.isPending}
-          >
-            {deleteMutation.isPending ? "Clearing..." : "Clear Memory"}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <div className="space-y-2">
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button variant="destructive" size="sm">
+            <Trash2 className="mr-1 size-3" />
+            Clear Memory
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear all memory?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete all memory entries for this user.
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => deleteMutation.mutate(userId)}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Clearing..." : "Clear Memory"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {deleteMutation.isError && (
+        <p className="text-destructive text-xs">
+          Failed to clear memory. Please try again.
+        </p>
+      )}
+    </div>
   );
 }
 

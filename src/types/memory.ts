@@ -18,7 +18,6 @@ export interface MemoryTOC {
 }
 
 export interface MemoryResponse {
-  content: string;
   toc: MemoryTOC;
   entries: Record<string, MemoryEntry>;
 }
