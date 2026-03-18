@@ -31,7 +31,7 @@ export function useSessionGuard() {
         void navigate("/login", { replace: true });
       }
     } catch {
-      // Network errors are ignored — don't kick the user out for transient failures
+      // Errors (network, 5xx, etc.) are ignored — don't kick the user out for transient failures
     }
   }, [navigate, queryClient]);
 

@@ -14,11 +14,12 @@ export function useAuth() {
 
   const login = useCallback(
     async (email: string, password: string) => {
+      queryClient.clear();
       const authedUser = await authApi.login(email, password);
       setUser(authedUser);
       void navigate("/", { replace: true });
     },
-    [setUser, navigate]
+    [queryClient, setUser, navigate]
   );
 
   const logout = useCallback(async () => {
