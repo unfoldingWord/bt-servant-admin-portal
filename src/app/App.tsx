@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { useThemeSync } from "@/hooks/use-theme-sync";
 import { useSyncSection } from "@/hooks/use-sync-section";
 import { useAuthInit } from "@/hooks/use-auth-init";
+import { useSessionGuard } from "@/hooks/use-session-guard";
 import { AppShell } from "@/components/app-shell";
 import { RequireAuth } from "@/components/require-auth";
 import { BaruchPage } from "@/app/pages/baruch";
@@ -16,6 +17,7 @@ function AppRoutes() {
   useThemeSync();
   useSyncSection();
   useAuthInit();
+  useSessionGuard();
 
   return (
     <Routes>
