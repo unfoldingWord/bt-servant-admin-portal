@@ -183,52 +183,14 @@ export function useBaruchChat() {
       try {
         const response = await streamBaruchChat(trimmed, controller.signal);
 
-        // DEBUG: clone and log raw response body
-        const cloned = response.clone();
-        cloned.text().then((raw) => {
-          console.log("[useBaruchChat] raw response length:", raw.length);
-          console.log("[useBaruchChat] raw response body:", raw);
-          console.log("[useBaruchChat] first 500 chars:", raw.slice(0, 500));
-          const dataLines = raw
-            .split("\n")
-            .filter((l) => l.startsWith("data: "));
-          console.log("[useBaruchChat] data: lines found:", dataLines.length);
-          dataLines.forEach((l, i) =>
-            console.log(`[useBaruchChat]   event[${i}]:`, l.slice(0, 200))
-          );
-        });
-
         const { finalText, hadStreaming } = await consumeSSEStream(response, {
-          onStatus: (msg) => {
-            console.log("[useBaruchChat] SSE status:", msg);
-            setStatusMessage(msg);
-          },
-          onProgress: (_text, acc) => {
-            console.log(
-              "[useBaruchChat] SSE progress chunk:",
-              _text.slice(0, 100)
-            );
-            setStreamingText(acc);
-          },
-          onToolUse: (tool) => {
-            console.log("[useBaruchChat] SSE tool_use:", tool);
-            setStatusMessage(`Using tool: ${tool}`);
-          },
-          onToolResult: () => {
-            console.log("[useBaruchChat] SSE tool_result");
-            setStatusMessage(null);
-          },
-        });
-
-        console.log("[useBaruchChat] consumeSSEStream result:", {
-          finalText: finalText.slice(0, 200),
-          hadStreaming,
+          onStatus: (msg) => setStatusMessage(msg),
+          onProgress: (_text, acc) => setStreamingText(acc),
+          onToolUse: (tool) => setStatusMessage(`Using tool: ${tool}`),
+          onToolResult: () => setStatusMessage(null),
         });
 
         if (!finalText) {
-          console.warn(
-            "[useBaruchChat] empty finalText — no SSE events parsed"
-          );
           setIsLoading(false);
           setStreamingText("");
           setStatusMessage(null);
