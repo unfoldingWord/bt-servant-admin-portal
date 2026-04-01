@@ -70,6 +70,7 @@ export async function consumeSSEStream(
       }
     }
   } finally {
+    await reader.cancel();
     reader.releaseLock();
   }
 

@@ -61,20 +61,24 @@ export interface ChatMessage {
   isStreaming?: boolean;
 }
 
+// TODO: Remove after Baruch SSE migration
 export interface EnqueueRequest {
   message: string;
   message_type: string;
 }
 
+// TODO: Remove after Baruch SSE migration
 export interface EnqueueResponse {
   message_id: string;
 }
 
+// TODO: Remove after Baruch SSE migration
 export interface PollEvent {
   event: string;
   data: string;
 }
 
+// TODO: Remove after Baruch SSE migration
 export interface PollResponse {
   message_id: string;
   events: PollEvent[];
