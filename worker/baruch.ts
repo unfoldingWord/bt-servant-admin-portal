@@ -63,6 +63,22 @@ export async function handleBaruchStream(
     return errorResponse("Failed to stream chat response", 502);
   }
 
+  const contentType = baruchRes.headers.get("content-type") ?? "";
+
+  // Baruch may return JSON instead of SSE (pre-streaming endpoints or
+  // fallback mode). Wrap the JSON response as an SSE complete event so
+  // the frontend's consumeSSEStream parser handles it uniformly.
+  if (contentType.includes("application/json")) {
+    const data: unknown = await baruchRes.json();
+    const ssePayload = `data: ${JSON.stringify({ type: "complete", response: data })}\n\n`;
+    return new Response(ssePayload, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+      },
+    });
+  }
+
   return new Response(baruchRes.body, {
     headers: {
       "Content-Type": "text/event-stream",
@@ -151,6 +167,19 @@ export async function handleBaruchInitiate(
     const text = await baruchRes.text().catch(() => "");
     console.error(`Baruch initiate failed (${baruchRes.status}): ${text}`);
     return errorResponse("Failed to initiate conversation", 502);
+  }
+
+  const contentType = baruchRes.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    const data: unknown = await baruchRes.json();
+    const ssePayload = `data: ${JSON.stringify({ type: "complete", response: data })}\n\n`;
+    return new Response(ssePayload, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+      },
+    });
   }
 
   return new Response(baruchRes.body, {
