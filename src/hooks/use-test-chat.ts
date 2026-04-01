@@ -3,15 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteHistory,
   deleteMemory,
-  enqueueMessage,
   fetchHistory,
-  pollEvents,
+  streamChat,
 } from "@/lib/chat-api";
-import type { ChatHistoryEntry, ChatMessage, SSEEvent } from "@/types/chat";
-
-const POLL_INTERVAL_ACTIVE = 600;
-const POLL_INTERVAL_IDLE = 1500;
-const POLL_TIMEOUT = 120_000;
+import { consumeSSEStream } from "@/lib/sse-stream";
+import type { ChatHistoryEntry, ChatMessage } from "@/types/chat";
 
 export function useTestChat(userId: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -25,7 +21,7 @@ export function useTestChat(userId: string) {
   const abortRef = useRef<AbortController | null>(null);
   const pendingCompleteRef = useRef<{ message: ChatMessage } | null>(null);
 
-  // Abort polling on unmount
+  // Abort streaming on unmount
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
@@ -93,80 +89,6 @@ export function useTestChat(userId: string) {
     setStreamingText("");
   }, []);
 
-  const pollLoop = useCallback(
-    async (messageId: string, signal: AbortSignal) => {
-      let cursor = "0";
-      let accumulated = "";
-      let lastEventTime = Date.now();
-      const startTime = Date.now();
-
-      while (!signal.aborted) {
-        // Timeout check
-        if (Date.now() - startTime > POLL_TIMEOUT) {
-          throw new Error("Response timed out after 2 minutes");
-        }
-
-        const response = await pollEvents(messageId, cursor, userId, signal);
-        cursor = response.cursor;
-
-        for (const rawEvent of response.events) {
-          lastEventTime = Date.now();
-          let parsed: SSEEvent;
-          try {
-            parsed = JSON.parse(rawEvent.data) as SSEEvent;
-          } catch (e) {
-            console.warn(
-              "[useTestChat] malformed SSE event data:",
-              rawEvent.data,
-              e
-            );
-            continue;
-          }
-
-          switch (parsed.type) {
-            case "status":
-              setStatusMessage(parsed.message);
-              break;
-            case "progress":
-              accumulated += parsed.text;
-              setStreamingText(accumulated);
-              break;
-            case "complete": {
-              const finalText =
-                parsed.response.responses.join("\n\n") || accumulated;
-              return { finalText, hadStreaming: accumulated.length > 0 };
-            }
-            case "error":
-              throw new Error(parsed.error);
-            case "tool_use":
-              setStatusMessage(`Using tool: ${parsed.tool}`);
-              break;
-            case "tool_result":
-              setStatusMessage(null);
-              break;
-          }
-        }
-
-        if (response.done) {
-          return {
-            finalText: accumulated,
-            hadStreaming: accumulated.length > 0,
-          };
-        }
-
-        // Adaptive polling: faster when receiving events, slower when idle
-        const timeSinceLastEvent = Date.now() - lastEventTime;
-        const interval =
-          timeSinceLastEvent > 3000 ? POLL_INTERVAL_IDLE : POLL_INTERVAL_ACTIVE;
-
-        await new Promise((resolve) => setTimeout(resolve, interval));
-      }
-
-      return { finalText: accumulated, hadStreaming: accumulated.length > 0 };
-    },
-    [userId]
-  );
-
   const sendMessage = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
@@ -192,16 +114,14 @@ export function useTestChat(userId: string) {
       setStatusMessage(null);
 
       try {
-        const { message_id } = await enqueueMessage(
-          trimmed,
-          userId,
-          controller.signal
-        );
+        const response = await streamChat(trimmed, userId, controller.signal);
 
-        const { finalText, hadStreaming } = await pollLoop(
-          message_id,
-          controller.signal
-        );
+        const { finalText, hadStreaming } = await consumeSSEStream(response, {
+          onStatus: (msg) => setStatusMessage(msg),
+          onProgress: (_text, acc) => setStreamingText(acc),
+          onToolUse: (tool) => setStatusMessage(`Using tool: ${tool}`),
+          onToolResult: () => setStatusMessage(null),
+        });
 
         if (!finalText) return;
 
@@ -236,7 +156,7 @@ export function useTestChat(userId: string) {
         setStatusMessage(null);
       }
     },
-    [isLoading, pollLoop, userId]
+    [isLoading, userId]
   );
 
   const clearMessages = useCallback(() => {

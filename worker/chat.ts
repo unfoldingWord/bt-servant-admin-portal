@@ -17,7 +17,7 @@ function resolveUserId(
   return session.userId;
 }
 
-export async function handleEnqueue(
+export async function handleStream(
   request: Request,
   env: Env,
   session: SessionData
@@ -37,7 +37,7 @@ export async function handleEnqueue(
     return errorResponse("Missing 'message' field", 400);
   }
 
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/chat/queue`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/chat`;
   const engineBody = {
     message: body.message,
     message_type: body.message_type || "text",
@@ -57,81 +57,16 @@ export async function handleEnqueue(
 
   if (!engineRes.ok) {
     const text = await engineRes.text().catch(() => "");
-    console.error(`Engine enqueue failed (${engineRes.status}): ${text}`);
-    return errorResponse("Failed to enqueue message", 502);
+    console.error(`Engine stream failed (${engineRes.status}): ${text}`);
+    return errorResponse("Failed to stream chat response", 502);
   }
 
-  const data: unknown = await engineRes.json();
-  if (!data || typeof data !== "object" || !("message_id" in data)) {
-    console.error("Engine enqueue returned unexpected shape:", data);
-    return errorResponse("Unexpected engine response", 502);
-  }
-
-  return jsonResponse({
-    message_id: (data as { message_id: string }).message_id,
-  });
-}
-
-export async function handlePoll(
-  request: Request,
-  env: Env,
-  session: SessionData
-): Promise<Response> {
-  if (request.method !== "GET") {
-    return errorResponse("Method not allowed", 405);
-  }
-
-  const url = new URL(request.url);
-  const messageId = url.searchParams.get("message_id");
-  const cursor = url.searchParams.get("cursor") || "0";
-
-  if (!messageId) {
-    return errorResponse("Missing 'message_id' parameter", 400);
-  }
-
-  const params = new URLSearchParams({
-    user_id: resolveUserId(url.searchParams.get("user_id"), session),
-    message_id: messageId,
-    org: session.org,
-    cursor,
-  });
-
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/chat/queue/poll?${params.toString()}`;
-
-  const engineRes = await fetch(engineUrl, {
+  return new Response(engineRes.body, {
     headers: {
-      Authorization: `Bearer ${env.ENGINE_API_KEY}`,
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
     },
-  });
-
-  if (!engineRes.ok) {
-    const text = await engineRes.text().catch(() => "");
-    console.error(`Engine poll failed (${engineRes.status}): ${text}`);
-    return errorResponse("Failed to poll events", 502);
-  }
-
-  const data: unknown = await engineRes.json();
-  if (
-    !data ||
-    typeof data !== "object" ||
-    !("events" in data) ||
-    !Array.isArray((data as { events: unknown }).events)
-  ) {
-    console.error("Engine poll returned unexpected shape:", data);
-    return errorResponse("Unexpected engine response", 502);
-  }
-
-  const typed = data as {
-    events: unknown[];
-    done?: boolean;
-    cursor?: string;
-    message_id?: string;
-  };
-  return jsonResponse({
-    message_id: typed.message_id,
-    events: typed.events,
-    done: typed.done ?? false,
-    cursor: typed.cursor ?? "",
   });
 }
 

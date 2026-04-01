@@ -1,4 +1,4 @@
-// SSE event types from the engine's queue/poll endpoint
+// SSE event types from the engine's streaming endpoint
 
 export interface SSEStatusEvent {
   type: "status";
@@ -33,18 +33,24 @@ export interface SSEToolResultEvent {
   result: string;
 }
 
+export interface SSEKeepaliveEvent {
+  type: "keepalive";
+}
+
 export type SSEEvent =
   | SSEStatusEvent
   | SSEProgressEvent
   | SSECompleteEvent
   | SSEErrorEvent
   | SSEToolUseEvent
-  | SSEToolResultEvent;
+  | SSEToolResultEvent
+  | SSEKeepaliveEvent;
 
 export interface ChatResponse {
   responses: string[];
   response_language: string;
   voice_audio_base64: string | null;
+  voice_audio_url: string | null;
 }
 
 export interface ChatMessage {
