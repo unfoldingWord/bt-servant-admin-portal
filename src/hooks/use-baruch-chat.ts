@@ -196,7 +196,7 @@ export function useBaruchChat() {
 
   const pollLoop = useCallback(
     async (messageId: string, signal: AbortSignal) => {
-      let cursor = "";
+      let cursor = "0";
       let accumulated = "";
       let lastEventTime = Date.now();
       const startTime = Date.now();

@@ -84,7 +84,7 @@ export async function handleBaruchPoll(
 
   const url = new URL(request.url);
   const messageId = url.searchParams.get("message_id");
-  const cursor = url.searchParams.get("cursor") || "";
+  const cursor = url.searchParams.get("cursor") || "0";
 
   if (!messageId) {
     return errorResponse("Missing 'message_id' parameter", 400);
