@@ -66,7 +66,6 @@ export async function handleBaruchStream(
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      Connection: "keep-alive",
     },
   });
 }
@@ -156,7 +155,6 @@ export async function handleBaruchInitiate(
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      Connection: "keep-alive",
     },
   });
 }
