@@ -16,9 +16,8 @@ import {
 import {
   handleDeleteHistory,
   handleDeleteMemory,
-  handleEnqueue,
   handleHistory,
-  handlePoll,
+  handleStream,
 } from "./chat";
 import { handleConfig } from "./config";
 import type { Env } from "./helpers";
@@ -56,7 +55,6 @@ export default {
     // Chat endpoints — session required
     if (
       url.pathname === "/api/chat/stream" ||
-      url.pathname === "/api/chat/stream/poll" ||
       url.pathname === "/api/chat/history" ||
       url.pathname === "/api/chat/memory"
     ) {
@@ -69,7 +67,7 @@ export default {
       }
 
       if (url.pathname === "/api/chat/stream") {
-        return handleEnqueue(request, env, session);
+        return handleStream(request, env, session);
       }
       if (url.pathname === "/api/chat/history") {
         if (request.method === "DELETE") {
@@ -77,13 +75,11 @@ export default {
         }
         return handleHistory(request, env, session);
       }
-      if (url.pathname === "/api/chat/memory") {
-        if (request.method === "DELETE") {
-          return handleDeleteMemory(request, env, session);
-        }
-        return errorResponse("Method not allowed", 405);
+      // /api/chat/memory
+      if (request.method === "DELETE") {
+        return handleDeleteMemory(request, env, session);
       }
-      return handlePoll(request, env, session);
+      return errorResponse("Method not allowed", 405);
     }
 
     // Config endpoints — session required

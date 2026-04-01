@@ -1,4 +1,4 @@
-// SSE event types from the engine's queue/poll endpoint
+// SSE event types from the engine's streaming endpoint
 
 export interface SSEStatusEvent {
   type: "status";
@@ -33,18 +33,24 @@ export interface SSEToolResultEvent {
   result: string;
 }
 
+export interface SSEKeepaliveEvent {
+  type: "keepalive";
+}
+
 export type SSEEvent =
   | SSEStatusEvent
   | SSEProgressEvent
   | SSECompleteEvent
   | SSEErrorEvent
   | SSEToolUseEvent
-  | SSEToolResultEvent;
+  | SSEToolResultEvent
+  | SSEKeepaliveEvent;
 
 export interface ChatResponse {
   responses: string[];
   response_language: string;
   voice_audio_base64: string | null;
+  voice_audio_url: string | null;
 }
 
 export interface ChatMessage {
@@ -55,20 +61,24 @@ export interface ChatMessage {
   isStreaming?: boolean;
 }
 
+// TODO: Remove after Baruch SSE migration
 export interface EnqueueRequest {
   message: string;
   message_type: string;
 }
 
+// TODO: Remove after Baruch SSE migration
 export interface EnqueueResponse {
   message_id: string;
 }
 
+// TODO: Remove after Baruch SSE migration
 export interface PollEvent {
   event: string;
   data: string;
 }
 
+// TODO: Remove after Baruch SSE migration
 export interface PollResponse {
   message_id: string;
   events: PollEvent[];
