@@ -17,7 +17,7 @@ function baruchFetch(
   return fetch(url, init);
 }
 
-export async function handleBaruchEnqueue(
+export async function handleBaruchStream(
   request: Request,
   env: Env,
   session: SessionData
@@ -37,7 +37,7 @@ export async function handleBaruchEnqueue(
     return errorResponse("Missing 'message' field", 400);
   }
 
-  const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/chat/queue`;
+  const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/chat/stream`;
   const baruchBody = {
     message: body.message,
     message_type: body.message_type || "text",
@@ -51,6 +51,7 @@ export async function handleBaruchEnqueue(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Accept: "text/event-stream",
       Authorization: `Bearer ${env.BARUCH_API_KEY}`,
     },
     body: JSON.stringify(baruchBody),
@@ -58,81 +59,31 @@ export async function handleBaruchEnqueue(
 
   if (!baruchRes.ok) {
     const text = await baruchRes.text().catch(() => "");
-    console.error(`Baruch enqueue failed (${baruchRes.status}): ${text}`);
-    return errorResponse("Failed to enqueue message", 502);
+    console.error(`Baruch stream failed (${baruchRes.status}): ${text}`);
+    return errorResponse("Failed to stream chat response", 502);
   }
 
-  const data: unknown = await baruchRes.json();
-  if (!data || typeof data !== "object" || !("message_id" in data)) {
-    console.error("Baruch enqueue returned unexpected shape:", data);
-    return errorResponse("Unexpected Baruch response", 502);
+  const contentType = baruchRes.headers.get("content-type") ?? "";
+
+  // Baruch may return JSON instead of SSE (pre-streaming endpoints or
+  // fallback mode). Wrap the JSON response as an SSE complete event so
+  // the frontend's consumeSSEStream parser handles it uniformly.
+  if (contentType.includes("application/json")) {
+    const data: unknown = await baruchRes.json();
+    const ssePayload = `data: ${JSON.stringify({ type: "complete", response: data })}\n\n`;
+    return new Response(ssePayload, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+      },
+    });
   }
 
-  return jsonResponse({
-    message_id: (data as { message_id: string }).message_id,
-  });
-}
-
-export async function handleBaruchPoll(
-  request: Request,
-  env: Env,
-  session: SessionData
-): Promise<Response> {
-  if (request.method !== "GET") {
-    return errorResponse("Method not allowed", 405);
-  }
-
-  const url = new URL(request.url);
-  const messageId = url.searchParams.get("message_id");
-  const cursor = url.searchParams.get("cursor") || "0";
-
-  if (!messageId) {
-    return errorResponse("Missing 'message_id' parameter", 400);
-  }
-
-  const params = new URLSearchParams({
-    user_id: session.userId,
-    message_id: messageId,
-    org: session.org,
-    cursor,
-  });
-
-  const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/chat/queue/poll?${params.toString()}`;
-
-  const baruchRes = await baruchFetch(env, baruchUrl, {
+  return new Response(baruchRes.body, {
     headers: {
-      Authorization: `Bearer ${env.BARUCH_API_KEY}`,
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
     },
-  });
-
-  if (!baruchRes.ok) {
-    const text = await baruchRes.text().catch(() => "");
-    console.error(`Baruch poll failed (${baruchRes.status}): ${text}`);
-    return errorResponse("Failed to poll events", 502);
-  }
-
-  const data: unknown = await baruchRes.json();
-  if (
-    !data ||
-    typeof data !== "object" ||
-    !("events" in data) ||
-    !Array.isArray((data as { events: unknown }).events)
-  ) {
-    console.error("Baruch poll returned unexpected shape:", data);
-    return errorResponse("Unexpected Baruch response", 502);
-  }
-
-  const typed = data as {
-    events: unknown[];
-    done?: boolean;
-    cursor?: string;
-    message_id?: string;
-  };
-  return jsonResponse({
-    message_id: typed.message_id,
-    events: typed.events,
-    done: typed.done ?? false,
-    cursor: typed.cursor ?? "",
   });
 }
 
@@ -206,6 +157,7 @@ export async function handleBaruchInitiate(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Accept: "text/event-stream",
       Authorization: `Bearer ${env.BARUCH_API_KEY}`,
     },
     body: JSON.stringify(baruchBody),
@@ -217,11 +169,23 @@ export async function handleBaruchInitiate(
     return errorResponse("Failed to initiate conversation", 502);
   }
 
+  const contentType = baruchRes.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    const data: unknown = await baruchRes.json();
+    const ssePayload = `data: ${JSON.stringify({ type: "complete", response: data })}\n\n`;
+    return new Response(ssePayload, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+      },
+    });
+  }
+
   return new Response(baruchRes.body, {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      Connection: "keep-alive",
     },
   });
 }

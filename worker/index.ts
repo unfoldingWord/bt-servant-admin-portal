@@ -8,10 +8,9 @@ import {
 } from "./auth";
 import {
   handleBaruchDeleteHistory,
-  handleBaruchEnqueue,
   handleBaruchHistory,
   handleBaruchInitiate,
-  handleBaruchPoll,
+  handleBaruchStream,
 } from "./baruch";
 import {
   handleDeleteHistory,
@@ -98,7 +97,6 @@ export default {
     // Baruch chat endpoints — session required
     if (
       url.pathname === "/api/baruch/stream" ||
-      url.pathname === "/api/baruch/stream/poll" ||
       url.pathname === "/api/baruch/history" ||
       url.pathname === "/api/baruch/initiate"
     ) {
@@ -111,18 +109,16 @@ export default {
       }
 
       if (url.pathname === "/api/baruch/stream") {
-        return handleBaruchEnqueue(request, env, session);
+        return handleBaruchStream(request, env, session);
       }
       if (url.pathname === "/api/baruch/initiate") {
         return handleBaruchInitiate(request, env, session);
       }
-      if (url.pathname === "/api/baruch/history") {
-        if (request.method === "DELETE") {
-          return handleBaruchDeleteHistory(request, env, session);
-        }
-        return handleBaruchHistory(request, env, session);
+      // /api/baruch/history
+      if (request.method === "DELETE") {
+        return handleBaruchDeleteHistory(request, env, session);
       }
-      return handleBaruchPoll(request, env, session);
+      return handleBaruchHistory(request, env, session);
     }
 
     if (url.pathname.startsWith("/api/")) {

@@ -1,17 +1,13 @@
-import type {
-  ChatHistoryResponse,
-  EnqueueResponse,
-  PollResponse,
-} from "@/types/chat";
+import type { ChatHistoryResponse } from "@/types/chat";
 
 const SAME_ORIGIN_HEADERS = {
   "X-Requested-With": "XMLHttpRequest",
 } as const;
 
-export async function baruchEnqueueMessage(
+export async function streamBaruchChat(
   message: string,
   signal?: AbortSignal
-): Promise<EnqueueResponse> {
+): Promise<Response> {
   const res = await fetch("/api/baruch/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
@@ -21,29 +17,10 @@ export async function baruchEnqueueMessage(
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Enqueue failed (${res.status}): ${body}`);
+    throw new Error(`Chat stream failed (${res.status}): ${body}`);
   }
 
-  return (await res.json()) as EnqueueResponse;
-}
-
-export async function baruchPollEvents(
-  messageId: string,
-  cursor: string,
-  signal?: AbortSignal
-): Promise<PollResponse> {
-  const params = new URLSearchParams({ message_id: messageId, cursor });
-  const res = await fetch(`/api/baruch/stream/poll?${params.toString()}`, {
-    headers: SAME_ORIGIN_HEADERS,
-    signal,
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Poll failed (${res.status}): ${body}`);
-  }
-
-  return (await res.json()) as PollResponse;
+  return res;
 }
 
 export async function baruchFetchHistory(
