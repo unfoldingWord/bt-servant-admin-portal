@@ -26,7 +26,8 @@ src/
 worker/
 ├── index.ts     → Cloudflare Worker entrypoint & router
 ├── auth.ts      → Login/logout/session management
-├── chat.ts      → Chat message queue & polling proxy
+├── chat.ts      → Chat SSE streaming & history proxy
+├── baruch.ts    → Baruch SSE streaming, initiation & history proxy
 ├── config.ts    → Prompt override & mode config proxy
 ├── admin.ts     → Admin user CRUD
 └── helpers.ts   → Response helpers, same-origin guard
@@ -34,11 +35,11 @@ worker/
 
 ## Pages
 
-| Route            | Page                 | Description                         |
-| ---------------- | -------------------- | ----------------------------------- |
-| `/login`         | Login                | Email/password authentication       |
-| `/`              | Baruch               | Conversational config (coming soon) |
-| `/manual-config` | Prompt Configuration | Manage prompt overrides & modes     |
+| Route            | Page                 | Description                     |
+| ---------------- | -------------------- | ------------------------------- |
+| `/login`         | Login                | Email/password authentication   |
+| `/`              | Baruch               | Conversational config assistant |
+| `/manual-config` | Prompt Configuration | Manage prompt overrides & modes |
 
 ## Development
 
@@ -73,9 +74,10 @@ Pre-commit hooks (via Husky + lint-staged) run ESLint, Prettier, typecheck, and 
 
 The Cloudflare Worker acts as a BFF proxy, authenticating requests and forwarding to the BT Servant Engine API.
 
-| Route           | Auth         | Description                           |
-| --------------- | ------------ | ------------------------------------- |
-| `/api/auth/*`   | None         | Login, logout, session check          |
-| `/api/admin/*`  | Admin secret | User CRUD                             |
-| `/api/chat/*`   | Session      | Message queue, polling, history       |
-| `/api/config/*` | Session      | Prompt overrides, modes, default mode |
+| Route           | Auth         | Description                               |
+| --------------- | ------------ | ----------------------------------------- |
+| `/api/auth/*`   | None         | Login, logout, session check              |
+| `/api/admin/*`  | Admin secret | User CRUD                                 |
+| `/api/chat/*`   | Session      | SSE streaming, history                    |
+| `/api/baruch/*` | Session      | Baruch SSE streaming, initiation, history |
+| `/api/config/*` | Session      | Prompt overrides, modes, default mode     |
