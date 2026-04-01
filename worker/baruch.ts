@@ -51,6 +51,7 @@ export async function handleBaruchStream(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Accept: "text/event-stream",
       Authorization: `Bearer ${env.BARUCH_API_KEY}`,
     },
     body: JSON.stringify(baruchBody),
@@ -140,6 +141,7 @@ export async function handleBaruchInitiate(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Accept: "text/event-stream",
       Authorization: `Bearer ${env.BARUCH_API_KEY}`,
     },
     body: JSON.stringify(baruchBody),

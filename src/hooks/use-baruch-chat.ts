@@ -190,7 +190,12 @@ export function useBaruchChat() {
           onToolResult: () => setStatusMessage(null),
         });
 
-        if (!finalText) return;
+        if (!finalText) {
+          setIsLoading(false);
+          setStreamingText("");
+          setStatusMessage(null);
+          return;
+        }
 
         const assistantMessage: ChatMessage = {
           id: crypto.randomUUID(),
