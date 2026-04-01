@@ -37,7 +37,7 @@ export async function handleBaruchStream(
     return errorResponse("Missing 'message' field", 400);
   }
 
-  const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/chat`;
+  const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/chat/stream`;
   const baruchBody = {
     message: body.message,
     message_type: body.message_type || "text",
