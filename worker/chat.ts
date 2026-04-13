@@ -37,7 +37,7 @@ export async function handleStream(
     return errorResponse("Missing 'message' field", 400);
   }
 
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/chat`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/chat/stream`;
   const engineBody = {
     message: body.message,
     message_type: body.message_type || "text",
@@ -57,7 +57,9 @@ export async function handleStream(
 
   if (!engineRes.ok) {
     const text = await engineRes.text().catch(() => "");
-    console.error(`Engine stream failed (${engineRes.status}): ${text}`);
+    console.error(
+      `Engine stream failed (${engineRes.status}) ${engineUrl}: ${text}`
+    );
     return errorResponse("Failed to stream chat response", 502);
   }
 
