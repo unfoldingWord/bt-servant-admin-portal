@@ -37,7 +37,7 @@ export async function handleStream(
     return errorResponse("Missing 'message' field", 400);
   }
 
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/chat`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/chat/stream`;
   const engineBody = {
     message: body.message,
     message_type: body.message_type || "text",
