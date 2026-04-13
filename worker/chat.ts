@@ -57,7 +57,9 @@ export async function handleStream(
 
   if (!engineRes.ok) {
     const text = await engineRes.text().catch(() => "");
-    console.error(`Engine stream failed (${engineRes.status}): ${text}`);
+    console.error(
+      `Engine stream failed (${engineRes.status}) ${engineUrl}: ${text}`
+    );
     return errorResponse("Failed to stream chat response", 502);
   }
 
