@@ -79,21 +79,12 @@ export function useSaveMode() {
 export function useSetModePublished() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      name,
-      published,
-    }: {
-      name: string;
-      published: boolean;
-    }) => {
-      const current = await configApi.getMode(name);
-      return configApi.putMode(name, {
-        label: current.label,
-        description: current.description,
-        overrides: current.overrides,
-        published,
-      });
-    },
+    // Partial update: only `published` is sent. The engine merges `overrides`
+    // per-slot and preserves label/description/overrides when they are absent
+    // from the PUT (incoming.x ?? existing.x). This avoids the GET→PUT race
+    // where a concurrent slot save could be overwritten by stale overrides.
+    mutationFn: ({ name, published }: { name: string; published: boolean }) =>
+      configApi.putMode(name, { overrides: {}, published }),
     onSuccess: (_data, { name }) => {
       void qc.invalidateQueries({ queryKey: keys.modes });
       void qc.invalidateQueries({ queryKey: keys.mode(name) });

@@ -50,23 +50,21 @@ export function ManualConfigPage() {
 
   const handleSaveSlot = useCallback(
     (slot: PromptSlot, value: string) => {
-      const updated = { ...currentOverrides, [slot]: value || undefined };
-
       if (selectedMode !== null) {
+        // Partial update: only the one edited slot is sent. The engine merges
+        // overrides per-slot and preserves label/description/published when
+        // absent from the PUT. Sending the full cached object would race with
+        // a concurrent publish/unpublish (stale `published` flips it back) or
+        // another concurrent slot save (stale overrides clobber it).
         saveMode.mutate({
           name: selectedMode,
-          body: {
-            label: modeQuery.data?.label,
-            description: modeQuery.data?.description,
-            overrides: updated,
-            published: modeQuery.data?.published,
-          },
+          body: { overrides: { [slot]: value || undefined } },
         });
       } else {
-        updateOrg.mutate(updated);
+        updateOrg.mutate({ ...currentOverrides, [slot]: value || undefined });
       }
     },
-    [currentOverrides, selectedMode, modeQuery.data, saveMode, updateOrg]
+    [currentOverrides, selectedMode, saveMode, updateOrg]
   );
 
   const handleCreateMode = useCallback(
