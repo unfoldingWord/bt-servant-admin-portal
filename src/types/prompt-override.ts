@@ -47,6 +47,7 @@ export interface PromptMode {
   label?: string;
   description?: string;
   overrides: PromptOverrides;
+  published?: boolean;
 }
 
 export interface OrgModes {

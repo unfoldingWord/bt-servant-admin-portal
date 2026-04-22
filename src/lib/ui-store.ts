@@ -21,6 +21,8 @@ interface UiState {
   testChatPanelWidth: number;
   setTestChatPanelWidth: (width: number) => void;
   persistTestChatPanelWidth: () => void;
+  showDrafts: boolean;
+  setShowDrafts: (showDrafts: boolean) => void;
   reset: () => void;
 }
 
@@ -37,7 +39,14 @@ type InitialUiState = Pick<
   | "chatModeSeeded"
   | "testChatUserId"
   | "testChatPanelWidth"
+  | "showDrafts"
 >;
+
+function loadPersistedShowDrafts(): boolean {
+  const stored = localStorage.getItem("showDrafts");
+  if (stored === "false") return false;
+  return true;
+}
 
 function loadPersistedWidth(): number {
   const stored = localStorage.getItem("testChatPanelWidth");
@@ -63,6 +72,7 @@ const initialState: InitialUiState = {
   // used for the very first session (before any logout occurs).
   testChatUserId: crypto.randomUUID(),
   testChatPanelWidth: loadPersistedWidth(),
+  showDrafts: loadPersistedShowDrafts(),
 };
 
 export const useUiStore = create<UiState>()((set) => ({
@@ -97,6 +107,10 @@ export const useUiStore = create<UiState>()((set) => ({
     const { testChatPanelWidth } = useUiStore.getState();
     localStorage.setItem("testChatPanelWidth", String(testChatPanelWidth));
   },
+  setShowDrafts: (showDrafts) => {
+    localStorage.setItem("showDrafts", String(showDrafts));
+    set({ showDrafts });
+  },
   // Resets all session-scoped UI state and generates a new testChatUserId so
   // the next user's chat session is fully isolated from the previous one.
   // testChatPanelWidth is intentionally preserved — it's a UI preference, not
@@ -106,5 +120,6 @@ export const useUiStore = create<UiState>()((set) => ({
       ...initialState,
       testChatUserId: crypto.randomUUID(),
       testChatPanelWidth: state.testChatPanelWidth,
+      showDrafts: state.showDrafts,
     })),
 }));
