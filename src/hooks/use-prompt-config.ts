@@ -66,8 +66,34 @@ export function useSaveMode() {
         label?: string;
         description?: string;
         overrides: PromptOverrides;
+        published?: boolean;
       };
     }) => configApi.putMode(name, body),
+    onSuccess: (_data, { name }) => {
+      void qc.invalidateQueries({ queryKey: keys.modes });
+      void qc.invalidateQueries({ queryKey: keys.mode(name) });
+    },
+  });
+}
+
+export function useSetModePublished() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      name,
+      published,
+    }: {
+      name: string;
+      published: boolean;
+    }) => {
+      const current = await configApi.getMode(name);
+      return configApi.putMode(name, {
+        label: current.label,
+        description: current.description,
+        overrides: current.overrides,
+        published,
+      });
+    },
     onSuccess: (_data, { name }) => {
       void qc.invalidateQueries({ queryKey: keys.modes });
       void qc.invalidateQueries({ queryKey: keys.mode(name) });

@@ -112,7 +112,12 @@ export async function getMode(
 
 export async function putMode(
   name: string,
-  body: { label?: string; description?: string; overrides: PromptOverrides },
+  body: {
+    label?: string;
+    description?: string;
+    overrides: PromptOverrides;
+    published?: boolean;
+  },
   signal?: AbortSignal
 ): Promise<PromptMode> {
   const res = await fetch(`/api/config/modes/${encodeURIComponent(name)}`, {

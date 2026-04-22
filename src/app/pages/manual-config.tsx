@@ -11,6 +11,7 @@ import {
   useModes,
   useOrgOverrides,
   useSaveMode,
+  useSetModePublished,
   useUpdateOrgOverrides,
 } from "@/hooks/use-prompt-config";
 import type { PromptOverrides, PromptSlot } from "@/types/prompt-override";
@@ -23,6 +24,8 @@ export function ManualConfigPage() {
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
   const selectedMode = useUiStore((s) => s.selectedMode);
   const setSelectedMode = useUiStore((s) => s.setSelectedMode);
+  const showDrafts = useUiStore((s) => s.showDrafts);
+  const setShowDrafts = useUiStore((s) => s.setShowDrafts);
   const [memoryDialogOpen, setMemoryDialogOpen] = useState(false);
 
   // Queries
@@ -34,6 +37,7 @@ export function ManualConfigPage() {
   const updateOrg = useUpdateOrgOverrides();
   const saveMode = useSaveMode();
   const deleteMode = useDeleteMode();
+  const setModePublished = useSetModePublished();
 
   // Current overrides based on selection
   const currentOverrides = useMemo<PromptOverrides>(
@@ -55,6 +59,7 @@ export function ManualConfigPage() {
             label: modeQuery.data?.label,
             description: modeQuery.data?.description,
             overrides: updated,
+            published: modeQuery.data?.published,
           },
         });
       } else {
@@ -73,12 +78,20 @@ export function ManualConfigPage() {
             label: label || undefined,
             description: description || undefined,
             overrides: orgOverrides.data ?? {},
+            published: false,
           },
         },
         { onSuccess: () => setSelectedMode(name) }
       );
     },
     [saveMode, orgOverrides.data, setSelectedMode]
+  );
+
+  const handleSetPublished = useCallback(
+    (name: string, published: boolean) => {
+      setModePublished.mutate({ name, published });
+    },
+    [setModePublished]
   );
 
   const handleDeleteMode = useCallback(
@@ -119,8 +132,13 @@ export function ManualConfigPage() {
             onSelectMode={setSelectedMode}
             onCreateMode={handleCreateMode}
             onDeleteMode={handleDeleteMode}
+            onSetPublished={handleSetPublished}
             isCreating={saveMode.isPending}
             isDeleting={deleteMode.isPending}
+            isSettingPublished={setModePublished.isPending}
+            showDrafts={showDrafts}
+            onToggleShowDrafts={setShowDrafts}
+            isAdmin={isAdmin}
           />
 
           {/* Error banner */}
