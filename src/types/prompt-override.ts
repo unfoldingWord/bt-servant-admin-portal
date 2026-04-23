@@ -7,7 +7,7 @@ export type PromptSlot =
   | "memory_instructions"
   | "closing";
 
-export type PromptOverrides = Partial<Record<PromptSlot, string>>; // max 4000 chars/slot
+export type PromptOverrides = Partial<Record<PromptSlot, string>>; // max 8000 chars/slot
 
 export const PROMPT_SLOTS: PromptSlot[] = [
   "identity",
@@ -40,7 +40,7 @@ export const SLOT_DESCRIPTIONS: Record<PromptSlot, string> = {
   closing: "How the assistant wraps up and signs off",
 };
 
-export const MAX_SLOT_LENGTH = 4000;
+export const MAX_SLOT_LENGTH = 8000;
 
 export interface PromptMode {
   name: string;
