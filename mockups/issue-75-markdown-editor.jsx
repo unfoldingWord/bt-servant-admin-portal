@@ -23,11 +23,17 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// NOTE: this mockup uses Lucide icons for cowork renderability. The production
+// lift to src/components/ uses Font Awesome Pro Light/Solid pairs to match the
+// rest of the admin portal (see src/components/activity-bar-item.tsx,
+// src/components/theme-toggle.tsx). The icon-swap-on-active pattern in
+// production is FA Pro Light → Solid; in this mockup it's stroke-width contrast
+// (1.5 → 2.5) since Lucide is single-stroke.
 import {
   ChevronDown,
   FileText,
   Languages,
-  MessageSquare,
+  MessagesSquare,
   Moon,
   Send,
   Sun,
@@ -87,29 +93,54 @@ const TOKENS_CSS = `
   --font-ui: 'Outfit', system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 
-  --editor-paper:      oklch(0.985 0.005 85);
-  --editor-margin:     oklch(0.96 0.01 85);
-  --editor-ink:        oklch(0.22 0.02 250);
-  --editor-ink-soft:   oklch(0.22 0.02 250 / 0.55);
-  --editor-ink-fade:   oklch(0.22 0.02 250 / 0.30);
-  --editor-rail:       oklch(0.50 0.16 248);
-  --editor-rail-soft:  oklch(0.50 0.16 248 / 0.18);
-  --editor-pin:        oklch(0.55 0.20 35);
-  --editor-pin-soft:   oklch(0.55 0.20 35 / 0.20);
-  --editor-pulse:      oklch(0.55 0.20 35 / 0.16);
+  /* Production tokens — copied from src/app/globals.css for mockup parity.
+     The mockup standalones, but uses the same names so the lift to src/ is
+     a straight token swap. */
+  --background:          oklch(1 0 0);
+  --foreground:          oklch(0.318 0 0);
+  --card:                oklch(0.98 0 0);
+  --card-foreground:     oklch(0.318 0 0);
+  --primary:             oklch(0.475 0.157 248);
+  --primary-foreground:  oklch(1 0 0);
+  --muted-foreground:    oklch(0.467 0 0);
+  --accent:              oklch(0.918 0 0);
+  --accent-foreground:   oklch(0.318 0 0);
+  --border:              oklch(0.918 0 0);
+
+  /* Editor-specific tokens — justified deviations for the editorial aesthetic.
+     Surface and ink stay distinct from the chrome (which uses --card / --background). */
+  --editor-paper:        oklch(0.985 0.005 85);
+  --editor-margin:       oklch(0.96 0.01 85);
+  --editor-ink:          oklch(0.22 0.02 250);
+  --editor-ink-soft:     oklch(0.22 0.02 250 / 0.55);
+  --editor-ink-fade:     oklch(0.22 0.02 250 / 0.30);
+  --editor-spine-soft:   oklch(0.475 0.157 248 / 0.18);
+  --editor-active:       oklch(0.55 0.20 35);
+  --editor-active-soft:  oklch(0.55 0.20 35 / 0.20);
+  --editor-active-pulse: oklch(0.55 0.20 35 / 0.16);
 }
 
 .mockup-dark {
-  --editor-paper:      oklch(0.20 0.015 250);
-  --editor-margin:     oklch(0.23 0.02 250);
-  --editor-ink:        oklch(0.92 0.01 85);
-  --editor-ink-soft:   oklch(0.92 0.01 85 / 0.55);
-  --editor-ink-fade:   oklch(0.92 0.01 85 / 0.30);
-  --editor-rail:       oklch(0.72 0.12 248);
-  --editor-rail-soft:  oklch(0.72 0.12 248 / 0.20);
-  --editor-pin:        oklch(0.72 0.18 35);
-  --editor-pin-soft:   oklch(0.72 0.18 35 / 0.22);
-  --editor-pulse:      oklch(0.72 0.18 35 / 0.18);
+  --background:          oklch(0.211 0.01 248);
+  --foreground:          oklch(0.827 0 0);
+  --card:                oklch(0.176 0.012 248);
+  --card-foreground:     oklch(0.827 0 0);
+  --primary:             oklch(0.541 0.168 248);
+  --primary-foreground:  oklch(1 0 0);
+  --muted-foreground:    oklch(0.682 0 0);
+  --accent:              oklch(0.249 0.01 248);
+  --accent-foreground:   oklch(1 0 0);
+  --border:              oklch(0.249 0.01 248);
+
+  --editor-paper:        oklch(0.20 0.015 250);
+  --editor-margin:       oklch(0.23 0.02 250);
+  --editor-ink:          oklch(0.92 0.01 85);
+  --editor-ink-soft:     oklch(0.92 0.01 85 / 0.55);
+  --editor-ink-fade:     oklch(0.92 0.01 85 / 0.30);
+  --editor-spine-soft:   oklch(0.541 0.168 248 / 0.20);
+  --editor-active:       oklch(0.72 0.18 35);
+  --editor-active-soft:  oklch(0.72 0.18 35 / 0.22);
+  --editor-active-pulse: oklch(0.72 0.18 35 / 0.18);
 }
 
 @keyframes mockupPulse {
@@ -126,9 +157,9 @@ const TOKENS_CSS = `
 /* Hide native textarea selection-on-focus glow — paper has no focus ring. */
 .mockup-editor:focus { outline: none; }
 
-/* Make the textarea selection use ink-soft instead of system blue. */
+/* Make the textarea selection use the primary tint instead of system blue. */
 .mockup-editor::selection {
-  background: color-mix(in oklch, var(--editor-rail), transparent 70%);
+  background: color-mix(in oklch, var(--primary), transparent 70%);
 }
 `;
 
@@ -390,7 +421,7 @@ function MarkdownToc({ tree, activeLine, onJump }) {
             left: "calc(1.5rem + 0.75rem)",
             top: "76px",
             bottom: "1.5rem",
-            background: "var(--editor-rail-soft)",
+            background: "var(--editor-spine-soft)",
           }}
         />
       )}
@@ -438,10 +469,10 @@ function MarkdownToc({ tree, activeLine, onJump }) {
                       left: "0.75rem",
                       transform: `translateX(-50%) scale(${isActive ? 1.35 : 1})`,
                       background: isActive
-                        ? "var(--editor-pin)"
-                        : "var(--editor-rail)",
+                        ? "var(--editor-active)"
+                        : "var(--primary)",
                       boxShadow: isActive
-                        ? `0 0 0 4px var(--editor-pin-soft)`
+                        ? `0 0 0 4px var(--editor-active-soft)`
                         : "none",
                     }}
                   />
@@ -466,7 +497,7 @@ function MarkdownToc({ tree, activeLine, onJump }) {
                 {h.children.length > 0 && (
                   <ul
                     className="relative mt-1 ml-[52px] space-y-0.5 pl-3"
-                    style={{ borderLeft: "1px solid var(--editor-rail-soft)" }}
+                    style={{ borderLeft: "1px solid var(--editor-spine-soft)" }}
                   >
                     {h.children.map((c, ci) => {
                       const cActive = activeLine === c.line;
@@ -526,7 +557,7 @@ function EmptyOutlineWhisper() {
           left: "0.75rem",
           top: "10px",
           bottom: "8px",
-          background: "var(--editor-rail-soft)",
+          background: "var(--editor-spine-soft)",
           opacity: 0.4,
         }}
       />
@@ -547,7 +578,7 @@ function EmptyOutlineWhisper() {
               style={{
                 left: "0.75rem",
                 transform: "translateX(-50%)",
-                background: "var(--editor-rail)",
+                background: "var(--primary)",
               }}
             />
             <div className="flex items-baseline gap-3">
@@ -576,7 +607,7 @@ function EmptyOutlineWhisper() {
                     className="ml-1.5 rounded px-1.5 py-0.5 text-[11px]"
                     style={{
                       fontFamily: "var(--font-mono)",
-                      background: "var(--editor-rail-soft)",
+                      background: "var(--editor-spine-soft)",
                       color: "var(--editor-ink)",
                     }}
                   >
@@ -593,56 +624,70 @@ function EmptyOutlineWhisper() {
 }
 
 // ─── ActivityNav (left rail — context, not part of #75) ─────────────────────
-// Lives in production behind issue #73 (Languages tab). Included here so the
-// editor + TOC can be evaluated in lived page context, in the same paper
-// aesthetic so it doesn't visually fight the editor.
+// Mirrors production src/components/activity-bar.tsx + activity-bar-item.tsx
+// patterns: 48px wide, bg-card, right-side elevation shadow, 40px ghost-icon
+// buttons with FA Pro Light/Solid swap on active, plus a primary-coloured
+// vertical indicator bar to the left of the active item.
+
+const NAV_ITEMS = [
+  { key: "Modes", Icon: FileText },
+  { key: "Languages", Icon: Languages },
+];
 
 function ActivityNav({ active, onChange }) {
   return (
     <aside
-      className="flex shrink-0 flex-col gap-1 px-3 py-6"
+      className="relative z-10 flex h-full shrink-0 flex-col items-center py-3"
       style={{
-        width: "144px",
-        background: "var(--editor-paper)",
-        borderRight: "1px solid var(--editor-rail-soft)",
+        width: "48px",
+        background: "var(--card)",
+        boxShadow: "2px 0 12px rgba(0,0,0,0.2)",
       }}
     >
-      <div
-        className="mb-3 px-2 text-[10px] font-semibold tracking-[0.18em] uppercase"
-        style={{
-          fontFamily: "var(--font-ui)",
-          color: "var(--editor-ink-soft)",
-        }}
-      >
-        Admin
+      <div className="flex flex-col items-center gap-1.5">
+        {NAV_ITEMS.map(({ key, Icon }) => {
+          const isActive = active === key;
+          return (
+            <button
+              key={key}
+              onClick={() => onChange(key)}
+              aria-label={key}
+              title={key}
+              className="relative inline-flex size-10 shrink-0 items-center justify-center rounded-md transition-all hover:shadow-sm active:scale-95"
+              style={{
+                color: isActive
+                  ? "var(--foreground)"
+                  : "var(--muted-foreground)",
+                background: "transparent",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--accent)";
+                e.currentTarget.style.color = "var(--foreground)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = isActive
+                  ? "var(--foreground)"
+                  : "var(--muted-foreground)";
+              }}
+            >
+              {/* Active-state primary indicator bar — left of the icon.
+                 Production replaces this with the FA Pro Light → Solid swap;
+                 the bar stays in both implementations. */}
+              {isActive && (
+                <span
+                  aria-hidden
+                  className="absolute top-1.5 bottom-1.5 -left-1 w-0.5 rounded-full transition-all"
+                  style={{ background: "var(--primary)" }}
+                />
+              )}
+              {/* Stroke-width contrast as a Lucide stand-in for the FA Pro
+                 Light/Solid swap. Active = heavier stroke. */}
+              <Icon className="size-5" strokeWidth={isActive ? 2.5 : 1.5} />
+            </button>
+          );
+        })}
       </div>
-      {[
-        { key: "Modes", icon: FileText },
-        { key: "Languages", icon: Languages },
-      ].map(({ key, icon: Icon }) => {
-        const isActive = active === key;
-        return (
-          <button
-            key={key}
-            onClick={() => onChange(key)}
-            className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-[color,background] duration-200"
-            style={{
-              fontFamily: "var(--font-ui)",
-              fontSize: "13px",
-              fontWeight: isActive ? 600 : 400,
-              letterSpacing: "-0.005em",
-              color: isActive ? "var(--editor-ink)" : "var(--editor-ink-soft)",
-              background: isActive ? "var(--editor-rail-soft)" : "transparent",
-            }}
-          >
-            <Icon
-              className="size-3.5"
-              style={{ opacity: isActive ? 0.9 : 0.55 }}
-            />
-            {key}
-          </button>
-        );
-      })}
     </aside>
   );
 }
@@ -655,21 +700,22 @@ function ActivityNav({ active, onChange }) {
 function TestPane() {
   return (
     <aside
-      className="flex shrink-0 flex-col gap-3 px-5 py-6"
+      className="relative flex shrink-0 flex-col gap-3 px-5 py-6"
       style={{
         width: "300px",
-        background: "var(--editor-paper)",
-        borderLeft: "1px solid var(--editor-rail-soft)",
+        background: "var(--card)",
+        color: "var(--card-foreground)",
+        boxShadow: "-4px 0 12px rgba(0,0,0,0.2)",
       }}
     >
       <div
         className="flex items-center gap-2 text-[10px] font-semibold tracking-[0.18em] uppercase"
         style={{
           fontFamily: "var(--font-ui)",
-          color: "var(--editor-ink-soft)",
+          color: "var(--muted-foreground)",
         }}
       >
-        <MessageSquare className="size-3" />
+        <MessagesSquare className="size-3" strokeWidth={1.5} />
         Test pane
       </div>
 
@@ -681,24 +727,26 @@ function TestPane() {
             fontFamily: "var(--font-ui)",
             fontSize: "12.5px",
             lineHeight: 1.55,
-            color: "var(--editor-ink)",
-            background: "var(--editor-margin)",
-            borderRadius: "14px 14px 14px 4px",
+            color: "var(--foreground)",
+            background: "var(--accent)",
+            borderRadius:
+              "var(--radius-xl, 14px) var(--radius-xl, 14px) var(--radius-xl, 14px) var(--radius-sm, 4px)",
           }}
         >
           How does Spoken Mode answer a translation question?
         </div>
-        {/* Assistant bubble — uses the rail accent, the only place outside
-            the TOC where chromatic accent appears in the page */}
+        {/* Assistant bubble — uses the primary accent, the only place outside
+            the TOC where chromatic accent appears in the page chrome */}
         <div
           className="ml-auto max-w-[88%] px-3.5 py-2.5"
           style={{
             fontFamily: "var(--font-ui)",
             fontSize: "12.5px",
             lineHeight: 1.55,
-            color: "var(--editor-paper)",
-            background: "var(--editor-rail)",
-            borderRadius: "14px 14px 4px 14px",
+            color: "var(--primary-foreground)",
+            background: "var(--primary)",
+            borderRadius:
+              "var(--radius-xl, 14px) var(--radius-xl, 14px) var(--radius-sm, 4px) var(--radius-xl, 14px)",
           }}
         >
           Speaking with the tone defined in your mode's Language Tone section,
@@ -706,19 +754,16 @@ function TestPane() {
         </div>
       </div>
 
+      {/* Shadcn default-variant button: bg-primary text-primary-foreground hover:bg-primary/90 */}
       <button
-        className="flex items-center justify-center gap-2 rounded-md py-2.5 transition-opacity hover:opacity-90"
+        className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium whitespace-nowrap transition-all hover:opacity-90 focus:outline-none focus-visible:ring-[3px]"
         style={{
           fontFamily: "var(--font-ui)",
-          fontSize: "11px",
-          fontWeight: 500,
-          textTransform: "uppercase",
-          letterSpacing: "0.12em",
-          color: "var(--editor-paper)",
-          background: "var(--editor-ink)",
+          color: "var(--primary-foreground)",
+          background: "var(--primary)",
         }}
       >
-        <Send className="size-3" />
+        <Send className="size-3.5" strokeWidth={2} />
         Test Spoken Mode
       </button>
     </aside>
@@ -790,7 +835,7 @@ export default function MarkdownEditorMockup() {
           className="flex shrink-0 items-center justify-between px-9 py-4"
           style={{
             background: "var(--editor-paper)",
-            borderBottom: "1px solid var(--editor-rail-soft)",
+            borderBottom: "1px solid var(--border)",
           }}
         >
           <div className="flex items-baseline gap-3">
@@ -822,24 +867,37 @@ export default function MarkdownEditorMockup() {
               Spoken Mode
               <ChevronDown
                 className="size-3.5"
+                strokeWidth={1.75}
                 style={{ color: "var(--editor-ink-fade)" }}
               />
             </button>
           </div>
 
+          {/* Theme toggle — emulates the production <ThemeToggle /> component:
+             ghost-icon shadcn button (40px), FA Pro sun/moon, hover bg-accent. */}
           <button
             onClick={() => setDark((v) => !v)}
-            className="flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] tracking-[0.1em] uppercase transition-colors"
+            aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+            title={dark ? "Light theme" : "Dark theme"}
+            className="inline-flex size-10 items-center justify-center rounded-md transition-all focus:outline-none active:scale-95"
             style={{
-              fontFamily: "var(--font-ui)",
-              color: "var(--editor-ink-soft)",
-              border: "1px solid var(--editor-rail-soft)",
+              color: "var(--muted-foreground)",
               background: "transparent",
             }}
-            title="Toggle light/dark"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--accent)";
+              e.currentTarget.style.color = "var(--foreground)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = "var(--muted-foreground)";
+            }}
           >
-            {dark ? <Sun className="size-3" /> : <Moon className="size-3" />}
-            {dark ? "Light" : "Dark"}
+            {dark ? (
+              <Sun className="size-5" strokeWidth={1.75} />
+            ) : (
+              <Moon className="size-5" strokeWidth={1.75} />
+            )}
           </button>
         </header>
 
@@ -877,7 +935,7 @@ export default function MarkdownEditorMockup() {
                     pulseLine.line * pulseLine.lineHeight -
                     (textareaRef.current.scrollTop ?? 0),
                   height: pulseLine.lineHeight,
-                  background: "var(--editor-pulse)",
+                  background: "var(--editor-active-pulse)",
                   animation: "mockupPulse 600ms ease-out forwards",
                 }}
               />
@@ -889,7 +947,7 @@ export default function MarkdownEditorMockup() {
               style={{
                 fontFamily: "var(--font-ui)",
                 color: overLimit
-                  ? "var(--editor-pin)"
+                  ? "var(--editor-active)"
                   : "var(--editor-ink-fade)",
                 fontWeight: overLimit ? 600 : 400,
               }}
