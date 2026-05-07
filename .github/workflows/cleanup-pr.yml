@@ -24,7 +24,11 @@ jobs:
 
       - name: Delete the per-PR worker
         id: delete
-        run: npx --yes wrangler@^4 delete --name "$WORKER_NAME"
+        # `--force` is required for non-interactive runs — wrangler 4.x prompts
+        # for confirmation by default even without a TTY, so without --force
+        # the step would hang or appear to silently no-op (per Frank review,
+        # 2026-05-07).
+        run: npx --yes wrangler@^4 delete "$WORKER_NAME" --force
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
