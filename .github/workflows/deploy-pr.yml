@@ -13,6 +13,13 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
+    # Skip the deploy when only docs/mockups change — no build artefacts
+    # depend on those, so a Worker redeploy is wasted CI time.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "mockups/**"
+      - ".gitignore"
 
 jobs:
   deploy:

@@ -7,6 +7,13 @@ name: Cleanup PR Worker
 on:
   pull_request:
     types: [closed]
+    # Stay in sync with deploy-pr.yml — if the deploy was skipped for
+    # docs-only changes, there's no worker to clean up.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "mockups/**"
+      - ".gitignore"
 
 jobs:
   cleanup:
