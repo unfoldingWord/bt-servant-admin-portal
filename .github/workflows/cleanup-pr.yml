@@ -1,0 +1,51 @@
+name: Cleanup PR Worker
+
+# Deletes the per-PR ephemeral Cloudflare Worker when a PR closes (merge or
+# close-without-merge). Without this, ephemeral workers from `deploy-pr.yml`
+# would accumulate forever in the Cloudflare account.
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  cleanup:
+    name: Delete ephemeral worker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      WORKER_NAME: bt-servant-admin-portal-pr-${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Delete the per-PR worker
+        id: delete
+        run: npx --yes wrangler@^4 delete --name "$WORKER_NAME"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        continue-on-error: true
+
+      - name: Comment on the closed PR
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          WORKER_NAME: ${{ env.WORKER_NAME }}
+          DELETE_OUTCOME: ${{ steps.delete.outcome }}
+        with:
+          script: |
+            const name = process.env.WORKER_NAME;
+            const ok = process.env.DELETE_OUTCOME === "success";
+            const body = ok
+              ? `### PR cleanup complete\n\nDeleted ephemeral worker \`${name}\`. If you reopen this PR, a fresh deploy will be created.`
+              : `### PR cleanup attempted\n\nCould not delete ephemeral worker \`${name}\` — it may not have been deployed, or the delete already happened. If a worker still exists, remove it via the Cloudflare dashboard.`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
