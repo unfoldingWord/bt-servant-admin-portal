@@ -78,6 +78,19 @@
   --sidebar-accent-foreground: oklch(0.318 0 0);
   --sidebar-border: oklch(0.918 0 0);
   --sidebar-ring: oklch(0.475 0.157 248);
+
+  /* Markdown editor surface (issue #75) — warm-paper editorial aesthetic.
+     Distinct from --background / --card so the editor reads as a writing
+     surface, not a config card. */
+  --editor-paper: oklch(0.985 0.005 85);
+  --editor-margin: oklch(0.96 0.01 85);
+  --editor-ink: oklch(0.22 0.02 250);
+  --editor-ink-soft: oklch(0.22 0.02 250 / 0.55);
+  --editor-ink-fade: oklch(0.22 0.02 250 / 0.3);
+  --editor-spine-soft: oklch(0.475 0.157 248 / 0.18);
+  --editor-active: oklch(0.55 0.2 35);
+  --editor-active-soft: oklch(0.55 0.2 35 / 0.2);
+  --editor-active-pulse: oklch(0.55 0.2 35 / 0.16);
 }
 
 .dark {
@@ -113,6 +126,18 @@
   --sidebar-accent-foreground: oklch(1 0 0);
   --sidebar-border: oklch(0.249 0.01 248);
   --sidebar-ring: oklch(0.541 0.168 248);
+
+  /* Markdown editor surface (issue #75) — dark-mode counterpart. Ink-blue
+     paper with warm bone text. */
+  --editor-paper: oklch(0.2 0.015 250);
+  --editor-margin: oklch(0.23 0.02 250);
+  --editor-ink: oklch(0.92 0.01 85);
+  --editor-ink-soft: oklch(0.92 0.01 85 / 0.55);
+  --editor-ink-fade: oklch(0.92 0.01 85 / 0.3);
+  --editor-spine-soft: oklch(0.541 0.168 248 / 0.2);
+  --editor-active: oklch(0.72 0.18 35);
+  --editor-active-soft: oklch(0.72 0.18 35 / 0.22);
+  --editor-active-pulse: oklch(0.72 0.18 35 / 0.18);
 }
 
 @layer base {
@@ -250,6 +275,32 @@
 
 .slide-in-from-bottom-4 {
   --tw-enter-translate-y: 1rem;
+}
+
+/* Markdown editor (issue #75) — destination-line pulse after click-to-scroll
+   lands. Brief, low-opacity glow. */
+@keyframes editor-pulse {
+  0% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Markdown editor (issue #75) — TOC entry stagger-fade-in on first paint. */
+@keyframes editor-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Config page header — subtle gradient with blue tint */
