@@ -1,4 +1,12 @@
-name: Deploy Dev
+name: Deploy PR
+
+# Per-PR ephemeral Cloudflare Workers, one worker per open PR. Each PR gets a
+# uniquely-named worker (`bt-servant-admin-portal-pr-<N>`) so concurrent PRs
+# do not clobber each other. The companion `cleanup-pr.yml` deletes the
+# worker when the PR closes.
+#
+# `workflow_dispatch` runs (no PR number) fall back to the legacy
+# `bt-servant-admin-portal-dev` worker as a manual scratch deploy target.
 
 on:
   workflow_dispatch:
@@ -8,11 +16,14 @@ on:
 
 jobs:
   deploy:
-    name: Deploy to Dev
+    name: Deploy to Cloudflare Workers
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
+    env:
+      WORKER_NAME: ${{ github.event.pull_request.number && format('bt-servant-admin-portal-pr-{0}', github.event.pull_request.number) || 'bt-servant-admin-portal-dev' }}
+      WORKER_URL: ${{ github.event.pull_request.number && format('https://bt-servant-admin-portal-pr-{0}.unfoldingword.workers.dev', github.event.pull_request.number) || 'https://bt-servant-admin-portal-dev.unfoldingword.workers.dev' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,13 +43,13 @@ jobs:
       - name: Build application
         run: npm run build
 
-      - name: Patch wrangler config for dev environment
+      - name: Patch wrangler config (per-PR worker name)
         run: |
           node -e "
             const fs = require('fs');
             const p = 'dist/bt_servant_admin_portal/wrangler.json';
             const c = JSON.parse(fs.readFileSync(p, 'utf8'));
-            c.name = 'bt-servant-admin-portal-dev';
+            c.name = process.env.WORKER_NAME;
             c.kv_namespaces = [{ binding: 'AUTH_KV', id: 'fe1fdafdb04a4fa085b38c0a79e7a590' }];
             c.services = [{ binding: 'BARUCH', service: 'baruch-dev' }];
             c.vars = { ENGINE_BASE_URL: 'https://staging-api.btservant.ai', BARUCH_BASE_URL: 'https://baruch-dev.unfoldingword.workers.dev' };
@@ -46,22 +57,30 @@ jobs:
             console.log('Patched:', JSON.stringify({ name: c.name, services: c.services, kv: c.kv_namespaces, vars: c.vars }));
           "
 
-      - name: Deploy to Cloudflare Workers (dev)
+      - name: Deploy
         run: npx wrangler deploy --config dist/bt_servant_admin_portal/wrangler.json
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Comment PR with dev URL
+      - name: Comment PR with deploy URL
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
+        env:
+          WORKER_NAME: ${{ env.WORKER_NAME }}
+          WORKER_URL: ${{ env.WORKER_URL }}
         with:
           script: |
-            const body = `### Dev deployment complete
-
-            **URL:** https://bt-servant-admin-portal-dev.unfoldingword.workers.dev
-
-            This dev deployment is updated on every push to this PR.`;
+            const name = process.env.WORKER_NAME;
+            const url = process.env.WORKER_URL;
+            const body = [
+              `### Dev deployment complete`,
+              ``,
+              `**Worker:** \`${name}\``,
+              `**URL:** ${url}`,
+              ``,
+              `This per-PR worker is updated on every push to this PR and removed when the PR closes.`,
+            ].join("\n");
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
