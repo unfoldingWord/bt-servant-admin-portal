@@ -291,14 +291,16 @@ export function LanguagesPage() {
   // Separate forbidden errors from generic errors so we can render a
   // permission-specific inline message rather than the raw save-failed text.
   const saveError = saveLanguage.error;
+  const deleteError = deleteLanguage.error;
   const loadError =
     languagesQuery.error ||
     (selectedLanguage !== null ? languageQuery.error : null);
   const forbiddenError = useMemo<LanguageForbiddenError | null>(() => {
     if (saveError instanceof LanguageForbiddenError) return saveError;
+    if (deleteError instanceof LanguageForbiddenError) return deleteError;
     if (loadError instanceof LanguageForbiddenError) return loadError;
     return null;
-  }, [saveError, loadError]);
+  }, [saveError, deleteError, loadError]);
   const error = forbiddenError ? null : loadError;
 
   const saveStatus = useMemo(() => {

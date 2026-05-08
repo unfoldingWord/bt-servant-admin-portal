@@ -135,6 +135,7 @@ export async function handleLogin(
     org: user.org,
     isAdmin: user.isAdmin ?? false,
     createdAt: new Date().toISOString(),
+    language_rights: user.language_rights,
   };
 
   await env.AUTH_KV.put(`session:${sessionId}`, JSON.stringify(sessionData), {

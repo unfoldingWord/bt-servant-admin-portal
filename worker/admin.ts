@@ -1,7 +1,43 @@
 import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
-import type { StoredUser } from "./types";
+import type { LanguageRights, StoredUser } from "./types";
+
+// Accepts `"*"` or an array of non-empty trimmed strings. Returns null if
+// the input is unset (caller should treat as "leave existing value alone")
+// or a validation error message if the shape is invalid.
+function parseLanguageRights(
+  value: unknown
+):
+  | { ok: true; value: LanguageRights | undefined }
+  | { ok: false; error: string } {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (value === "*") return { ok: true, value: "*" };
+  if (Array.isArray(value)) {
+    const cleaned: string[] = [];
+    for (const entry of value) {
+      if (typeof entry !== "string") {
+        return {
+          ok: false,
+          error: "language_rights array entries must be strings",
+        };
+      }
+      const trimmed = entry.trim();
+      if (!trimmed) {
+        return {
+          ok: false,
+          error: "language_rights array entries must be non-empty",
+        };
+      }
+      cleaned.push(trimmed);
+    }
+    return { ok: true, value: cleaned };
+  }
+  return {
+    ok: false,
+    error: 'language_rights must be "*" or an array of strings',
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Admin secret guard
@@ -30,6 +66,7 @@ function safeUser(user: StoredUser) {
     name: user.name,
     org: user.org,
     isAdmin: user.isAdmin ?? false,
+    language_rights: user.language_rights,
   };
 }
 
@@ -48,6 +85,7 @@ async function createUser(request: Request, env: Env): Promise<Response> {
     name?: string;
     org?: string;
     isAdmin?: boolean;
+    language_rights?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -62,6 +100,11 @@ async function createUser(request: Request, env: Env): Promise<Response> {
 
   if (!email || !password || !name || !org) {
     return errorResponse("email, password, name, and org are required", 400);
+  }
+
+  const rightsResult = parseLanguageRights(body.language_rights);
+  if (!rightsResult.ok) {
+    return errorResponse(rightsResult.error, 400);
   }
 
   const existing = await env.AUTH_KV.get(`user:${email}`);
@@ -79,6 +122,7 @@ async function createUser(request: Request, env: Env): Promise<Response> {
     passwordHash,
     salt,
     isAdmin: body.isAdmin ?? false,
+    language_rights: rightsResult.value,
   };
 
   await env.AUTH_KV.put(`user:${email}`, JSON.stringify(user));
@@ -132,6 +176,7 @@ async function updateUser(
     org?: string;
     password?: string;
     isAdmin?: boolean;
+    language_rights?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -159,6 +204,13 @@ async function updateUser(
   if (body.password) {
     user.salt = generateSalt();
     user.passwordHash = await hashPassword(body.password, user.salt);
+  }
+  if (body.language_rights !== undefined) {
+    const rightsResult = parseLanguageRights(body.language_rights);
+    if (!rightsResult.ok) {
+      return errorResponse(rightsResult.error, 400);
+    }
+    user.language_rights = rightsResult.value;
   }
 
   await env.AUTH_KV.put(`user:${email}`, JSON.stringify(user));
