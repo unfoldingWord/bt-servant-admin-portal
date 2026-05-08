@@ -80,6 +80,18 @@ export async function handleConfig(
     );
   }
 
+  // /api/config/languages/{name} → GET/PUT/DELETE
+  const languageMatch = pathname.match(/^\/api\/config\/languages\/(.+)$/);
+  if (languageMatch?.[1]) {
+    const languageName = decodeURIComponent(languageMatch[1]);
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(languageName)}`,
+      ["GET", "PUT", "DELETE"]
+    );
+  }
+
   // /api/config/user-mode/{userId} → PUT/DELETE (UUID v4 only)
   const userModeMatch = pathname.match(/^\/api\/config\/user-mode\/(.+)$/);
   if (userModeMatch?.[1]) {
@@ -113,6 +125,13 @@ export async function handleConfig(
   // /api/config/modes → GET
   if (pathname === "/api/config/modes") {
     return proxyToEngine(request, env, `/api/v1/admin/orgs/${org}/modes`, [
+      "GET",
+    ]);
+  }
+
+  // /api/config/languages → GET
+  if (pathname === "/api/config/languages") {
+    return proxyToEngine(request, env, `/api/v1/admin/orgs/${org}/languages`, [
       "GET",
     ]);
   }
