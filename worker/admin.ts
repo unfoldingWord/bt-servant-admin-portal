@@ -1,3 +1,4 @@
+import { validateSession } from "./auth";
 import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
@@ -40,19 +41,49 @@ function parseLanguageRights(
 }
 
 // ---------------------------------------------------------------------------
-// Admin secret guard
+// Auth — dual-mode
 // ---------------------------------------------------------------------------
+//
+// Two authentication paths are accepted:
+//
+//   1. **X-Admin-Secret** — a Cloudflare Worker secret. Cross-org "super"
+//      admin. Used by CLI/curl for bootstrap and recovery (creating the very
+//      first user, fixing a broken admin, etc.). Skips same-origin checks
+//      because the caller has no implicit credentials to abuse.
+//
+//   2. **Session cookie + isAdmin === true** — the browser path. Org-scoped:
+//      the caller can only manage users within their own session.org.
+//      Same-origin (`X-Requested-With: XMLHttpRequest`) is required to
+//      prevent CSRF abuse of the implicit cookie.
+//
+// Self-mutation guards (cookie path only): an org admin cannot delete or
+// demote themselves. The X-Admin-Secret path stays as the recovery escape.
 
-function requireAdminSecret(request: Request, env: Env): Response | null {
+type AdminScope =
+  | { kind: "super" }
+  | { kind: "org"; org: string; selfEmail: string };
+
+async function requireAdminAuth(
+  request: Request,
+  env: Env
+): Promise<AdminScope | Response> {
+  // Path 1: X-Admin-Secret (CLI / cross-org / bootstrap).
   const secret = request.headers.get("X-Admin-Secret");
-  if (
-    !env.ADMIN_SECRET ||
-    !secret ||
-    !timingSafeEqual(secret, env.ADMIN_SECRET)
-  ) {
+  if (env.ADMIN_SECRET && secret && timingSafeEqual(secret, env.ADMIN_SECRET)) {
+    return { kind: "super" };
+  }
+
+  // Path 2: session cookie + isAdmin (browser). Same-origin required.
+  if (request.headers.get("X-Requested-With") !== "XMLHttpRequest") {
     return errorResponse("Forbidden", 403);
   }
-  return null;
+
+  const session = await validateSession(request, env);
+  if (!session || !session.isAdmin) {
+    return errorResponse("Forbidden", 403);
+  }
+
+  return { kind: "org", org: session.org, selfEmail: session.email };
 }
 
 // ---------------------------------------------------------------------------
@@ -74,7 +105,11 @@ function safeUser(user: StoredUser) {
 // CRUD handlers
 // ---------------------------------------------------------------------------
 
-async function createUser(request: Request, env: Env): Promise<Response> {
+async function createUser(
+  request: Request,
+  env: Env,
+  scope: AdminScope
+): Promise<Response> {
   if (request.method !== "POST") {
     return errorResponse("Method not allowed", 405);
   }
@@ -100,6 +135,14 @@ async function createUser(request: Request, env: Env): Promise<Response> {
 
   if (!email || !password || !name || !org) {
     return errorResponse("email, password, name, and org are required", 400);
+  }
+
+  // Org-scoped admins can only create users in their own org.
+  if (scope.kind === "org" && org !== scope.org) {
+    return errorResponse(
+      `Cannot create user outside your org (${scope.org})`,
+      403
+    );
   }
 
   const rightsResult = parseLanguageRights(body.language_rights);
@@ -130,7 +173,11 @@ async function createUser(request: Request, env: Env): Promise<Response> {
   return jsonResponse({ user: safeUser(user) }, 201);
 }
 
-async function listUsers(request: Request, env: Env): Promise<Response> {
+async function listUsers(
+  request: Request,
+  env: Env,
+  scope: AdminScope
+): Promise<Response> {
   if (request.method !== "GET") {
     return errorResponse("Method not allowed", 405);
   }
@@ -148,7 +195,10 @@ async function listUsers(request: Request, env: Env): Promise<Response> {
       const user = await env.AUTH_KV.get<StoredUser>(key.name, {
         type: "json",
       });
-      return user ? safeUser(user) : null;
+      if (!user) return null;
+      // Org-scoped admins only see users in their own org.
+      if (scope.kind === "org" && user.org !== scope.org) return null;
+      return safeUser(user);
     })
   );
 
@@ -158,7 +208,8 @@ async function listUsers(request: Request, env: Env): Promise<Response> {
 async function updateUser(
   request: Request,
   env: Env,
-  email: string
+  email: string,
+  scope: AdminScope
 ): Promise<Response> {
   if (request.method !== "PUT") {
     return errorResponse("Method not allowed", 405);
@@ -168,6 +219,12 @@ async function updateUser(
     type: "json",
   });
   if (!user) {
+    return errorResponse("User not found", 404);
+  }
+
+  // Org-scoped admins can only see/edit users in their own org. Return 404
+  // (not 403) on cross-org targets to avoid leaking existence.
+  if (scope.kind === "org" && user.org !== scope.org) {
     return errorResponse("User not found", 404);
   }
 
@@ -182,6 +239,26 @@ async function updateUser(
     body = (await request.json()) as typeof body;
   } catch {
     return errorResponse("Invalid JSON", 400);
+  }
+
+  // Org-scoped admins cannot move users to another org. Allow no-op
+  // (org === scope.org) so PUTs that include the current org are fine.
+  if (
+    body.org !== undefined &&
+    scope.kind === "org" &&
+    body.org.trim() !== scope.org
+  ) {
+    return errorResponse("Cannot move user to another org", 403);
+  }
+
+  // Self-demote guard (cookie path only). The X-Admin-Secret CLI is the
+  // recovery path if a self-demote is genuinely needed.
+  if (
+    scope.kind === "org" &&
+    scope.selfEmail === email &&
+    body.isAdmin === false
+  ) {
+    return errorResponse("Cannot demote yourself", 400);
   }
 
   if (body.name !== undefined) {
@@ -221,14 +298,27 @@ async function updateUser(
 async function deleteUser(
   request: Request,
   env: Env,
-  email: string
+  email: string,
+  scope: AdminScope
 ): Promise<Response> {
   if (request.method !== "DELETE") {
     return errorResponse("Method not allowed", 405);
   }
 
-  const existing = await env.AUTH_KV.get(`user:${email}`);
-  if (!existing) {
+  // Self-delete guard (cookie path only). The X-Admin-Secret CLI is the
+  // recovery path if a self-delete is genuinely needed.
+  if (scope.kind === "org" && scope.selfEmail === email) {
+    return errorResponse("Cannot delete yourself", 400);
+  }
+
+  // Need the full record to enforce the org-scope check before deleting.
+  const user = await env.AUTH_KV.get<StoredUser>(`user:${email}`, {
+    type: "json",
+  });
+  if (!user) {
+    return errorResponse("User not found", 404);
+  }
+  if (scope.kind === "org" && user.org !== scope.org) {
     return errorResponse("User not found", 404);
   }
 
@@ -246,20 +336,22 @@ export async function handleAdmin(
   env: Env,
   pathname: string
 ): Promise<Response> {
-  const blocked = requireAdminSecret(request, env);
-  if (blocked) return blocked;
+  const auth = await requireAdminAuth(request, env);
+  if (auth instanceof Response) return auth;
 
   if (pathname === "/api/admin/users") {
-    if (request.method === "POST") return createUser(request, env);
-    if (request.method === "GET") return listUsers(request, env);
+    if (request.method === "POST") return createUser(request, env, auth);
+    if (request.method === "GET") return listUsers(request, env, auth);
     return errorResponse("Method not allowed", 405);
   }
 
   const match = pathname.match(/^\/api\/admin\/users\/(.+)$/);
   if (match?.[1]) {
     const email = decodeURIComponent(match[1]).toLowerCase();
-    if (request.method === "PUT") return updateUser(request, env, email);
-    if (request.method === "DELETE") return deleteUser(request, env, email);
+    if (request.method === "PUT") return updateUser(request, env, email, auth);
+    if (request.method === "DELETE") {
+      return deleteUser(request, env, email, auth);
+    }
     return errorResponse("Method not allowed", 405);
   }
 
