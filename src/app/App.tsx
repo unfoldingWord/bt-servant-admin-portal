@@ -1,5 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import {
+  Navigate,
+  Outlet,
+  RouterProvider,
+  createBrowserRouter,
+} from "react-router";
 
 import { useThemeSync } from "@/hooks/use-theme-sync";
 import { useSyncSection } from "@/hooks/use-sync-section";
@@ -14,37 +19,44 @@ import { ManualConfigPage } from "@/app/pages/manual-config";
 
 const queryClient = new QueryClient();
 
-function AppRoutes() {
+// Root layout for the data router. Hooks that need router context
+// (useSyncSection -> useLocation, useSessionGuard -> useNavigate) live here.
+// Required for useBlocker support in child routes — useBlocker only works
+// under a data router (createBrowserRouter), not under <BrowserRouter>.
+function RootLayout() {
   useThemeSync();
   useSyncSection();
   useAuthInit();
   useSessionGuard();
+  return <Outlet />;
+}
 
-  return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route
-        element={
+const router = createBrowserRouter([
+  {
+    element: <RootLayout />,
+    children: [
+      { path: "/login", element: <LoginPage /> },
+      {
+        element: (
           <RequireAuth>
             <AppShell />
           </RequireAuth>
-        }
-      >
-        <Route index element={<BaruchPage />} />
-        <Route path="prompt-configuration" element={<ManualConfigPage />} />
-        <Route path="languages" element={<LanguagesPage />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  );
-}
+        ),
+        children: [
+          { index: true, element: <BaruchPage /> },
+          { path: "prompt-configuration", element: <ManualConfigPage /> },
+          { path: "languages", element: <LanguagesPage /> },
+        ],
+      },
+      { path: "*", element: <Navigate to="/" replace /> },
+    ],
+  },
+]);
 
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
+      <RouterProvider router={router} />
     </QueryClientProvider>
   );
 }
