@@ -13,7 +13,6 @@ import { useAdminUsers, useDeleteAdminUser } from "@/hooks/use-admin-users";
 import { useLanguages } from "@/hooks/use-languages";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -193,13 +192,19 @@ export function AdminUsersPage() {
             <AlertDialogCancel disabled={deleteUser.isPending}>
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction
+            {/*
+              Plain Button (not AlertDialogAction) — Radix's Action closes the
+              dialog on click, which would dismiss the inline error before the
+              async mutation's onError can render it. Closing happens manually
+              in handleConfirmDelete's onSuccess.
+            */}
+            <Button
               variant="destructive"
               onClick={handleConfirmDelete}
               disabled={deleteUser.isPending}
             >
               {deleteUser.isPending ? "Deleting…" : "Delete user"}
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
