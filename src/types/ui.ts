@@ -1,1 +1,5 @@
-export type Section = "baruch" | "prompt-configuration" | "languages";
+export type Section =
+  | "baruch"
+  | "prompt-configuration"
+  | "languages"
+  | "admin-users";

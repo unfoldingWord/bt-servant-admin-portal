@@ -11,7 +11,9 @@ import { useSyncSection } from "@/hooks/use-sync-section";
 import { useAuthInit } from "@/hooks/use-auth-init";
 import { useSessionGuard } from "@/hooks/use-session-guard";
 import { AppShell } from "@/components/app-shell";
+import { RequireAdmin } from "@/components/require-admin";
 import { RequireAuth } from "@/components/require-auth";
+import { AdminUsersPage } from "@/app/pages/admin-users";
 import { BaruchPage } from "@/app/pages/baruch";
 import { LanguagesPage } from "@/app/pages/languages";
 import { LoginPage } from "@/app/pages/login";
@@ -46,6 +48,14 @@ const router = createBrowserRouter([
           { index: true, element: <BaruchPage /> },
           { path: "prompt-configuration", element: <ManualConfigPage /> },
           { path: "languages", element: <LanguagesPage /> },
+          {
+            path: "admin/users",
+            element: (
+              <RequireAdmin>
+                <AdminUsersPage />
+              </RequireAdmin>
+            ),
+          },
         ],
       },
       { path: "*", element: <Navigate to="/" replace /> },
