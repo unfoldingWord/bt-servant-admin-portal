@@ -8,6 +8,8 @@ import { faMessageBot as faMessageBotSolid } from "@fortawesome/pro-solid-svg-ic
 import { faPenToSquare as faPenToSquareSolid } from "@fortawesome/pro-solid-svg-icons";
 import { useNavigate } from "react-router";
 
+import { useAuthStore } from "@/lib/auth-store";
+import { hasAnyLanguageRights } from "@/lib/permissions";
 import { useUiStore } from "@/lib/ui-store";
 import { Separator } from "@/components/ui/separator";
 import { ActivityBarItem } from "@/components/activity-bar-item";
@@ -19,6 +21,8 @@ export function ActivityBar() {
   const setActiveSection = useUiStore((s) => s.setActiveSection);
   const testChatOpen = useUiStore((s) => s.testChatOpen);
   const toggleTestChat = useUiStore((s) => s.toggleTestChat);
+  const languageRights = useAuthStore((s) => s.user?.language_rights);
+  const canAccessLanguages = hasAnyLanguageRights(languageRights);
 
   return (
     <div className="bg-card relative z-10 flex h-full w-12 flex-col items-center py-3 shadow-[2px_0_12px_rgba(0,0,0,0.2)]">
@@ -49,11 +53,11 @@ export function ActivityBar() {
           label="Edit per-language tuning documents"
           isActive={activeSection === "languages"}
           onClick={() => {
-            // TODO(#80): gate on session.language_rights once delivered;
-            // until then the tab is always visible.
             setActiveSection("languages");
             void navigate("/languages");
           }}
+          disabled={!canAccessLanguages}
+          disabledLabel="No language access — contact your admin"
         />
         <Separator className="my-1.5 w-5 opacity-50" />
         <ActivityBarItem

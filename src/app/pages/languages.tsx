@@ -5,6 +5,12 @@ import { Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
+import { LanguageForbiddenError } from "@/lib/languages-api";
+import {
+  filterAuthorizedLanguages,
+  hasAnyLanguageRights,
+  hasLanguageRights,
+} from "@/lib/permissions";
 import { useUiStore } from "@/lib/ui-store";
 import { useDebounced } from "@/hooks/use-debounced";
 import { useActiveHeadingLine } from "@/hooks/use-active-heading-line";
@@ -35,6 +41,8 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 
 export function LanguagesPage() {
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
+  const languageRights = useAuthStore((s) => s.user?.language_rights);
+  const hasAccess = hasAnyLanguageRights(languageRights);
   const selectedLanguage = useUiStore((s) => s.selectedLanguage);
   const setSelectedLanguage = useUiStore((s) => s.setSelectedLanguage);
   const showDrafts = useUiStore((s) => s.showDrafts);
@@ -45,6 +53,20 @@ export function LanguagesPage() {
   const languageQuery = useLanguage(selectedLanguage);
   const saveLanguage = useSaveLanguage();
   const deleteLanguage = useDeleteLanguage();
+
+  // Filter the language list to only those the user has rights to. Engine
+  // #207 will eventually filter server-side too, but until then this is the
+  // primary gate against showing forbidden entries in the dropdown.
+  const authorizedLanguagesData = useMemo(() => {
+    if (!languagesQuery.data) return languagesQuery.data;
+    return {
+      ...languagesQuery.data,
+      languages: filterAuthorizedLanguages(
+        languagesQuery.data.languages,
+        languageRights
+      ),
+    };
+  }, [languagesQuery.data, languageRights]);
 
   // Local document draft (auto-save target).
   //
@@ -177,6 +199,15 @@ export function LanguagesPage() {
     [isDirty, isSaving, selectedLanguage, setSelectedLanguage]
   );
 
+  // If the persisted selection is no longer authorized (e.g. an admin
+  // revoked rights mid-session, or rights changed since last login), drop
+  // it so we don't render an editor for a language the user can't read.
+  useEffect(() => {
+    if (selectedLanguage === null) return;
+    if (hasLanguageRights(languageRights, selectedLanguage)) return;
+    setSelectedLanguage(null);
+  }, [languageRights, selectedLanguage, setSelectedLanguage]);
+
   const confirmSwitch = useCallback(() => {
     setSelectedLanguage(pendingSwitch);
     setPendingSwitch(null);
@@ -256,9 +287,21 @@ export function LanguagesPage() {
   const isLoading =
     languagesQuery.isLoading ||
     (selectedLanguage !== null && languageQuery.isLoading);
-  const error =
+
+  // Separate forbidden errors from generic errors so we can render a
+  // permission-specific inline message rather than the raw save-failed text.
+  const saveError = saveLanguage.error;
+  const deleteError = deleteLanguage.error;
+  const loadError =
     languagesQuery.error ||
     (selectedLanguage !== null ? languageQuery.error : null);
+  const forbiddenError = useMemo<LanguageForbiddenError | null>(() => {
+    if (saveError instanceof LanguageForbiddenError) return saveError;
+    if (deleteError instanceof LanguageForbiddenError) return deleteError;
+    if (loadError instanceof LanguageForbiddenError) return loadError;
+    return null;
+  }, [saveError, deleteError, loadError]);
+  const error = forbiddenError ? null : loadError;
 
   const saveStatus = useMemo(() => {
     if (isSaving) return "Saving…";
@@ -278,7 +321,7 @@ export function LanguagesPage() {
         <div className="flex flex-wrap items-center gap-3 p-4 sm:p-6">
           <div className="min-w-0 flex-1">
             <LanguageSelector
-              languagesData={languagesQuery.data}
+              languagesData={authorizedLanguagesData}
               selectedLanguage={selectedLanguage}
               onSelectLanguage={handleSelectLanguage}
               onCreateLanguage={handleCreateLanguage}
@@ -320,11 +363,26 @@ export function LanguagesPage() {
         </div>
       )}
 
+      {forbiddenError && (
+        <div
+          className="bg-destructive/10 text-destructive border-destructive border-l-2 px-6 py-3 text-sm"
+          role="alert"
+        >
+          {forbiddenError.operation === "write"
+            ? `You don't have permission to edit "${forbiddenError.languageName}". Contact your admin to request access.`
+            : forbiddenError.operation === "delete"
+              ? `You don't have permission to delete "${forbiddenError.languageName}".`
+              : `You don't have permission to view "${forbiddenError.languageName}".`}
+        </div>
+      )}
+
       <div
         className="flex min-h-0 flex-1 overflow-hidden"
         style={{ background: "var(--editor-paper)" }}
       >
-        {isLoading ? (
+        {!hasAccess ? (
+          <NoAccessState />
+        ) : isLoading ? (
           <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-3">
             <FontAwesomeIcon
               icon={faSpinnerThird}
@@ -335,7 +393,7 @@ export function LanguagesPage() {
         ) : !hasSelection ? (
           <EmptyState
             isAdmin={isAdmin}
-            hasAny={(languagesQuery.data?.languages.length ?? 0) > 0}
+            hasAny={(authorizedLanguagesData?.languages.length ?? 0) > 0}
           />
         ) : (
           <>
@@ -429,6 +487,17 @@ function EmptyState({ isAdmin, hasAny }: EmptyStateProps) {
           : isAdmin
             ? "No languages yet. Create one to get started."
             : "No languages are available for your account."}
+      </p>
+    </div>
+  );
+}
+
+function NoAccessState() {
+  return (
+    <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+      <p className="text-sm">
+        You don&rsquo;t have access to any languages. Contact your admin to
+        request language-shepherd permissions.
       </p>
     </div>
   );

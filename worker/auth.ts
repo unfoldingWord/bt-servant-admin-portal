@@ -74,14 +74,32 @@ export async function validateSession(
   });
   if (!data) return null;
 
-  // Ensure the user still exists (e.g. not deleted by admin)
-  const userExists = await env.AUTH_KV.get(`user:${data.email}`);
-  if (!userExists) {
+  // Hydrate from the live user record so admin changes (org moves,
+  // privilege grants/revocations, renames) take effect on the next
+  // request rather than waiting for the 7-day session to expire. Only
+  // userId and createdAt are session-immutable; everything else —
+  // including org, which is the authorization boundary on every engine
+  // path — is derived live. Without this, a user moved between orgs
+  // could keep operating against the old org until session expiry, with
+  // newly granted privileges to boot. Email is the KV key so a stale
+  // email self-corrects via the user-not-found branch below.
+  const user = await env.AUTH_KV.get<StoredUser>(`user:${data.email}`, {
+    type: "json",
+  });
+  if (!user) {
     await env.AUTH_KV.delete(`session:${sessionId}`);
     return null;
   }
 
-  return data;
+  return {
+    userId: data.userId,
+    createdAt: data.createdAt,
+    email: user.email,
+    name: user.name,
+    org: user.org,
+    isAdmin: user.isAdmin ?? false,
+    language_rights: user.language_rights,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +153,7 @@ export async function handleLogin(
     org: user.org,
     isAdmin: user.isAdmin ?? false,
     createdAt: new Date().toISOString(),
+    language_rights: user.language_rights,
   };
 
   await env.AUTH_KV.put(`session:${sessionId}`, JSON.stringify(sessionData), {
@@ -148,6 +167,7 @@ export async function handleLogin(
       name: user.name,
       org: user.org,
       isAdmin: user.isAdmin ?? false,
+      language_rights: sessionData.language_rights,
     },
   });
   response.headers.set("Set-Cookie", sessionCookie(sessionId, request.url));
@@ -189,6 +209,7 @@ export async function handleMe(request: Request, env: Env): Promise<Response> {
       name: session.name,
       org: session.org,
       isAdmin: session.isAdmin ?? false,
+      language_rights: session.language_rights,
     },
   });
 }
