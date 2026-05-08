@@ -8,6 +8,7 @@ import { useSessionGuard } from "@/hooks/use-session-guard";
 import { AppShell } from "@/components/app-shell";
 import { RequireAuth } from "@/components/require-auth";
 import { BaruchPage } from "@/app/pages/baruch";
+import { LanguagesPage } from "@/app/pages/languages";
 import { LoginPage } from "@/app/pages/login";
 import { ManualConfigPage } from "@/app/pages/manual-config";
 
@@ -31,6 +32,7 @@ function AppRoutes() {
       >
         <Route index element={<BaruchPage />} />
         <Route path="prompt-configuration" element={<ManualConfigPage />} />
+        <Route path="languages" element={<LanguagesPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

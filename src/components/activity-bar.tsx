@@ -1,7 +1,9 @@
 import { faComments as faCommentsLight } from "@fortawesome/pro-light-svg-icons";
+import { faLanguage as faLanguageLight } from "@fortawesome/pro-light-svg-icons";
 import { faMessageBot as faMessageBotLight } from "@fortawesome/pro-light-svg-icons";
 import { faPenToSquare as faPenToSquareLight } from "@fortawesome/pro-light-svg-icons";
 import { faComments as faCommentsSolid } from "@fortawesome/pro-solid-svg-icons";
+import { faLanguage as faLanguageSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faMessageBot as faMessageBotSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faPenToSquare as faPenToSquareSolid } from "@fortawesome/pro-solid-svg-icons";
 import { useNavigate } from "react-router";
@@ -39,6 +41,18 @@ export function ActivityBar() {
           onClick={() => {
             setActiveSection("prompt-configuration");
             void navigate("/prompt-configuration");
+          }}
+        />
+        <ActivityBarItem
+          icon={faLanguageLight}
+          activeIcon={faLanguageSolid}
+          label="Edit per-language tuning documents"
+          isActive={activeSection === "languages"}
+          onClick={() => {
+            // TODO(#80): gate on session.language_rights once delivered;
+            // until then the tab is always visible.
+            setActiveSection("languages");
+            void navigate("/languages");
           }}
         />
         <Separator className="my-1.5 w-5 opacity-50" />
