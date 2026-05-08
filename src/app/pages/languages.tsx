@@ -46,66 +46,101 @@ export function LanguagesPage() {
   const saveLanguage = useSaveLanguage();
   const deleteLanguage = useDeleteLanguage();
 
-  // Local document draft (auto-save target). Synced to the server document
-  // whenever the selected language changes or a save lands.
+  // Local document draft (auto-save target).
+  //
+  // We track `lastSyncedDoc` separately from React Query's cache so that:
+  //   1. Edits typed *during* an in-flight save are preserved — the cache
+  //      isn't authoritative for "what we've actually saved" because it can
+  //      lag the real server state.
+  //   2. We can reliably detect "is there still something newer to save?"
+  //      after a save settles, by comparing draft to lastSyncedDoc.
+  //
+  // Sync rule: lastSyncedDoc + draft are pulled from the server only when
+  // the *selected language changes* (initial load or a switch). After that,
+  // lastSyncedDoc only advances when a save we initiated succeeds (set to
+  // the value we sent). The cache invalidation that happens after a mutation
+  // never overwrites local edits.
   const [draft, setDraft] = useState("");
+  const [lastSyncedDoc, setLastSyncedDoc] = useState("");
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activeLine = useActiveHeadingLine(textareaRef, draft, headings);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
 
-  const serverDocument = languageQuery.data?.document ?? "";
   const serverLabel = languageQuery.data?.label;
   const serverPublished = languageQuery.data?.published ?? false;
 
-  // Sync the draft from the server when the selected language changes or after
-  // a successful save lands. We don't overwrite while a save is in flight to
-  // avoid jitter — the next sync happens once the save settles.
+  // Re-sync from the server *only* when the selection changes — never
+  // post-save. The ref tracks the language whose contents we last loaded
+  // into local state, so we don't repeatedly overwrite the draft each time
+  // the cache emits.
+  const syncedNameRef = useRef<string | null>(null);
   useEffect(() => {
-    if (saveLanguage.isPending) return;
-    setDraft(serverDocument);
-  }, [serverDocument, saveLanguage.isPending]);
+    if (!selectedLanguage) {
+      syncedNameRef.current = null;
+      setDraft("");
+      setLastSyncedDoc("");
+      return;
+    }
+    // Wait for the query data to arrive AND match the current selection
+    // before syncing. Without the name check we'd briefly load stale data
+    // for the previously selected language during a switch.
+    if (!languageQuery.data) return;
+    if (languageQuery.data.name !== selectedLanguage) return;
+    if (syncedNameRef.current === selectedLanguage) return;
+    setDraft(languageQuery.data.document);
+    setLastSyncedDoc(languageQuery.data.document);
+    syncedNameRef.current = selectedLanguage;
+  }, [selectedLanguage, languageQuery.data]);
 
-  const isDirty = draft !== serverDocument;
+  const isDirty = draft !== lastSyncedDoc;
   const isSaving = saveLanguage.isPending;
   const hasSelection = selectedLanguage !== null && languageQuery.data;
 
-  // Auto-save when the debounced draft diverges from the server document.
-  // Skip while another save is in flight; the next debounce tick will retry.
+  // Single save path — both auto-save and the manual Save button funnel
+  // through here so the lastSyncedDoc bookkeeping stays consistent.
+  // The closure captures the exact `doc` we're sending so onSuccess can
+  // bump lastSyncedDoc to that value (not to a re-read of the cache,
+  // which may have already moved on if the user kept typing).
+  const performSave = useCallback(
+    (doc: string) => {
+      if (!selectedLanguage) return;
+      saveLanguage.mutate(
+        {
+          name: selectedLanguage,
+          body: {
+            label: serverLabel,
+            document: doc,
+            published: serverPublished,
+          },
+        },
+        { onSuccess: () => setLastSyncedDoc(doc) }
+      );
+    },
+    [saveLanguage, selectedLanguage, serverLabel, serverPublished]
+  );
+
+  // Auto-save when debouncedDraft diverges from what we last saved.
+  // Re-runs when an in-flight save settles so a "save in progress, user
+  // typed more" scenario flushes the newer edits as soon as the first
+  // save returns.
   useEffect(() => {
     if (!selectedLanguage) return;
     if (saveLanguage.isPending) return;
-    if (debouncedDraft === serverDocument) return;
-    saveLanguage.mutate({
-      name: selectedLanguage,
-      body: {
-        label: serverLabel,
-        document: debouncedDraft,
-        published: serverPublished,
-      },
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only react to debouncedDraft changes
-  }, [debouncedDraft]);
+    if (debouncedDraft === lastSyncedDoc) return;
+    performSave(debouncedDraft);
+  }, [
+    debouncedDraft,
+    saveLanguage.isPending,
+    lastSyncedDoc,
+    performSave,
+    selectedLanguage,
+  ]);
 
   const flushSave = useCallback(() => {
-    if (!selectedLanguage) return;
-    if (!isDirty) return;
-    saveLanguage.mutate({
-      name: selectedLanguage,
-      body: {
-        label: serverLabel,
-        document: draft,
-        published: serverPublished,
-      },
-    });
-  }, [
-    draft,
-    isDirty,
-    saveLanguage,
-    selectedLanguage,
-    serverLabel,
-    serverPublished,
-  ]);
+    if (!isDirty || isSaving) return;
+    performSave(draft);
+  }, [draft, isDirty, isSaving, performSave]);
 
   // Block route changes while there are pending edits or an in-flight save.
   // The blocker fires only when navigating to a different pathname (selecting
@@ -156,19 +191,25 @@ export function LanguagesPage() {
 
   const handleSetPublished = useCallback(
     (name: string, published: boolean) => {
-      // Send the current draft so an unsaved doc edit gets included in the
-      // same request as the publish toggle. Avoids a separate save→publish
-      // race when the user has pending edits.
-      saveLanguage.mutate({
-        name,
-        body: {
-          label: serverLabel,
-          document: name === selectedLanguage ? draft : serverDocument,
-          published,
+      // Send the current draft for the selected language so an unsaved doc
+      // edit lands in the same request as the publish toggle. Bookkeep
+      // lastSyncedDoc on success so the autosave effect doesn't immediately
+      // re-fire with the same content.
+      const isSelected = name === selectedLanguage;
+      const doc = isSelected ? draft : (languageQuery.data?.document ?? "");
+      saveLanguage.mutate(
+        {
+          name,
+          body: { label: serverLabel, document: doc, published },
         },
-      });
+        {
+          onSuccess: () => {
+            if (isSelected) setLastSyncedDoc(doc);
+          },
+        }
+      );
     },
-    [draft, saveLanguage, selectedLanguage, serverDocument, serverLabel]
+    [draft, languageQuery.data, saveLanguage, selectedLanguage, serverLabel]
   );
 
   const handleDeleteLanguage = useCallback(
