@@ -118,6 +118,7 @@ export function ManualConfigPage() {
       <PageHeader
         title="Prompt Configuration"
         subtitle="Manage prompt overrides for each slot at the org level or per mode."
+        variant="modes"
       />
 
       {/* Grid area — dot grid + subtle radial glow */}

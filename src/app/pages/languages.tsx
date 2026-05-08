@@ -315,6 +315,7 @@ export function LanguagesPage() {
       <PageHeader
         title="Languages"
         subtitle="Edit per-language tuning documents. Auto-saves as you type; use Save to flush immediately."
+        variant="languages"
       />
 
       <div className="bg-card border-b">
