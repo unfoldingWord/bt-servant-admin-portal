@@ -16,7 +16,8 @@
 | Auto-staging deploy on PR merge (#89) | 100%     | Shipped 2026-05-08 |
 | Language-shepherd permissions (#80)   | 100%     | Shipped 2026-05-08 |
 | Users admin UI (#96)                  | 100%     | Shipped 2026-05-08 |
-| Epic #72 — Admin Portal Redesign      | ~50%     | In Progress        |
+| Mode/language context accents (#78)   | 100%     | Shipped 2026-05-08 |
+| Epic #72 — Admin Portal Redesign      | ~55%     | In Progress        |
 
 ### Per-PR ephemeral CF Workers — Shipped
 
@@ -45,25 +46,26 @@ This-repo sub-issues:
 - [x] **#73** — Languages sidebar tab + editor integration (shipped 2026-05-08, PR #93 at `c5dc94a`)
 - [x] **#80** — Language-shepherd permissions (shipped 2026-05-08, PR #95 at `b349707`; 5 review rounds with Frank)
 - [x] **#96** — Users admin UI for assigning rights (shipped 2026-05-08, follow-up to #80; backend PR #97 at `8a1c345`, frontend PR #100 at `e119596`)
-- [ ] #74 — Pre-load structural heading scaffold for new language documents (now has the editor integration point from #73)
-- [ ] #76 — Replace six-box mode editor with markdown editor + TOC (depends on #75 + engine #204)
-- [ ] #77 — Comment-block syntax in editor (depends on #75; uses Ulysses `%%` + `++…++`)
-- [ ] #81 — Wire test chat to active mode + language selection
-- [ ] #82 — Mode data migration (portal side; depends on engine #204)
+- [x] **#78** — Visual differentiation between mode/language editor (shipped 2026-05-08, PR #103 at `4cb84cd`; brand-color top-strip accent on `PageHeader`)
+- [ ] #74 — Pre-load structural heading scaffold for new language documents (depends on bt-servant-worker#198)
+- [ ] #76 — Replace six-box mode editor with markdown editor + TOC (depends on #75 + bt-servant-worker#200)
+- [ ] #77 — Comment-block syntax in editor (visual highlighting half: paused awaiting Ian's editor-library decision, tentative pick CodeMirror 6; backend stripping half tracked as bt-servant-worker#201)
+- [ ] #81 — Wire test chat to active mode + language selection (mode-only is unblocked but ships as half-feature; language wiring blocked on bt-servant-worker#197 + #199)
+- [ ] #82 — Mode data migration (portal side; depends on bt-servant-worker#200)
 
-Engine repo (`unfoldingWord/bt-servant-engine`):
+Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API server — see 2026-05-08 evening session for the engine→worker refile audit):
 
-- [ ] #203 — `#<mode> @<language>` trigger syntax (prompt-driven, not regex)
-- [ ] #204 — Mode migration Phase 1 (synthesize markdown on GET, tolerate both shapes)
-- [ ] #205 — Strip Ulysses-style comments before assembling system prompt
-- [ ] #206 — Language CRUD endpoints (companion to portal #79; mirror of modes endpoints) — filed 2026-05-08, blocks real validation of #73/#79 plumbing
-- ~~#207~~ — Closed wontfix-by-design 2026-05-08. Engine cannot enforce per-user `language_rights` because admin endpoints take a single shared `ADMIN_API_TOKEN` with zero user identity. Trusted-portal model verified by reading engine code; portal owns enforcement (PR #95 + #97 + #100).
+- [ ] bt-servant-worker#197 — Add Language CRUD endpoints (mirror of modes endpoints) — filed 2026-05-08, replaces misfiled engine #206. Blocks portal #74 / #76 / #82 + real validation of #79 / #73.
+- [ ] bt-servant-worker#198 — Per-org language scaffold endpoint — filed 2026-05-08. Blocks portal #74.
+- [ ] bt-servant-worker#199 — `#<mode> @<language>` trigger syntax in chat preprocessing — filed 2026-05-08, replaces misfiled engine #203 (and supersedes worker #192 which was closed without implementation).
+- [ ] bt-servant-worker#200 — Mode data migration Phase 1 — filed 2026-05-08, replaces misfiled engine #204.
+- [ ] bt-servant-worker#201 — Strip Ulysses-style comments at prompt assembly — filed 2026-05-08, replaces misfiled engine #205.
 
 ### Tech debt / housekeeping
 
 - [ ] #91 — Bump JavaScript actions to Node 24-compatible majors (`actions/checkout@v4` etc.) before GitHub's Jun 2 2026 forced opt-out / Sep 16 2026 hard removal. Filed 2026-05-08 after the deprecation annotation surfaced on the first staging-on-merge run.
 - [ ] #99 — Admin password reset via `/api/admin/users` PUT doesn't invalidate target user's existing sessions. Filed 2026-05-08 while building #96 — pulled the password-reset field from the edit dialog until this lands. Pre-existing on the X-Admin-Secret CLI path too.
-- [ ] **AlertDialogAction race** (no issue yet) — Frank flagged on PR #100 that `src/components/language-selector.tsx` uses `AlertDialogAction` for Delete + Unpublish, which auto-closes the dialog on click and would dismiss inline async errors before they render. Same pattern fixed in `admin-users.tsx` (PR #100, fff8366). Sweep-worthy when next visiting that file.
+- [ ] **#102 — AlertDialogAction sweep** (filed 2026-05-08). Frank's anti-pattern from PR #100 also affects `src/components/language-selector.tsx` (Delete + Unpublish), `src/components/mode-selector.tsx` (Delete + Unpublish), and `src/components/user-memory-dialog.tsx` (one destructive action). Same fix as `admin-users.tsx` (PR #100, fff8366): swap `AlertDialogAction` → plain `<Button>`, close manually on success.
 
 ## Session Log
 
@@ -160,10 +162,49 @@ Engine repo (`unfoldingWord/bt-servant-engine`):
 - **#81** (wire test chat to active mode + language selection) is technically unblocked but coupling to chat plumbing makes it bigger than #74 or #77. Probably last of the trio.
 - **#99** (password-reset session invalidation) and the **AlertDialogAction sweep** on `language-selector.tsx` are good handoff candidates if anyone else picks up small tasks.
 
+### 2026-05-08 (evening) — Cross-repo issue audit, family-wide misfile correction, #78 shipped
+
+**Completed:**
+
+- **PR #103 / #78 — Brand-color context accents for mode/language editor pages.** First Epic-#72 win this session. `PageHeader` gains an optional `variant: "modes" | "languages"` prop that paints a 3px top accent strip in Inspire blue (`oklch(0.71 0.108 226)`) for Modes / Cultivate teal (`oklch(0.78 0.054 195)`) for Languages. Other PageHeader consumers (Baruch, Admin Users) stay neutral. New tokens land as `--brand-modes` / `--brand-languages` in `globals.css` (light + dark). Color carries via CSS variable so future theme work can re-tune without touching the component. Frank cleared no medium+. Merged at `4cb84cd`.
+- **Cross-repo issue audit + 5 misfile corrections.** Discovered the portal's `ENGINE_BASE_URL` (`api.btservant.ai`) actually proxies to **`bt-servant-worker`**, not `bt-servant-engine`. The engine is a separate Python/FastAPI service that's been dormant since 2026-01-16 (last commit) — closed engine #178 "EPIC: CloudFlare Rebuild" (2026-01-15) was the cutover point. All chat orchestration, modes, prompt-overrides, languages-when-they-exist, and per-user state live in `bt-servant-worker/src/index.ts`. Five engine issues filed during the Epic-#72 push were misfiled: refiled to bt-servant-worker as #197 (Languages CRUD ← engine #206), #199 (trigger syntax ← engine #203), #200 (mode migration ← engine #204), #201 (Ulysses comment stripping ← engine #205); engine #207 was already self-closed wontfix-by-design earlier in the day. Each engine issue closed with a redirect comment.
+- **New worker issue filed: bt-servant-worker#198** (per-org language scaffold endpoint) — companion to portal #74 once languages CRUD ships in worker.
+- **Portal issue triage pass.** 36 open admin-portal issues inventoried; only 7 were on radar via the progress tracker. Outcomes:
+  - **Filed:** portal #102 (AlertDialogAction sweep — known anti-pattern in `language-selector.tsx` + `mode-selector.tsx` + `user-memory-dialog.tsx`).
+  - **Closed-with-evidence:** #15 (org-badge `dark:text-primary/70` removed at cited location), #17 (theme-toggle icon flipped per recommended fix), #26 (baruch SSE handling already in `worker/baruch.ts:148-190` since baruch PR #4 merged 2026-03-09), #42 (worker `MAX_OVERRIDE_LENGTH` 4000→8000 in worker PR #167 + portal doesn't enforce client-side limit anyway).
+  - **Cross-linked:** #74 → worker #198 dependency; #76 → noted #28 / #54 / #55 / #59-bullet-3 will be obsoleted/subsumed; #81 → noted #50 dedupe overlap.
+  - **Stamped:** ~21 March-2026 backlog issues each got a "confirmed still applicable as of 2026-05-08" comment with current file:line evidence, so future contributors don't redo the verification.
+
+**In Progress:**
+
+- **#77 visual highlighting half** — paused awaiting Ian's input on editor-library decision (CodeMirror 6 tentative; comment posted with three options + tradeoffs).
+
+**Blockers:**
+
+- **bt-servant-worker#197** (Languages CRUD) — gates portal #74, #76, #82 + real validation of #79 / #73.
+- **bt-servant-worker#198** (Language scaffold endpoint) — gates portal #74.
+- **bt-servant-worker#199** (`#<mode> @<language>` trigger syntax) — gates full functionality of portal #81.
+- **bt-servant-worker#200** (Mode data migration Phase 1) — gates portal #76, #82.
+- **bt-servant-worker#201** (Ulysses comment stripping at prompt assembly) — engine half of portal #77; portal-side editor highlighting is independent.
+- **Portal #77 (visual highlighting)** — paused on Ian for editor-library decision.
+
+**Architectural decisions captured today:**
+
+- **The portal's API target is `bt-servant-worker`, not `bt-servant-engine`.** Verified via `wrangler.jsonc:15` (`ENGINE_BASE_URL: https://api.btservant.ai`) + `bt-servant-worker/src/index.ts:488-604` (modes endpoints registered there) + `bt-servant-engine/bt_servant_engine/apps/api/app.py` (no `orgs/*` admin routes — only `health`, `admin_logs`, `admin_status_messages`, `admin_datastore`, `admin_keys`, `chat`, `users`). The env var name is misleading; semantically it's `WORKER_BASE_URL`. Worker is the actual orchestrator: chat (Claude Sonnet), MCP tool dispatch, sandbox, memory, user state, modes/prompt-overrides/languages-when-they-ship. Future backend work for the portal lands in `bt-servant-worker`.
+- **bt-servant-engine is dormant.** Last commit 2026-01-16; last merged PR 2026-01-07 (#177). Closed engine #178 "CloudFlare Rebuild" (2026-01-15) was the migration. Engine #172 "Detangle WhatsApp logic from BT Servant Engine logic" (closed 2025-12-09) confirms WhatsApp also moved off engine. The whatsapp-gateway repo's `wrangler.toml` confirms `ENGINE_BASE_URL = https://api.btservant.ai` (= worker). Future portal/whatsapp-gateway backend work goes to bt-servant-worker.
+- **bt-servant family inventory (15 repos):** `bt-servant-worker` (active, primary API), `bt-servant-admin-portal` (this), `bt-servant-engine` (dormant), `bt-servant-engine-data-loaders`, `bt-servant-whatsapp-gateway`, `bt-servant-web-client`, `bt-servant-message-broker`, `bt-servant-kb-worker`, `bt-servant-log-viewer`, `bt-servant-telemetry`, `bt-servant-site`, `bt-servant-report-sender`, `baruch` (separate prefix; setup AI assistant), `engineering-practices`. The portal's Epic-#72 backend dependencies all live in `bt-servant-worker`.
+
+**Next Steps:**
+
+- **Wait on Ian for portal #77 editor-library decision** (CodeMirror 6 tentative; awaiting sign-off before code).
+- **Unblocked Epic-#72 picks:** **#81 mode-only** ships as a half-feature against worker today (language portion blocked on worker #197 + #199); avoid unless half-feature is acceptable. **#74, #76, #77 visual half, #82** all blocked on bt-servant-worker.
+- **Other unblocked portal-side wins** (not Epic #72): **#102** (AlertDialogAction sweep — small, mechanical, three components), **#99** (admin password-reset session invalidation in portal worker BFF), **#91** (Node 24 actions bump, time-bound Sep 2026).
+- **Watch bt-servant-worker** for any of #197 / #198 / #199 / #200 / #201 to land — each unblocks portal-side work.
+
 ## Known Issues
 
 - **#99 — Admin password-reset doesn't invalidate target user's existing sessions.** `PUT /api/admin/users/{email}` accepts a `password` field that updates the hash but leaves the user's existing session records valid until expiry. Pre-existing on the X-Admin-Secret CLI path; pulled the password-reset field from the `AdminUserEditDialog` (PR #100) until this is fixed.
-- **`AlertDialogAction` race in `src/components/language-selector.tsx`** (no issue filed). Delete + Unpublish actions use Radix `AlertDialogAction`, which auto-closes the dialog on click — async errors fire after the dialog is gone, so they never render. Same anti-pattern fixed in `admin-users.tsx` (PR #100, fff8366); the language-selector instance is sweep-worthy when next visiting that file.
+- **#102 — AlertDialogAction sweep** (filed 2026-05-08). Frank's anti-pattern from PR #100 affects three components: `src/components/language-selector.tsx` (Delete + Unpublish), `src/components/mode-selector.tsx` (Delete + Unpublish), and `src/components/user-memory-dialog.tsx` (one destructive action). Same fix as `admin-users.tsx` (PR #100, fff8366): swap `AlertDialogAction` → plain `<Button>`, hold dialog open during async, close manually on success.
 
 ## Architectural Decisions
 
@@ -188,3 +229,5 @@ Notable decisions made 2026-05-08:
 - **Dual-auth on `/api/admin/users`.** `X-Admin-Secret` is the super-admin / CLI recovery path (cross-org, no CSRF check needed). Session-cookie + `isAdmin` is the browser path: org-scoped, requires `X-Requested-With: XMLHttpRequest` for CSRF. Self-mutation guards (no self-delete, no self-demote) apply only to the cookie path so the secret remains a true recovery escape. Modeled as `AdminScope = { kind: "super" } | { kind: "org"; org; selfEmail }` threaded through all handlers.
 - **`AlertDialogAction` is unsafe for async confirmations.** Radix's primitive auto-closes the dialog on click, dismissing inline error UI before `onError` callbacks fire. Use a plain destructive `<Button>` and close manually on `onSuccess`. Pattern fixed in `src/app/pages/admin-users.tsx` (PR #100); same anti-pattern still present in `src/components/language-selector.tsx` (sweep-worthy follow-up).
 - **Worker test infrastructure pattern.** `@cloudflare/vitest-pool-workers` + miniflare with bindings declared inline (`bindings`, `kvNamespaces`). `Cloudflare.Env` augmented in `worker/env.d.ts` to `extends WorkerEnv` so test code is fully typed and the binding interface stays single-sourced in `worker/helpers.ts`. Tests run in-process in workerd, ~500ms for the auth matrix.
+- **The portal's API target is `bt-servant-worker`, not `bt-servant-engine`** (evening session). The env var `ENGINE_BASE_URL` is misleading — it points to `https://api.btservant.ai` which resolves to bt-servant-worker (Cloudflare Worker on Hono). bt-servant-engine (Python/FastAPI) is dormant since 2026-01-16 (last commit) — the CloudFlare Rebuild EPIC (engine #178, closed 2026-01-15) migrated all chat orchestration to the worker. Backend work for the portal lands in `bt-servant-worker`. The trusted-portal auth model previously attributed to "engine" is actually the worker's auth model — same conclusion (single shared admin token, no per-user identity on admin paths), correct repo.
+- **Brand context accents (issue #78).** Mode-editing and language-editing surfaces share a `PageHeader` and would otherwise look identical. A 3px top accent strip — Inspire blue (`oklch(0.71 0.108 226)`) for Modes, Cultivate teal (`oklch(0.78 0.054 195)`) for Languages — gives at-a-glance context. Tokens live as `--brand-modes` / `--brand-languages` in `globals.css`. Variant-prop opt-in keeps neutral consumers (Baruch, Admin Users) untouched.
