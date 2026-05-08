@@ -46,7 +46,8 @@ export default {
       return errorResponse("Not found", 404);
     }
 
-    // Admin endpoints — admin secret required, no same-origin check
+    // Admin endpoints — dual-auth (X-Admin-Secret OR session-cookie + isAdmin).
+    // handleAdmin enforces same-origin internally only on the cookie path.
     if (url.pathname.startsWith("/api/admin/")) {
       return handleAdmin(request, env, url.pathname);
     }

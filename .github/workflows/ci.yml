@@ -55,6 +55,9 @@ jobs:
       - name: Type check (TypeScript)
         run: npm run typecheck
 
+      - name: Test (Vitest worker pool)
+        run: npm test
+
       - name: Security audit
         run: npm audit --omit=dev --audit-level=moderate
 
