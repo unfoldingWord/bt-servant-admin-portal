@@ -62,13 +62,18 @@ export function LanguagesPage() {
   // never overwrites local edits.
   const [draft, setDraft] = useState("");
   const [lastSyncedDoc, setLastSyncedDoc] = useState("");
+  // lastSyncedPublished tracks the published flag we *know* the server holds,
+  // for the same reason lastSyncedDoc exists: the React Query cache lags
+  // saves we just made. Without this, an autosave that fires right after a
+  // Publish/Unpublish click reads stale `published` from the cache and the
+  // PUT silently reverts the toggle (Frank P2 review of #93).
+  const [lastSyncedPublished, setLastSyncedPublished] = useState(false);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activeLine = useActiveHeadingLine(textareaRef, draft, headings);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
 
   const serverLabel = languageQuery.data?.label;
-  const serverPublished = languageQuery.data?.published ?? false;
 
   // Re-sync from the server *only* when the selection changes — never
   // post-save. The ref tracks the language whose contents we last loaded
@@ -80,6 +85,7 @@ export function LanguagesPage() {
       syncedNameRef.current = null;
       setDraft("");
       setLastSyncedDoc("");
+      setLastSyncedPublished(false);
       return;
     }
     // Wait for the query data to arrive AND match the current selection
@@ -90,6 +96,7 @@ export function LanguagesPage() {
     if (syncedNameRef.current === selectedLanguage) return;
     setDraft(languageQuery.data.document);
     setLastSyncedDoc(languageQuery.data.document);
+    setLastSyncedPublished(languageQuery.data.published ?? false);
     syncedNameRef.current = selectedLanguage;
   }, [selectedLanguage, languageQuery.data]);
 
@@ -111,13 +118,16 @@ export function LanguagesPage() {
           body: {
             label: serverLabel,
             document: doc,
-            published: serverPublished,
+            // Read published from local state, not the React Query cache —
+            // the cache lags a just-completed Publish/Unpublish PUT, so
+            // reading from `serverPublished` here would silently revert it.
+            published: lastSyncedPublished,
           },
         },
         { onSuccess: () => setLastSyncedDoc(doc) }
       );
     },
-    [saveLanguage, selectedLanguage, serverLabel, serverPublished]
+    [lastSyncedPublished, saveLanguage, selectedLanguage, serverLabel]
   );
 
   // Auto-save when debouncedDraft diverges from what we last saved.
@@ -192,9 +202,10 @@ export function LanguagesPage() {
   const handleSetPublished = useCallback(
     (name: string, published: boolean) => {
       // Send the current draft for the selected language so an unsaved doc
-      // edit lands in the same request as the publish toggle. Bookkeep
-      // lastSyncedDoc on success so the autosave effect doesn't immediately
-      // re-fire with the same content.
+      // edit lands in the same request as the publish toggle. Bookkeep both
+      // lastSyncedDoc and lastSyncedPublished on success — without the
+      // latter, a subsequent autosave would read stale `published` from the
+      // cache and revert this toggle.
       const isSelected = name === selectedLanguage;
       const doc = isSelected ? draft : (languageQuery.data?.document ?? "");
       saveLanguage.mutate(
@@ -204,7 +215,10 @@ export function LanguagesPage() {
         },
         {
           onSuccess: () => {
-            if (isSelected) setLastSyncedDoc(doc);
+            if (isSelected) {
+              setLastSyncedDoc(doc);
+              setLastSyncedPublished(published);
+            }
           },
         }
       );
