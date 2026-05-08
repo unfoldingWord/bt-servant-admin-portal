@@ -14,6 +14,8 @@ interface UiState {
   toggleTestChat: () => void;
   selectedMode: string | null;
   setSelectedMode: (mode: string | null) => void;
+  selectedLanguage: string | null;
+  setSelectedLanguage: (language: string | null) => void;
   chatMode: string | null;
   chatModeSeeded: boolean;
   setChatMode: (mode: string | null) => void;
@@ -35,6 +37,7 @@ type InitialUiState = Pick<
   | "activeSection"
   | "testChatOpen"
   | "selectedMode"
+  | "selectedLanguage"
   | "chatMode"
   | "chatModeSeeded"
   | "testChatUserId"
@@ -66,6 +69,7 @@ const initialState: InitialUiState = {
   activeSection: "baruch",
   testChatOpen: false,
   selectedMode: null,
+  selectedLanguage: null,
   chatMode: null,
   chatModeSeeded: false,
   // Placeholder — reset() always generates a fresh UUID; this value is only
@@ -95,6 +99,7 @@ export const useUiStore = create<UiState>()((set) => ({
         : {}),
     })),
   setSelectedMode: (selectedMode) => set({ selectedMode }),
+  setSelectedLanguage: (selectedLanguage) => set({ selectedLanguage }),
   setChatMode: (chatMode) => set({ chatMode }),
   setTestChatPanelWidth: (width) => {
     const clamped = Math.max(

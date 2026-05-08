@@ -7,6 +7,7 @@ import type { Section } from "@/types/ui";
 const pathToSection: Record<string, Section> = {
   "/": "baruch",
   "/prompt-configuration": "prompt-configuration",
+  "/languages": "languages",
 };
 
 export function useSyncSection() {
