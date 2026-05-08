@@ -8,6 +8,7 @@ const pathToSection: Record<string, Section> = {
   "/": "baruch",
   "/prompt-configuration": "prompt-configuration",
   "/languages": "languages",
+  "/admin/users": "admin-users",
 };
 
 export function useSyncSection() {

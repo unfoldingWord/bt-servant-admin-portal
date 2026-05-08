@@ -2,10 +2,12 @@ import { faComments as faCommentsLight } from "@fortawesome/pro-light-svg-icons"
 import { faLanguage as faLanguageLight } from "@fortawesome/pro-light-svg-icons";
 import { faMessageBot as faMessageBotLight } from "@fortawesome/pro-light-svg-icons";
 import { faPenToSquare as faPenToSquareLight } from "@fortawesome/pro-light-svg-icons";
+import { faUsers as faUsersLight } from "@fortawesome/pro-light-svg-icons";
 import { faComments as faCommentsSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faLanguage as faLanguageSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faMessageBot as faMessageBotSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faPenToSquare as faPenToSquareSolid } from "@fortawesome/pro-solid-svg-icons";
+import { faUsers as faUsersSolid } from "@fortawesome/pro-solid-svg-icons";
 import { useNavigate } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
@@ -22,6 +24,7 @@ export function ActivityBar() {
   const testChatOpen = useUiStore((s) => s.testChatOpen);
   const toggleTestChat = useUiStore((s) => s.toggleTestChat);
   const languageRights = useAuthStore((s) => s.user?.language_rights);
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
   const canAccessLanguages = hasAnyLanguageRights(languageRights);
 
   return (
@@ -59,6 +62,18 @@ export function ActivityBar() {
           disabled={!canAccessLanguages}
           disabledLabel="No language access — contact your admin"
         />
+        {isAdmin && (
+          <ActivityBarItem
+            icon={faUsersLight}
+            activeIcon={faUsersSolid}
+            label="Manage users in your org"
+            isActive={activeSection === "admin-users"}
+            onClick={() => {
+              setActiveSection("admin-users");
+              void navigate("/admin/users");
+            }}
+          />
+        )}
         <Separator className="my-1.5 w-5 opacity-50" />
         <ActivityBarItem
           icon={faCommentsLight}
