@@ -91,6 +91,13 @@
   --editor-active: oklch(0.55 0.2 35);
   --editor-active-soft: oklch(0.55 0.2 35 / 0.2);
   --editor-active-pulse: oklch(0.55 0.2 35 / 0.16);
+
+  /* Brand context accents (issue #78) — Inspire blue for Modes, Cultivate
+     teal for Languages. Used for subtle context differentiation between
+     mode-editing and language-editing surfaces so authors don't confuse
+     which document they're editing. */
+  --brand-modes: oklch(0.71 0.108 226);
+  --brand-languages: oklch(0.78 0.054 195);
 }
 
 .dark {
@@ -138,6 +145,9 @@
   --editor-active: oklch(0.72 0.18 35);
   --editor-active-soft: oklch(0.72 0.18 35 / 0.22);
   --editor-active-pulse: oklch(0.72 0.18 35 / 0.18);
+
+  --brand-modes: oklch(0.74 0.13 225);
+  --brand-languages: oklch(0.8 0.07 195);
 }
 
 @layer base {
