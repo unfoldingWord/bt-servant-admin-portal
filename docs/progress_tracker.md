@@ -43,7 +43,7 @@ This-repo sub-issues:
 - [x] **#75** — Markdown editor + TOC component (shipped 2026-05-07, PR #85)
 - [x] **#79** — Languages CRUD API (shipped 2026-05-08, PR #92 at `91da4c5`)
 - [x] **#73** — Languages sidebar tab + editor integration (shipped 2026-05-08, PR #93 at `c5dc94a`)
-- [x] **#80** — Language-shepherd permissions (shipped 2026-05-08, PR #95 at `b349707`; 4 review rounds with Frank)
+- [x] **#80** — Language-shepherd permissions (shipped 2026-05-08, PR #95 at `b349707`; 5 review rounds with Frank)
 - [x] **#96** — Users admin UI for assigning rights (shipped 2026-05-08, follow-up to #80; backend PR #97 at `8a1c345`, frontend PR #100 at `e119596`)
 - [ ] #74 — Pre-load structural heading scaffold for new language documents (now has the editor integration point from #73)
 - [ ] #76 — Replace six-box mode editor with markdown editor + TOC (depends on #75 + engine #204)
@@ -128,7 +128,7 @@ Engine repo (`unfoldingWord/bt-servant-engine`):
 
 **Completed:**
 
-- **PR #95 / #80 — Language-shepherd permissions (`language_rights`).** Worker-side defense-in-depth → sole authorization gate after architectural redesign. Frontend gating: activity-bar tab grays out + tooltips when rights is `[]`, dropdown filters via `filterAuthorizedLanguages`, `LanguageForbiddenError` typed exception surfaces inline (per #80 AC, not toast), auto-deselects persisted-but-now-forbidden selections, `NoAccessState` for URL-hacked navigation. Back-compat default: `undefined` → full access so existing pre-permission users aren't locked out. **Four Frank review rounds**:
+- **PR #95 / #80 — Language-shepherd permissions (`language_rights`).** Worker-side defense-in-depth → sole authorization gate after architectural redesign. Frontend gating: activity-bar tab grays out + tooltips when rights is `[]`, dropdown filters via `filterAuthorizedLanguages`, `LanguageForbiddenError` typed exception surfaces inline (per #80 AC, not toast), auto-deselects persisted-but-now-forbidden selections, `NoAccessState` for URL-hacked navigation. Back-compat default: `undefined` → full access so existing pre-permission users aren't locked out. **Five Frank review rounds**:
   - **Round 1** — initial implementation. Filed engine companion `bt-servant-engine#207` under the wrong assumption that engine controls session payloads.
   - **Round 2 (P1+P2)** — `language_rights` had no source path (engine doesn't populate sessions; portal owns auth via `AUTH_KV`); delete 403s weren't surfaced inline. Investigated engine codebase via Explore agent: confirmed engine is a **trusted-portal model** (single shared `ADMIN_API_TOKEN`, zero user identity on admin paths). Closed engine #207 wontfix-by-design. Re-implemented with `StoredUser.language_rights` as the source: portal owns rights end-to-end, KV-backed, threaded through `worker/admin.ts createUser/updateUser/safeUser` → `handleLogin sessionData` → `AuthUser`. Filed follow-up #96 for the missing assignment UX.
   - **Round 3 (P1)** — stale sessions retained stale rights for up to 7 days. `validateSession` was reading the cached payload from `session:${id}` and skipping a live read on the `user:${email}` record. Fixed: hydrate `isAdmin` + `language_rights` from `StoredUser` on every request.
@@ -162,7 +162,8 @@ Engine repo (`unfoldingWord/bt-servant-engine`):
 
 ## Known Issues
 
-- None
+- **#99 — Admin password-reset doesn't invalidate target user's existing sessions.** `PUT /api/admin/users/{email}` accepts a `password` field that updates the hash but leaves the user's existing session records valid until expiry. Pre-existing on the X-Admin-Secret CLI path; pulled the password-reset field from the `AdminUserEditDialog` (PR #100) until this is fixed.
+- **`AlertDialogAction` race in `src/components/language-selector.tsx`** (no issue filed). Delete + Unpublish actions use Radix `AlertDialogAction`, which auto-closes the dialog on click — async errors fire after the dialog is gone, so they never render. Same anti-pattern fixed in `admin-users.tsx` (PR #100, fff8366); the language-selector instance is sweep-worthy when next visiting that file.
 
 ## Architectural Decisions
 
