@@ -2,9 +2,11 @@ import type { Env } from "./helpers";
 import { errorResponse } from "./helpers";
 import type { LanguageRights, SessionData } from "./types";
 
-// Worker-side defense-in-depth check. `undefined` is back-compat until
-// bt-servant-engine#207 lands — treat as full access. Engine remains the
-// source of truth.
+// Sole authorization gate for per-language access. Engine is a
+// trusted-portal model (single shared ADMIN_API_TOKEN, no user identity
+// on admin paths), so this check is the only thing standing between a
+// portal user and an engine call. `undefined` is the back-compat default
+// for users predating language_rights — treated as full access.
 function hasLanguageRights(
   rights: LanguageRights | undefined,
   name: string
