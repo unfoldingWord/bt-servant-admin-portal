@@ -74,12 +74,15 @@ export async function validateSession(
   });
   if (!data) return null;
 
-  // Hydrate live authorization fields from the user record so revocations
-  // take effect on the next request rather than waiting for the 7-day
-  // session to expire. Without this, an admin demoting a user or trimming
-  // their language_rights wouldn't take effect until logout/expiry — the
-  // boring kind of bug security incidents enjoy. Also serves as the
-  // "user still exists" check (returns null + clears session if deleted).
+  // Hydrate from the live user record so admin changes (org moves,
+  // privilege grants/revocations, renames) take effect on the next
+  // request rather than waiting for the 7-day session to expire. Only
+  // userId and createdAt are session-immutable; everything else —
+  // including org, which is the authorization boundary on every engine
+  // path — is derived live. Without this, a user moved between orgs
+  // could keep operating against the old org until session expiry, with
+  // newly granted privileges to boot. Email is the KV key so a stale
+  // email self-corrects via the user-not-found branch below.
   const user = await env.AUTH_KV.get<StoredUser>(`user:${data.email}`, {
     type: "json",
   });
@@ -89,7 +92,11 @@ export async function validateSession(
   }
 
   return {
-    ...data,
+    userId: data.userId,
+    createdAt: data.createdAt,
+    email: user.email,
+    name: user.name,
+    org: user.org,
     isAdmin: user.isAdmin ?? false,
     language_rights: user.language_rights,
   };
