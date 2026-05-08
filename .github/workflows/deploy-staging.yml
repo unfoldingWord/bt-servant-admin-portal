@@ -60,6 +60,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Type check before build — vite strips types, so a tsc error would not
+      # fail `npm run build` on its own. Per Frank's review of #89: a merge
+      # commit could land on main with a type error if branch protection
+      # ever lets one through, and we don't want staging to deploy that.
+      - name: Type check
+        run: npm run typecheck
+
       - name: Build application
         run: npm run build
 
