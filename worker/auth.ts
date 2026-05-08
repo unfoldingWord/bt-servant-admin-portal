@@ -148,6 +148,7 @@ export async function handleLogin(
       name: user.name,
       org: user.org,
       isAdmin: user.isAdmin ?? false,
+      language_rights: sessionData.language_rights,
     },
   });
   response.headers.set("Set-Cookie", sessionCookie(sessionId, request.url));
@@ -189,6 +190,7 @@ export async function handleMe(request: Request, env: Env): Promise<Response> {
       name: session.name,
       org: session.org,
       isAdmin: session.isAdmin ?? false,
+      language_rights: session.language_rights,
     },
   });
 }

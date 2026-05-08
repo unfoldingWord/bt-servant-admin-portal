@@ -1,6 +1,17 @@
 import type { Env } from "./helpers";
 import { errorResponse } from "./helpers";
-import type { SessionData } from "./types";
+import type { LanguageRights, SessionData } from "./types";
+
+// Worker-side defense-in-depth check. `undefined` is back-compat until
+// bt-servant-engine#207 lands — treat as full access. Engine remains the
+// source of truth.
+function hasLanguageRights(
+  rights: LanguageRights | undefined,
+  name: string
+): boolean {
+  if (rights === undefined || rights === "*") return true;
+  return rights.includes(name);
+}
 
 const UUID_V4_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -84,6 +95,9 @@ export async function handleConfig(
   const languageMatch = pathname.match(/^\/api\/config\/languages\/(.+)$/);
   if (languageMatch?.[1]) {
     const languageName = decodeURIComponent(languageMatch[1]);
+    if (!hasLanguageRights(session.language_rights, languageName)) {
+      return errorResponse("Forbidden", 403);
+    }
     return proxyToEngine(
       request,
       env,

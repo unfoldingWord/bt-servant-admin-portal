@@ -4,6 +4,19 @@ const SAME_ORIGIN_HEADERS = {
   "X-Requested-With": "XMLHttpRequest",
 } as const;
 
+// Thrown when the worker (or engine) returns 403 on a language operation.
+// Callers should catch this to render an inline permission message rather
+// than the generic save-failed error.
+export class LanguageForbiddenError extends Error {
+  constructor(
+    public readonly languageName: string,
+    public readonly operation: "read" | "write" | "delete"
+  ) {
+    super(`Forbidden: ${operation} on language "${languageName}"`);
+    this.name = "LanguageForbiddenError";
+  }
+}
+
 export async function listLanguages(
   signal?: AbortSignal
 ): Promise<OrgLanguages> {
@@ -29,6 +42,9 @@ export async function getLanguage(
     signal,
   });
 
+  if (res.status === 403) {
+    throw new LanguageForbiddenError(name, "read");
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`Failed to load language (${res.status}): ${body}`);
@@ -60,6 +76,9 @@ export async function putLanguage(
     signal,
   });
 
+  if (res.status === 403) {
+    throw new LanguageForbiddenError(name, "write");
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Failed to save language (${res.status}): ${text}`);
@@ -78,6 +97,9 @@ export async function deleteLanguage(
     signal,
   });
 
+  if (res.status === 403) {
+    throw new LanguageForbiddenError(name, "delete");
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`Failed to delete language (${res.status}): ${body}`);
