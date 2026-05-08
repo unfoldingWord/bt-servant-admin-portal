@@ -74,14 +74,25 @@ export async function validateSession(
   });
   if (!data) return null;
 
-  // Ensure the user still exists (e.g. not deleted by admin)
-  const userExists = await env.AUTH_KV.get(`user:${data.email}`);
-  if (!userExists) {
+  // Hydrate live authorization fields from the user record so revocations
+  // take effect on the next request rather than waiting for the 7-day
+  // session to expire. Without this, an admin demoting a user or trimming
+  // their language_rights wouldn't take effect until logout/expiry — the
+  // boring kind of bug security incidents enjoy. Also serves as the
+  // "user still exists" check (returns null + clears session if deleted).
+  const user = await env.AUTH_KV.get<StoredUser>(`user:${data.email}`, {
+    type: "json",
+  });
+  if (!user) {
     await env.AUTH_KV.delete(`session:${sessionId}`);
     return null;
   }
 
-  return data;
+  return {
+    ...data,
+    isAdmin: user.isAdmin ?? false,
+    language_rights: user.language_rights,
+  };
 }
 
 // ---------------------------------------------------------------------------
