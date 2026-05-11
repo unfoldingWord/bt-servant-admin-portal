@@ -2,11 +2,13 @@ import { faComments as faCommentsLight } from "@fortawesome/pro-light-svg-icons"
 import { faLanguage as faLanguageLight } from "@fortawesome/pro-light-svg-icons";
 import { faMessageBot as faMessageBotLight } from "@fortawesome/pro-light-svg-icons";
 import { faPenToSquare as faPenToSquareLight } from "@fortawesome/pro-light-svg-icons";
+import { faSliders as faSlidersLight } from "@fortawesome/pro-light-svg-icons";
 import { faUsers as faUsersLight } from "@fortawesome/pro-light-svg-icons";
 import { faComments as faCommentsSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faLanguage as faLanguageSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faMessageBot as faMessageBotSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faPenToSquare as faPenToSquareSolid } from "@fortawesome/pro-solid-svg-icons";
+import { faSliders as faSlidersSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faUsers as faUsersSolid } from "@fortawesome/pro-solid-svg-icons";
 import { useNavigate } from "react-router";
 
@@ -43,11 +45,11 @@ export function ActivityBar() {
         <ActivityBarItem
           icon={faPenToSquareLight}
           activeIcon={faPenToSquareSolid}
-          label="Manually configure your BT Servant agent"
-          isActive={activeSection === "prompt-configuration"}
+          label="Edit prompt modes"
+          isActive={activeSection === "modes"}
           onClick={() => {
-            setActiveSection("prompt-configuration");
-            void navigate("/prompt-configuration");
+            setActiveSection("modes");
+            void navigate("/modes");
           }}
         />
         <ActivityBarItem
@@ -61,6 +63,16 @@ export function ActivityBar() {
           }}
           disabled={!canAccessLanguages}
           disabledLabel="No language access — contact your admin"
+        />
+        <ActivityBarItem
+          icon={faSlidersLight}
+          activeIcon={faSlidersSolid}
+          label="Org-wide prompt overrides"
+          isActive={activeSection === "prompt-configuration"}
+          onClick={() => {
+            setActiveSection("prompt-configuration");
+            void navigate("/prompt-configuration");
+          }}
         />
         {isAdmin && (
           <ActivityBarItem

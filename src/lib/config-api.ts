@@ -87,6 +87,17 @@ export async function listModes(signal?: AbortSignal): Promise<OrgModes> {
   return (await res.json()) as OrgModes;
 }
 
+function unwrapModeResponse(data: Record<string, unknown>): PromptMode {
+  // Worker wraps in `{ org, mode: { name, label?, description?, published?,
+  // document, format, originalSlots? }, message? }`. We ignore `format` and
+  // `originalSlots` — both are diagnostic only and not part of the portal's
+  // contract.
+  if ("mode" in data && typeof data.mode === "object" && data.mode !== null) {
+    return data.mode as PromptMode;
+  }
+  return data as unknown as PromptMode;
+}
+
 export async function getMode(
   name: string,
   signal?: AbortSignal
@@ -101,13 +112,7 @@ export async function getMode(
     throw new Error(`Failed to load mode (${res.status}): ${body}`);
   }
 
-  const data = (await res.json()) as Record<string, unknown>;
-
-  // Engine API wraps in { org, mode: { label, description, overrides } }
-  if ("mode" in data && typeof data.mode === "object") {
-    return data.mode as PromptMode;
-  }
-  return data as unknown as PromptMode;
+  return unwrapModeResponse((await res.json()) as Record<string, unknown>);
 }
 
 export async function putMode(
@@ -115,7 +120,7 @@ export async function putMode(
   body: {
     label?: string;
     description?: string;
-    overrides: PromptOverrides;
+    document: string;
     published?: boolean;
   },
   signal?: AbortSignal
@@ -132,7 +137,10 @@ export async function putMode(
     throw new Error(`Failed to save mode (${res.status}): ${text}`);
   }
 
-  return (await res.json()) as PromptMode;
+  // Unwrap `{ org, mode, message }` envelope — same shape as `putLanguage`.
+  // The pre-#213 cast-as-`PromptMode` had a latent bug where `result.name`
+  // was undefined on the wrapped response.
+  return unwrapModeResponse((await res.json()) as Record<string, unknown>);
 }
 
 export async function deleteMode(

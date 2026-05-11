@@ -42,11 +42,18 @@ export const SLOT_DESCRIPTIONS: Record<PromptSlot, string> = {
 
 export const MAX_SLOT_LENGTH = 8000;
 
+// Modes are stored as a single markdown document on the worker (worker
+// PR #213 / issue #200). The portal sends and receives markdown only;
+// the worker still accepts legacy slotted PUTs for back-compat but the
+// portal does not (per portal issue #82 AC). Legacy slot types
+// (`PromptOverrides`, `PROMPT_SLOTS`, etc.) remain in this file because
+// org-level prompt overrides (`/api/config/prompt-overrides`) are a
+// separate endpoint that has not been migrated.
 export interface PromptMode {
   name: string;
   label?: string;
   description?: string;
-  overrides: PromptOverrides;
+  document: string;
   published?: boolean;
 }
 
