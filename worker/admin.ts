@@ -90,6 +90,22 @@ async function requireAdminAuth(
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Centralized password policy. Mirrors `handleChangePassword` in auth.ts so
+// the create / admin-reset / self-change paths all agree on minimum length.
+// Returns the error message to surface, or null on pass.
+const PASSWORD_MIN_LENGTH = 8;
+const PASSWORD_MAX_LENGTH = 128;
+
+function validatePasswordPolicy(password: string): string | null {
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return `Password must be at least ${PASSWORD_MIN_LENGTH} characters`;
+  }
+  if (password.length > PASSWORD_MAX_LENGTH) {
+    return `Password must be at most ${PASSWORD_MAX_LENGTH} characters`;
+  }
+  return null;
+}
+
 function safeUser(user: StoredUser) {
   return {
     id: user.id,
@@ -143,6 +159,11 @@ async function createUser(
       `Cannot create user outside your org (${scope.org})`,
       403
     );
+  }
+
+  const passwordError = validatePasswordPolicy(password);
+  if (passwordError) {
+    return errorResponse(passwordError, 400);
   }
 
   const rightsResult = parseLanguageRights(body.language_rights);
@@ -278,7 +299,14 @@ async function updateUser(
   if (body.isAdmin !== undefined) {
     user.isAdmin = body.isAdmin;
   }
-  if (body.password) {
+  // `!== undefined` (not truthy) so `{ password: "" }` falls into the
+  // policy check and rejects with "at least 8 characters" rather than
+  // silently no-op'ing and returning success.
+  if (body.password !== undefined) {
+    const passwordError = validatePasswordPolicy(body.password);
+    if (passwordError) {
+      return errorResponse(passwordError, 400);
+    }
     user.salt = generateSalt();
     user.passwordHash = await hashPassword(body.password, user.salt);
   }

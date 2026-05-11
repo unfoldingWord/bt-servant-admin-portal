@@ -183,10 +183,12 @@ export function ModeSelector({
           {showDrafts ? "Drafts shown" : "Drafts hidden"}
         </Button>
 
-        <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
-          <Plus className="mr-1.5 size-3.5" />
-          New Mode
-        </Button>
+        {isAdmin && (
+          <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
+            <Plus className="mr-1.5 size-3.5" />
+            New Mode
+          </Button>
+        )}
 
         {selectedMode !== null && selectedModeData && (
           <div className="border-border flex items-center gap-2 sm:border-l sm:pl-3">
@@ -266,55 +268,57 @@ export function ModeSelector({
                 </Button>
               ))}
 
-            <AlertDialog
-              open={deleteOpen}
-              onOpenChange={(next) => {
-                setDeleteOpen(next);
-                if (!next) setDeleteError(null);
-              }}
-            >
-              <AlertDialogTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={isDeleting}
-                  className="text-destructive hover:text-destructive"
-                >
-                  <Trash2 className="mr-1.5 size-3.5" />
-                  Delete
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete mode</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Are you sure you want to delete{" "}
-                    <span className="text-foreground font-medium">
-                      &ldquo;{selectedMode}&rdquo;
-                    </span>
-                    ? This action cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                {deleteError && (
-                  <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
-                    {deleteError}
-                  </p>
-                )}
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={isDeleting}>
-                    Cancel
-                  </AlertDialogCancel>
-                  {/* Plain Button — see comment in Unpublish dialog above. */}
+            {isAdmin && (
+              <AlertDialog
+                open={deleteOpen}
+                onOpenChange={(next) => {
+                  setDeleteOpen(next);
+                  if (!next) setDeleteError(null);
+                }}
+              >
+                <AlertDialogTrigger asChild>
                   <Button
-                    variant="destructive"
-                    onClick={handleConfirmDelete}
+                    variant="ghost"
+                    size="sm"
                     disabled={isDeleting}
+                    className="text-destructive hover:text-destructive"
                   >
-                    {isDeleting ? "Deleting…" : "Delete"}
+                    <Trash2 className="mr-1.5 size-3.5" />
+                    Delete
                   </Button>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete mode</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Are you sure you want to delete{" "}
+                      <span className="text-foreground font-medium">
+                        &ldquo;{selectedMode}&rdquo;
+                      </span>
+                      ? This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  {deleteError && (
+                    <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+                      {deleteError}
+                    </p>
+                  )}
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isDeleting}>
+                      Cancel
+                    </AlertDialogCancel>
+                    {/* Plain Button — see comment in Unpublish dialog above. */}
+                    <Button
+                      variant="destructive"
+                      onClick={handleConfirmDelete}
+                      disabled={isDeleting}
+                    >
+                      {isDeleting ? "Deleting…" : "Delete"}
+                    </Button>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </div>
         )}
       </div>

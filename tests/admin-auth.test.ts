@@ -440,6 +440,180 @@ describe("admin auth — session cookie (org scope)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Password policy
+// ---------------------------------------------------------------------------
+
+describe("admin password policy", () => {
+  it("create user with <8 char password → 400 (X-Admin-Secret path)", async () => {
+    const { status, body } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: {
+        email: "newuser@acme.com",
+        password: "short",
+        name: "New",
+        org: "acme",
+      },
+    });
+
+    expect(status).toBe(400);
+    expect((body as { error: string }).error).toMatch(/at least 8/);
+    // The user should not have been created
+    const record = await env.AUTH_KV.get("user:newuser@acme.com");
+    expect(record).toBeNull();
+  });
+
+  it("create user with 8-char password → 201 (X-Admin-Secret path)", async () => {
+    const { status } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: {
+        email: "newuser@acme.com",
+        password: "exactly8",
+        name: "New",
+        org: "acme",
+      },
+    });
+
+    expect(status).toBe(201);
+  });
+
+  it("create user with <8 char password → 400 (cookie path)", async () => {
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const session = await seedSession(alice);
+
+    const { status } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: {
+        email: "newuser@acme.com",
+        password: "short",
+        name: "New",
+        org: "acme",
+      },
+    });
+
+    expect(status).toBe(400);
+  });
+
+  it("update user password with <8 chars → 400", async () => {
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    const session = await seedSession(alice);
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${bob.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: { password: "short" },
+    });
+
+    expect(status).toBe(400);
+    expect((body as { error: string }).error).toMatch(/at least 8/);
+  });
+
+  it("update user with empty-string password → 400 (not silent no-op)", async () => {
+    // `if (body.password)` is falsy on "" and would skip validation entirely,
+    // returning 200 with no password change. The fix uses
+    // `body.password !== undefined` so empty string hits the policy check.
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    const originalHash = bob.passwordHash;
+    const session = await seedSession(alice);
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${bob.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: { password: "" },
+    });
+
+    expect(status).toBe(400);
+    expect((body as { error: string }).error).toMatch(/at least 8/);
+    // Stored hash must be unchanged.
+    const after = await env.AUTH_KV.get<StoredUser>("user:bob@acme.com", {
+      type: "json",
+    });
+    expect(after?.passwordHash).toBe(originalHash);
+  });
+
+  it("create user with >128 char password → 400", async () => {
+    const longPassword = "x".repeat(129);
+    const { status, body } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: {
+        email: "newuser@acme.com",
+        password: longPassword,
+        name: "New",
+        org: "acme",
+      },
+    });
+
+    expect(status).toBe(400);
+    expect((body as { error: string }).error).toMatch(/at most 128/);
+  });
+
+  it("cross-org POST with short password → 403 (org-scope check runs first)", async () => {
+    // Existing test in this file relies on this ordering — if we ever
+    // re-order the validations, the cross-org-403 test would silently start
+    // returning 400 (password-too-short) instead. Pin the precedence.
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const session = await seedSession(alice);
+
+    const { status } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: {
+        email: "newuser@other.com",
+        password: "short",
+        name: "New",
+        org: "other",
+      },
+    });
+
+    expect(status).toBe(403);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Mixed paths
 // ---------------------------------------------------------------------------
 

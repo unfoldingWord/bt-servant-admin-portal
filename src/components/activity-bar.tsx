@@ -42,16 +42,18 @@ export function ActivityBar() {
             void navigate("/");
           }}
         />
-        <ActivityBarItem
-          icon={faPenToSquareLight}
-          activeIcon={faPenToSquareSolid}
-          label="Edit prompt modes"
-          isActive={activeSection === "modes"}
-          onClick={() => {
-            setActiveSection("modes");
-            void navigate("/modes");
-          }}
-        />
+        {isAdmin && (
+          <ActivityBarItem
+            icon={faPenToSquareLight}
+            activeIcon={faPenToSquareSolid}
+            label="Edit prompt modes"
+            isActive={activeSection === "modes"}
+            onClick={() => {
+              setActiveSection("modes");
+              void navigate("/modes");
+            }}
+          />
+        )}
         <ActivityBarItem
           icon={faLanguageLight}
           activeIcon={faLanguageSolid}
@@ -64,16 +66,18 @@ export function ActivityBar() {
           disabled={!canAccessLanguages}
           disabledLabel="No language access — contact your admin"
         />
-        <ActivityBarItem
-          icon={faSlidersLight}
-          activeIcon={faSlidersSolid}
-          label="Org-wide prompt overrides"
-          isActive={activeSection === "prompt-configuration"}
-          onClick={() => {
-            setActiveSection("prompt-configuration");
-            void navigate("/prompt-configuration");
-          }}
-        />
+        {isAdmin && (
+          <ActivityBarItem
+            icon={faSlidersLight}
+            activeIcon={faSlidersSolid}
+            label="Org-wide prompt overrides"
+            isActive={activeSection === "prompt-configuration"}
+            onClick={() => {
+              setActiveSection("prompt-configuration");
+              void navigate("/prompt-configuration");
+            }}
+          />
+        )}
         {isAdmin && (
           <ActivityBarItem
             icon={faUsersLight}
