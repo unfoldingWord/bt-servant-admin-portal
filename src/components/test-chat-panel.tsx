@@ -42,6 +42,11 @@ export function TestChatPanel() {
   const chatMode = useUiStore((s) => s.chatMode);
   const setChatMode = useUiStore((s) => s.setChatMode);
   const testChatUserId = useUiStore((s) => s.testChatUserId);
+  // Mirrors the active editor-tab selections; the chip below the header
+  // surfaces these so the user knows exactly which trigger is about to be
+  // prepended on the next send (#81).
+  const selectedMode = useUiStore((s) => s.selectedMode);
+  const selectedLanguage = useUiStore((s) => s.selectedLanguage);
   const theme = useThemeStore((s) => s.theme);
   const modesQuery = useModes();
   const { mutate: setUserModeMutate } = useSetUserMode();
@@ -191,6 +196,11 @@ export function TestChatPanel() {
         </div>
       </div>
 
+      {/* Active-trigger strip — shows exactly what will be prepended to the
+          next outgoing message as a per-turn override. Reflects the editor
+          tabs' current selection live. */}
+      <ActiveTriggerStrip mode={selectedMode} language={selectedLanguage} />
+
       {/* Messages area */}
       <div
         ref={scrollRef}
@@ -289,6 +299,33 @@ export function TestChatPanel() {
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+interface ActiveTriggerStripProps {
+  mode: string | null;
+  language: string | null;
+}
+
+function ActiveTriggerStrip({ mode, language }: ActiveTriggerStripProps) {
+  const hasOverride = mode !== null || language !== null;
+  return (
+    <div className="border-border/50 bg-muted/40 flex h-7 shrink-0 items-center gap-2 border-b px-4">
+      <span className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+        Active
+      </span>
+      {hasOverride ? (
+        <code className="text-foreground/80 font-mono text-xs">
+          {mode !== null && <span>#{mode}</span>}
+          {mode !== null && language !== null && " "}
+          {language !== null && <span>@{language}</span>}
+        </code>
+      ) : (
+        <span className="text-muted-foreground text-xs italic">
+          Default — no override
+        </span>
+      )}
     </div>
   );
 }
