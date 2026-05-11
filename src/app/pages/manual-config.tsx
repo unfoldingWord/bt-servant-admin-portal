@@ -86,17 +86,18 @@ export function ManualConfigPage() {
   );
 
   const handleSetPublished = useCallback(
-    (name: string, published: boolean) => {
-      setModePublished.mutate({ name, published });
+    async (name: string, published: boolean) => {
+      // mutateAsync so the selector's destructive-confirmation dialog can
+      // await + render inline errors (#102).
+      await setModePublished.mutateAsync({ name, published });
     },
     [setModePublished]
   );
 
   const handleDeleteMode = useCallback(
-    (name: string) => {
-      deleteMode.mutate(name, {
-        onSuccess: () => setSelectedMode(null),
-      });
+    async (name: string) => {
+      await deleteMode.mutateAsync(name);
+      setSelectedMode(null);
     },
     [deleteMode, setSelectedMode]
   );

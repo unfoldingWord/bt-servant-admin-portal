@@ -3,10 +3,10 @@ import { faLayerGroup } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Eye, EyeOff, Plus, Send, SendHorizontal, Trash2 } from "lucide-react";
 
+import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import type { OrgModes, PromptMode } from "@/types/prompt-override";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -34,8 +34,11 @@ interface ModeSelectorProps {
   selectedMode: string | null;
   onSelectMode: (mode: string | null) => void;
   onCreateMode: (name: string, label: string, description: string) => void;
-  onDeleteMode: (name: string) => void;
-  onSetPublished: (name: string, published: boolean) => void;
+  /** Must return a promise that rejects on error — the destructive
+      confirmation dialogs render inline error UI on the rejection path
+      and stay open so the user can read it (#102). */
+  onDeleteMode: (name: string) => Promise<void>;
+  onSetPublished: (name: string, published: boolean) => Promise<void>;
   isCreating: boolean;
   isDeleting: boolean;
   isSettingPublished: boolean;
@@ -66,6 +69,35 @@ export function ModeSelector({
   const [newName, setNewName] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [newDescription, setNewDescription] = useState("");
+
+  // Destructive-confirmation dialogs are controlled so we can keep them
+  // open on async failure and render the error inline (#102). Closing on
+  // success happens in the handlers below; the open-state setter is also
+  // wired to clear the per-dialog error when the user dismisses.
+  const [unpublishOpen, setUnpublishOpen] = useState(false);
+  const [unpublishError, setUnpublishError] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleConfirmUnpublish = useCallback(() => {
+    if (selectedMode === null) return;
+    return runConfirmedAction(
+      () => onSetPublished(selectedMode, false),
+      setUnpublishError,
+      () => setUnpublishOpen(false),
+      "Failed to unpublish mode."
+    );
+  }, [onSetPublished, selectedMode]);
+
+  const handleConfirmDelete = useCallback(() => {
+    if (selectedMode === null) return;
+    return runConfirmedAction(
+      () => onDeleteMode(selectedMode),
+      setDeleteError,
+      () => setDeleteOpen(false),
+      "Failed to delete mode."
+    );
+  }, [onDeleteMode, selectedMode]);
 
   const modes = modesData?.modes ?? [];
   const selectedModeData = modes.find((m) => m.name === selectedMode) ?? null;
@@ -167,7 +199,13 @@ export function ModeSelector({
 
             {isAdmin &&
               (selectedIsPublished ? (
-                <AlertDialog>
+                <AlertDialog
+                  open={unpublishOpen}
+                  onOpenChange={(next) => {
+                    setUnpublishOpen(next);
+                    if (!next) setUnpublishError(null);
+                  }}
+                >
                   <AlertDialogTrigger asChild>
                     <Button
                       variant="ghost"
@@ -186,13 +224,25 @@ export function ModeSelector({
                         Admins will still be able to see and edit it as a draft.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
+                    {unpublishError && (
+                      <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+                        {unpublishError}
+                      </p>
+                    )}
                     <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={() => onSetPublished(selectedMode, false)}
+                      <AlertDialogCancel disabled={isSettingPublished}>
+                        Cancel
+                      </AlertDialogCancel>
+                      {/* Plain Button — AlertDialogAction auto-closes the
+                          dialog before onError can render the inline message
+                          (#102). Close happens manually in
+                          handleConfirmUnpublish on success. */}
+                      <Button
+                        onClick={handleConfirmUnpublish}
+                        disabled={isSettingPublished}
                       >
-                        Unpublish
-                      </AlertDialogAction>
+                        {isSettingPublished ? "Unpublishing…" : "Unpublish"}
+                      </Button>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
@@ -201,14 +251,22 @@ export function ModeSelector({
                   variant="ghost"
                   size="sm"
                   disabled={isSettingPublished}
-                  onClick={() => onSetPublished(selectedMode, true)}
+                  onClick={() => {
+                    void onSetPublished(selectedMode, true);
+                  }}
                 >
                   <Send className="mr-1.5 size-3.5" />
                   Publish
                 </Button>
               ))}
 
-            <AlertDialog>
+            <AlertDialog
+              open={deleteOpen}
+              onOpenChange={(next) => {
+                setDeleteOpen(next);
+                if (!next) setDeleteError(null);
+              }}
+            >
               <AlertDialogTrigger asChild>
                 <Button
                   variant="ghost"
@@ -231,14 +289,23 @@ export function ModeSelector({
                     ? This action cannot be undone.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
+                {deleteError && (
+                  <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+                    {deleteError}
+                  </p>
+                )}
                 <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
+                  <AlertDialogCancel disabled={isDeleting}>
+                    Cancel
+                  </AlertDialogCancel>
+                  {/* Plain Button — see comment in Unpublish dialog above. */}
+                  <Button
                     variant="destructive"
-                    onClick={() => onDeleteMode(selectedMode)}
+                    onClick={handleConfirmDelete}
+                    disabled={isDeleting}
                   >
-                    Delete
-                  </AlertDialogAction>
+                    {isDeleting ? "Deleting…" : "Delete"}
+                  </Button>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>

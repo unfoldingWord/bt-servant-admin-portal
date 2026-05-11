@@ -3,12 +3,12 @@ import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { ChevronDown, ChevronRight, Pin, Search, Trash2 } from "lucide-react";
 
+import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import { cn } from "@/lib/utils";
 import { useDeleteUserMemory, useUserMemory } from "@/hooks/use-user-memory";
 import type { MemoryEntry, MemoryResponse } from "@/types/memory";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -192,42 +192,67 @@ interface ClearMemoryButtonProps {
 
 function ClearMemoryButton({ userId }: ClearMemoryButtonProps) {
   const deleteMutation = useDeleteUserMemory();
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleConfirm = useCallback(
+    () =>
+      runConfirmedAction(
+        () => deleteMutation.mutateAsync(userId),
+        setError,
+        () => setOpen(false),
+        "Failed to clear memory."
+      ),
+    [deleteMutation, userId]
+  );
 
   return (
-    <div className="space-y-2">
-      <AlertDialog>
-        <AlertDialogTrigger asChild>
-          <Button variant="destructive" size="sm">
-            <Trash2 className="mr-1 size-3" />
-            Clear Memory
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setError(null);
+      }}
+    >
+      <AlertDialogTrigger asChild>
+        <Button variant="destructive" size="sm">
+          <Trash2 className="mr-1 size-3" />
+          Clear Memory
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Clear all memory?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This will permanently delete all memory entries for this user. This
+            action cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && (
+          <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+            {error}
+          </p>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleteMutation.isPending}>
+            Cancel
+          </AlertDialogCancel>
+          {/*
+            Plain Button (not AlertDialogAction) — Radix's Action closes the
+            dialog on click, which dismisses the inline error before the
+            async mutation's onError can render it. We close manually in
+            handleConfirm's success branch instead (#102).
+          */}
+          <Button
+            variant="destructive"
+            onClick={handleConfirm}
+            disabled={deleteMutation.isPending}
+          >
+            {deleteMutation.isPending ? "Clearing..." : "Clear Memory"}
           </Button>
-        </AlertDialogTrigger>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Clear all memory?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete all memory entries for this user.
-              This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => deleteMutation.mutate(userId)}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? "Clearing..." : "Clear Memory"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      {deleteMutation.isError && (
-        <p className="text-destructive text-xs">
-          Failed to clear memory. Please try again.
-        </p>
-      )}
-    </div>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

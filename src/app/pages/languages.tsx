@@ -241,39 +241,33 @@ export function LanguagesPage() {
   );
 
   const handleSetPublished = useCallback(
-    (name: string, published: boolean) => {
+    async (name: string, published: boolean) => {
       // Send the current draft for the selected language so an unsaved doc
       // edit lands in the same request as the publish toggle. Bookkeep both
       // lastSyncedDoc and lastSyncedPublished on success — without the
       // latter, a subsequent autosave would read stale `published` from the
       // cache and revert this toggle.
+      //
+      // mutateAsync so the selector's destructive-confirmation dialog can
+      // await + render inline errors (#102).
       const isSelected = name === selectedLanguage;
       const doc = isSelected ? draft : (languageQuery.data?.document ?? "");
-      saveLanguage.mutate(
-        {
-          name,
-          body: { label: serverLabel, document: doc, published },
-        },
-        {
-          onSuccess: () => {
-            if (isSelected) {
-              setLastSyncedDoc(doc);
-              setLastSyncedPublished(published);
-            }
-          },
-        }
-      );
+      await saveLanguage.mutateAsync({
+        name,
+        body: { label: serverLabel, document: doc, published },
+      });
+      if (isSelected) {
+        setLastSyncedDoc(doc);
+        setLastSyncedPublished(published);
+      }
     },
     [draft, languageQuery.data, saveLanguage, selectedLanguage, serverLabel]
   );
 
   const handleDeleteLanguage = useCallback(
-    (name: string) => {
-      deleteLanguage.mutate(name, {
-        onSuccess: () => {
-          if (name === selectedLanguage) setSelectedLanguage(null);
-        },
-      });
+    async (name: string) => {
+      await deleteLanguage.mutateAsync(name);
+      if (name === selectedLanguage) setSelectedLanguage(null);
     },
     [deleteLanguage, selectedLanguage, setSelectedLanguage]
   );
