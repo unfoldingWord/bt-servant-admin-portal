@@ -254,7 +254,16 @@ export function LanguageSelector({
                   size="sm"
                   disabled={isSettingPublished}
                   onClick={() => {
-                    void onSetPublished(selectedLanguage, true);
+                    // No confirmation dialog on the publish path, so no
+                    // inline UI to render an error into. Catch the
+                    // rejection here purely to avoid an unhandled-rejection
+                    // warning — the parent's mutation state (forbidden
+                    // errors via saveLanguage.error → forbiddenError
+                    // banner) handles user-visible surfacing of 403s; other
+                    // failures remain silent, matching pre-#102 behavior
+                    // when the parent used `mutate` instead of
+                    // `mutateAsync`.
+                    onSetPublished(selectedLanguage, true).catch(() => {});
                   }}
                 >
                   <Send className="mr-1.5 size-3.5" />

@@ -252,7 +252,13 @@ export function ModeSelector({
                   size="sm"
                   disabled={isSettingPublished}
                   onClick={() => {
-                    void onSetPublished(selectedMode, true);
+                    // No confirmation dialog on the publish path, so no
+                    // inline UI to render an error into. Catch the
+                    // rejection here purely to avoid an unhandled-rejection
+                    // warning — failures remain silent, matching pre-#102
+                    // behavior when the parent used `mutate` instead of
+                    // `mutateAsync`.
+                    onSetPublished(selectedMode, true).catch(() => {});
                   }}
                 >
                   <Send className="mr-1.5 size-3.5" />
