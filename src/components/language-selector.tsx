@@ -40,6 +40,11 @@ interface LanguageSelectorProps {
   showDrafts: boolean;
   onToggleShowDrafts: (showDrafts: boolean) => void;
   isAdmin: boolean;
+  /** Scaffold template must finish loading before create can fire — new
+      languages are pre-populated with the org's scaffold (#74), so creating
+      before the scaffold arrives would silently save a blank document. */
+  isScaffoldReady: boolean;
+  scaffoldError: boolean;
 }
 
 function isPublished(lang: Pick<Language, "published">): boolean {
@@ -59,6 +64,8 @@ export function LanguageSelector({
   showDrafts,
   onToggleShowDrafts,
   isAdmin,
+  isScaffoldReady,
+  scaffoldError,
 }: LanguageSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -278,6 +285,21 @@ export function LanguageSelector({
               />
             </div>
           </div>
+          {!isScaffoldReady && (
+            <p
+              className={
+                scaffoldError
+                  ? "text-destructive mt-3 text-xs"
+                  : "text-muted-foreground mt-3 text-xs"
+              }
+              role={scaffoldError ? "alert" : undefined}
+              aria-live="polite"
+            >
+              {scaffoldError
+                ? "Couldn't load the language template. Refresh the page to try again."
+                : "Loading language template…"}
+            </p>
+          )}
           <div className="mt-4 flex justify-end gap-2">
             <Button
               variant="ghost"
@@ -289,7 +311,7 @@ export function LanguageSelector({
             <Button
               size="sm"
               onClick={handleCreate}
-              disabled={!newName.trim() || isCreating}
+              disabled={!newName.trim() || isCreating || !isScaffoldReady}
             >
               {isCreating ? "Creating..." : "Create Draft"}
             </Button>

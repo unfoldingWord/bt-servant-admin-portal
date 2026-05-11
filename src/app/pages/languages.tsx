@@ -217,18 +217,20 @@ export function LanguagesPage() {
 
   const handleCreateLanguage = useCallback(
     (name: string, label: string) => {
-      // Pre-populate the new language with the org's structural scaffold so
-      // shepherds don't start from a blank textarea (#74). The scaffold is
-      // fetched eagerly when the page mounts; if it hasn't arrived yet or
-      // the fetch failed, fall back to an empty document — losing the
-      // scaffold is a UX regression, not a correctness failure.
-      const scaffoldDoc = scaffoldQuery.data?.document ?? "";
+      // Hard gate: never save a blank document. The create button in the
+      // selector is also disabled when scaffold isn't ready, but defense
+      // in depth — if anything ever programmatically triggers create
+      // before scaffold loads (keyboard shortcut, test, debugger), we
+      // refuse to save instead of silently committing an empty doc
+      // (Frank P2 on PR #106).
+      const scaffold = scaffoldQuery.data;
+      if (!scaffold) return;
       saveLanguage.mutate(
         {
           name,
           body: {
             label: label || undefined,
-            document: scaffoldDoc,
+            document: scaffold.document,
             published: false,
           },
         },
@@ -342,6 +344,8 @@ export function LanguagesPage() {
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
               isAdmin={isAdmin}
+              isScaffoldReady={scaffoldQuery.isSuccess}
+              scaffoldError={scaffoldQuery.isError}
             />
           </div>
 
