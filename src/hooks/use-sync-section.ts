@@ -6,6 +6,7 @@ import type { Section } from "@/types/ui";
 
 const pathToSection: Record<string, Section> = {
   "/": "baruch",
+  "/modes": "modes",
   "/prompt-configuration": "prompt-configuration",
   "/languages": "languages",
   "/admin/users": "admin-users",

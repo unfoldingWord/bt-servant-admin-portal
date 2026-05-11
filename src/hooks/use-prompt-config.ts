@@ -65,7 +65,7 @@ export function useSaveMode() {
       body: {
         label?: string;
         description?: string;
-        overrides: PromptOverrides;
+        document: string;
         published?: boolean;
       };
     }) => configApi.putMode(name, body),
@@ -76,21 +76,12 @@ export function useSaveMode() {
   });
 }
 
-export function useSetModePublished() {
-  const qc = useQueryClient();
-  return useMutation({
-    // Partial update: only `published` is sent. The engine merges `overrides`
-    // per-slot and preserves label/description/overrides when they are absent
-    // from the PUT (incoming.x ?? existing.x). This avoids the GET→PUT race
-    // where a concurrent slot save could be overwritten by stale overrides.
-    mutationFn: ({ name, published }: { name: string; published: boolean }) =>
-      configApi.putMode(name, { overrides: {}, published }),
-    onSuccess: (_data, { name }) => {
-      void qc.invalidateQueries({ queryKey: keys.modes });
-      void qc.invalidateQueries({ queryKey: keys.mode(name) });
-    },
-  });
-}
+// Note: publish/unpublish flows through useSaveMode with the full body
+// (always send { label, description, document, published }). The worker
+// PUT contract requires exactly one of `document` or `overrides` per
+// request (worker #200 / PR #213), so the legacy partial-update path
+// is no longer expressible. Mirrors the languages-side pattern — see
+// `useSaveLanguage`.
 
 export function useDeleteMode() {
   const qc = useQueryClient();

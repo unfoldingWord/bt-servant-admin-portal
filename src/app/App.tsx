@@ -18,6 +18,7 @@ import { BaruchPage } from "@/app/pages/baruch";
 import { LanguagesPage } from "@/app/pages/languages";
 import { LoginPage } from "@/app/pages/login";
 import { ManualConfigPage } from "@/app/pages/manual-config";
+import { ModesPage } from "@/app/pages/modes";
 
 const queryClient = new QueryClient();
 
@@ -46,6 +47,7 @@ const router = createBrowserRouter([
         ),
         children: [
           { index: true, element: <BaruchPage /> },
+          { path: "modes", element: <ModesPage /> },
           { path: "prompt-configuration", element: <ManualConfigPage /> },
           { path: "languages", element: <LanguagesPage /> },
           {

@@ -3,159 +3,57 @@ import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
 import { useAuthStore } from "@/lib/auth-store";
-import { useUiStore } from "@/lib/ui-store";
 import { PageHeader } from "@/components/page-header";
 import {
-  useDeleteMode,
-  useMode,
-  useModes,
   useOrgOverrides,
-  useSaveMode,
-  useSetModePublished,
   useUpdateOrgOverrides,
 } from "@/hooks/use-prompt-config";
-import type { PromptOverrides, PromptSlot } from "@/types/prompt-override";
+import type { PromptSlot } from "@/types/prompt-override";
 import { PROMPT_SLOTS } from "@/types/prompt-override";
-import { ModeSelector } from "@/components/mode-selector";
 import { PromptPanel } from "@/components/prompt-panel";
 import { UserMemoryDialog } from "@/components/user-memory-dialog";
 
 export function ManualConfigPage() {
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
-  const selectedMode = useUiStore((s) => s.selectedMode);
-  const setSelectedMode = useUiStore((s) => s.setSelectedMode);
-  const showDrafts = useUiStore((s) => s.showDrafts);
-  const setShowDrafts = useUiStore((s) => s.setShowDrafts);
   const [memoryDialogOpen, setMemoryDialogOpen] = useState(false);
 
-  // Queries
   const orgOverrides = useOrgOverrides();
-  const modesQuery = useModes();
-  const modeQuery = useMode(selectedMode);
-
-  // Mutations
   const updateOrg = useUpdateOrgOverrides();
-  const saveMode = useSaveMode();
-  const deleteMode = useDeleteMode();
-  const setModePublished = useSetModePublished();
 
-  // Current overrides based on selection
-  const currentOverrides = useMemo<PromptOverrides>(
-    () =>
-      selectedMode !== null
-        ? (modeQuery.data?.overrides ?? {})
-        : (orgOverrides.data ?? {}),
-    [selectedMode, modeQuery.data?.overrides, orgOverrides.data]
+  const currentOverrides = useMemo(
+    () => orgOverrides.data ?? {},
+    [orgOverrides.data]
   );
 
   const handleSaveSlot = useCallback(
     (slot: PromptSlot, value: string) => {
-      if (selectedMode !== null) {
-        // Partial update: only the one edited slot is sent. The engine merges
-        // overrides per-slot and preserves label/description/published when
-        // absent from the PUT. Sending the full cached object would race with
-        // a concurrent publish/unpublish (stale `published` flips it back) or
-        // another concurrent slot save (stale overrides clobber it).
-        saveMode.mutate({
-          name: selectedMode,
-          body: { overrides: { [slot]: value || undefined } },
-        });
-      } else {
-        updateOrg.mutate({ ...currentOverrides, [slot]: value || undefined });
-      }
+      updateOrg.mutate({ ...currentOverrides, [slot]: value || undefined });
     },
-    [currentOverrides, selectedMode, saveMode, updateOrg]
+    [currentOverrides, updateOrg]
   );
-
-  const handleCreateMode = useCallback(
-    (name: string, label: string, description: string) => {
-      saveMode.mutate(
-        {
-          name,
-          body: {
-            label: label || undefined,
-            description: description || undefined,
-            overrides: orgOverrides.data ?? {},
-            published: false,
-          },
-        },
-        { onSuccess: () => setSelectedMode(name) }
-      );
-    },
-    [saveMode, orgOverrides.data, setSelectedMode]
-  );
-
-  const handleSetPublished = useCallback(
-    async (name: string, published: boolean) => {
-      // mutateAsync so the selector's destructive-confirmation dialog can
-      // await + render inline errors (#102).
-      await setModePublished.mutateAsync({ name, published });
-    },
-    [setModePublished]
-  );
-
-  const handleDeleteMode = useCallback(
-    async (name: string) => {
-      await deleteMode.mutateAsync(name);
-      setSelectedMode(null);
-    },
-    [deleteMode, setSelectedMode]
-  );
-
-  const isLoading =
-    orgOverrides.isLoading ||
-    modesQuery.isLoading ||
-    (selectedMode !== null && modeQuery.isLoading);
-
-  const error =
-    orgOverrides.error ||
-    modesQuery.error ||
-    (selectedMode !== null ? modeQuery.error : null);
-
-  const isSaving = updateOrg.isPending || saveMode.isPending;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PageHeader
-        title="Prompt Configuration"
-        subtitle="Manage prompt overrides for each slot at the org level or per mode."
-        variant="modes"
+        title="Prompt Overrides"
+        subtitle="Org-wide defaults applied to every conversation unless a Mode overrides them."
       />
 
-      {/* Grid area — dot grid + subtle radial glow */}
       <div className="config-grid-bg min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="space-y-4 sm:space-y-6">
-          {/* Mode toolbar */}
-          <ModeSelector
-            modesData={modesQuery.data}
-            selectedMode={selectedMode}
-            onSelectMode={setSelectedMode}
-            onCreateMode={handleCreateMode}
-            onDeleteMode={handleDeleteMode}
-            onSetPublished={handleSetPublished}
-            isCreating={saveMode.isPending}
-            isDeleting={deleteMode.isPending}
-            isSettingPublished={setModePublished.isPending}
-            showDrafts={showDrafts}
-            onToggleShowDrafts={setShowDrafts}
-            isAdmin={isAdmin}
-          />
-
-          {/* Error banner */}
-          {error && (
+          {orgOverrides.error && (
             <div className="bg-destructive/10 text-destructive border-destructive rounded-lg border-l-2 px-4 py-3 text-sm">
-              {error.message}
+              {orgOverrides.error.message}
             </div>
           )}
 
-          {/* Slot grid */}
-          {isLoading ? (
+          {orgOverrides.isLoading ? (
             <div className="text-muted-foreground flex flex-col items-center justify-center gap-3 py-16">
               <FontAwesomeIcon
                 icon={faSpinnerThird}
                 className="size-5 animate-spin"
               />
-              <p className="text-sm">Loading configuration...</p>
+              <p className="text-sm">Loading overrides...</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -167,8 +65,8 @@ export function ManualConfigPage() {
                   slot={slot}
                   value={currentOverrides[slot]}
                   onSave={(value) => handleSaveSlot(slot, value)}
-                  isSaving={isSaving}
-                  readOnly={selectedMode === null && !isAdmin}
+                  isSaving={updateOrg.isPending}
+                  readOnly={!isAdmin}
                   onViewMemory={
                     slot === "memory_instructions"
                       ? () => setMemoryDialogOpen(true)

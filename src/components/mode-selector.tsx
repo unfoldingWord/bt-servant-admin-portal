@@ -23,7 +23,6 @@ import {
   Select,
   SelectContent,
   SelectItem,
-  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -128,7 +127,7 @@ export function ModeSelector({
 
   const handleSelectChange = useCallback(
     (value: string) => {
-      onSelectMode(value === "__org__" ? null : value);
+      onSelectMode(value === "" ? null : value);
     },
     [onSelectMode]
   );
@@ -140,31 +139,32 @@ export function ModeSelector({
           <div className="bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-lg">
             <FontAwesomeIcon icon={faLayerGroup} className="text-sm" />
           </div>
-          <Select
-            value={selectedMode ?? "__org__"}
-            onValueChange={handleSelectChange}
-          >
+          <Select value={selectedMode ?? ""} onValueChange={handleSelectChange}>
             <SelectTrigger className="w-full sm:w-52">
-              <SelectValue />
+              <SelectValue placeholder="Select a mode" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="__org__">Org Defaults</SelectItem>
-              {visibleModes.length > 0 && <SelectSeparator />}
-              {visibleModes.map((m) => (
-                <SelectItem key={m.name} value={m.name}>
-                  <span className="flex items-center gap-2">
-                    <span className="truncate">{m.label || m.name}</span>
-                    {!isPublished(m) && (
-                      <Badge
-                        variant="outline"
-                        className="px-1.5 py-0 text-[10px]"
-                      >
-                        Draft
-                      </Badge>
-                    )}
-                  </span>
-                </SelectItem>
-              ))}
+              {visibleModes.length === 0 ? (
+                <div className="text-muted-foreground px-2 py-1.5 text-xs">
+                  No modes yet
+                </div>
+              ) : (
+                visibleModes.map((m) => (
+                  <SelectItem key={m.name} value={m.name}>
+                    <span className="flex items-center gap-2">
+                      <span className="truncate">{m.label || m.name}</span>
+                      {!isPublished(m) && (
+                        <Badge
+                          variant="outline"
+                          className="px-1.5 py-0 text-[10px]"
+                        >
+                          Draft
+                        </Badge>
+                      )}
+                    </span>
+                  </SelectItem>
+                ))
+              )}
             </SelectContent>
           </Select>
         </div>
