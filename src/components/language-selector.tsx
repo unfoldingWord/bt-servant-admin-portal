@@ -3,10 +3,10 @@ import { faLanguage } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Eye, EyeOff, Plus, Send, SendHorizontal, Trash2 } from "lucide-react";
 
+import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import type { Language, OrgLanguages } from "@/types/language";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -32,8 +32,11 @@ interface LanguageSelectorProps {
   selectedLanguage: string | null;
   onSelectLanguage: (language: string | null) => void;
   onCreateLanguage: (name: string, label: string) => void;
-  onDeleteLanguage: (name: string) => void;
-  onSetPublished: (name: string, published: boolean) => void;
+  /** Must return a promise that rejects on error — the destructive
+      confirmation dialogs render inline error UI on the rejection path
+      and stay open so the user can read it (#102). */
+  onDeleteLanguage: (name: string) => Promise<void>;
+  onSetPublished: (name: string, published: boolean) => Promise<void>;
   isCreating: boolean;
   isDeleting: boolean;
   isSettingPublished: boolean;
@@ -70,6 +73,35 @@ export function LanguageSelector({
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newLabel, setNewLabel] = useState("");
+
+  // Destructive-confirmation dialogs are controlled so we can keep them
+  // open on async failure and render the error inline (#102). Closing on
+  // success happens in the handlers below; the open-state setter is also
+  // wired to clear the per-dialog error when the user dismisses.
+  const [unpublishOpen, setUnpublishOpen] = useState(false);
+  const [unpublishError, setUnpublishError] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleConfirmUnpublish = useCallback(() => {
+    if (selectedLanguage === null) return;
+    return runConfirmedAction(
+      () => onSetPublished(selectedLanguage, false),
+      setUnpublishError,
+      () => setUnpublishOpen(false),
+      "Failed to unpublish language."
+    );
+  }, [onSetPublished, selectedLanguage]);
+
+  const handleConfirmDelete = useCallback(() => {
+    if (selectedLanguage === null) return;
+    return runConfirmedAction(
+      () => onDeleteLanguage(selectedLanguage),
+      setDeleteError,
+      () => setDeleteOpen(false),
+      "Failed to delete language."
+    );
+  }, [onDeleteLanguage, selectedLanguage]);
 
   const languages = languagesData?.languages ?? [];
   const selectedData =
@@ -168,7 +200,13 @@ export function LanguageSelector({
 
             {isAdmin &&
               (selectedIsPublished ? (
-                <AlertDialog>
+                <AlertDialog
+                  open={unpublishOpen}
+                  onOpenChange={(next) => {
+                    setUnpublishOpen(next);
+                    if (!next) setUnpublishError(null);
+                  }}
+                >
                   <AlertDialogTrigger asChild>
                     <Button
                       variant="ghost"
@@ -188,13 +226,25 @@ export function LanguageSelector({
                         it as a draft.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
+                    {unpublishError && (
+                      <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+                        {unpublishError}
+                      </p>
+                    )}
                     <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={() => onSetPublished(selectedLanguage, false)}
+                      <AlertDialogCancel disabled={isSettingPublished}>
+                        Cancel
+                      </AlertDialogCancel>
+                      {/* Plain Button — AlertDialogAction auto-closes the
+                          dialog before onError can render the inline message
+                          (#102). Close happens manually in
+                          handleConfirmUnpublish on success. */}
+                      <Button
+                        onClick={handleConfirmUnpublish}
+                        disabled={isSettingPublished}
                       >
-                        Unpublish
-                      </AlertDialogAction>
+                        {isSettingPublished ? "Unpublishing…" : "Unpublish"}
+                      </Button>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
@@ -203,7 +253,18 @@ export function LanguageSelector({
                   variant="ghost"
                   size="sm"
                   disabled={isSettingPublished}
-                  onClick={() => onSetPublished(selectedLanguage, true)}
+                  onClick={() => {
+                    // No confirmation dialog on the publish path, so no
+                    // inline UI to render an error into. Catch the
+                    // rejection here purely to avoid an unhandled-rejection
+                    // warning — the parent's mutation state (forbidden
+                    // errors via saveLanguage.error → forbiddenError
+                    // banner) handles user-visible surfacing of 403s; other
+                    // failures remain silent, matching pre-#102 behavior
+                    // when the parent used `mutate` instead of
+                    // `mutateAsync`.
+                    onSetPublished(selectedLanguage, true).catch(() => {});
+                  }}
                 >
                   <Send className="mr-1.5 size-3.5" />
                   Publish
@@ -211,7 +272,13 @@ export function LanguageSelector({
               ))}
 
             {isAdmin && (
-              <AlertDialog>
+              <AlertDialog
+                open={deleteOpen}
+                onOpenChange={(next) => {
+                  setDeleteOpen(next);
+                  if (!next) setDeleteError(null);
+                }}
+              >
                 <AlertDialogTrigger asChild>
                   <Button
                     variant="ghost"
@@ -234,14 +301,23 @@ export function LanguageSelector({
                       ? This action cannot be undone.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
+                  {deleteError && (
+                    <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+                      {deleteError}
+                    </p>
+                  )}
                   <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
+                    <AlertDialogCancel disabled={isDeleting}>
+                      Cancel
+                    </AlertDialogCancel>
+                    {/* Plain Button — see comment in Unpublish dialog above. */}
+                    <Button
                       variant="destructive"
-                      onClick={() => onDeleteLanguage(selectedLanguage)}
+                      onClick={handleConfirmDelete}
+                      disabled={isDeleting}
                     >
-                      Delete
-                    </AlertDialogAction>
+                      {isDeleting ? "Deleting…" : "Delete"}
+                    </Button>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
