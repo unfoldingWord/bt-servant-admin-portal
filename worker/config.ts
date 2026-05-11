@@ -63,6 +63,18 @@ async function proxyToEngine(
 // Config route handler
 // ---------------------------------------------------------------------------
 
+// Mutations on org-wide prompt configuration (modes + prompt-overrides) are
+// admin-only. The trusted-portal model (single shared ADMIN_API_TOKEN
+// upstream, no per-user identity on admin paths) means this worker is the
+// only enforcement point — without this gate, any authenticated user in the
+// org could rewrite or delete the org's modes via direct fetch. GET stays
+// open because non-admins need to read modes for the test-chat / trigger
+// lookup, and prompt-overrides GET carries no sensitive data beyond the
+// org's prompt configuration.
+function isAdminMutation(method: string, isAdmin: boolean): boolean {
+  return (method === "PUT" || method === "DELETE") && !isAdmin;
+}
+
 export async function handleConfig(
   request: Request,
   env: Env,
@@ -71,8 +83,11 @@ export async function handleConfig(
 ): Promise<Response> {
   const org = encodeURIComponent(session.org);
 
-  // /api/config/prompt-overrides → GET/PUT/DELETE
+  // /api/config/prompt-overrides → GET (any session) / PUT/DELETE (admin)
   if (pathname === "/api/config/prompt-overrides") {
+    if (isAdminMutation(request.method, session.isAdmin)) {
+      return errorResponse("Forbidden", 403);
+    }
     return proxyToEngine(
       request,
       env,
@@ -81,9 +96,12 @@ export async function handleConfig(
     );
   }
 
-  // /api/config/modes/{name} → GET/PUT/DELETE
+  // /api/config/modes/{name} → GET (any session) / PUT/DELETE (admin)
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);
   if (modeMatch?.[1]) {
+    if (isAdminMutation(request.method, session.isAdmin)) {
+      return errorResponse("Forbidden", 403);
+    }
     const modeName = decodeURIComponent(modeMatch[1]);
     return proxyToEngine(
       request,

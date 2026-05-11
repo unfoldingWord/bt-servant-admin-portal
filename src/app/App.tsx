@@ -47,8 +47,22 @@ const router = createBrowserRouter([
         ),
         children: [
           { index: true, element: <BaruchPage /> },
-          { path: "modes", element: <ModesPage /> },
-          { path: "prompt-configuration", element: <ManualConfigPage /> },
+          {
+            path: "modes",
+            element: (
+              <RequireAdmin>
+                <ModesPage />
+              </RequireAdmin>
+            ),
+          },
+          {
+            path: "prompt-configuration",
+            element: (
+              <RequireAdmin>
+                <ManualConfigPage />
+              </RequireAdmin>
+            ),
+          },
           { path: "languages", element: <LanguagesPage /> },
           {
             path: "admin/users",
