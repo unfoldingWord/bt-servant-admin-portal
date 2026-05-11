@@ -14,12 +14,18 @@ export function useAuth() {
 
   const login = useCallback(
     async (email: string, password: string) => {
+      // Reset persisted UI selections (`selectedMode`, `selectedLanguage`,
+      // etc.) on every login. Without this, a session-expiry → fresh-login on
+      // the same tab carries the previous user's selections into the new
+      // session, which is confusing at best and a privacy smell at worst.
+      // `logout()` already resets but is not reached on cookie-expiry flows.
+      resetUi();
       queryClient.clear();
       const authedUser = await authApi.login(email, password);
       setUser(authedUser);
       void navigate("/", { replace: true });
     },
-    [queryClient, setUser, navigate]
+    [queryClient, resetUi, setUser, navigate]
   );
 
   const logout = useCallback(async () => {
