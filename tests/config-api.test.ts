@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  clearUserMode,
+  deleteMode,
+  deleteUserMemory,
   getMode,
   getOrgOverrides,
+  getUserMemory,
+  listModes,
   putMode,
   putOrgOverrides,
+  setUserMode,
 } from "../src/lib/config-api";
 
 afterEach(() => {
@@ -267,6 +273,154 @@ describe("putOrgOverrides", () => {
     mockFetchOnce(403, "Forbidden");
     await expect(putOrgOverrides({ identity: "hi" })).rejects.toThrow(
       /Failed to save overrides \(403\): Forbidden/
+    );
+  });
+});
+
+describe("listModes", () => {
+  it("returns the response JSON unchanged", async () => {
+    const payload = { modes: [{ name: "spoken", document: "" }] };
+    mockFetchOnce(200, payload);
+    expect(await listModes()).toEqual(payload);
+  });
+
+  it("sends a GET to the modes endpoint with the same-origin marker", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ modes: [] })));
+    await listModes();
+    expect(spy.mock.calls[0]![0]).toBe("/api/config/modes");
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)["X-Requested-With"]).toBe(
+      "XMLHttpRequest"
+    );
+  });
+
+  it("throws on non-ok response", async () => {
+    mockFetchOnce(500, "Engine error");
+    await expect(listModes()).rejects.toThrow(/Failed to load modes \(500\)/);
+  });
+});
+
+describe("deleteMode", () => {
+  it("sends DELETE and URL-encodes the name", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    await deleteMode("kids-mode");
+    expect(spy.mock.calls[0]![0]).toBe("/api/config/modes/kids-mode");
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe("DELETE");
+  });
+
+  it("throws on non-ok response with status + body", async () => {
+    mockFetchOnce(404, "Mode not found");
+    await expect(deleteMode("missing")).rejects.toThrow(
+      /Failed to delete mode \(404\): Mode not found/
+    );
+  });
+});
+
+// User-memory + user-mode endpoints take a UUID-v4 user id that the worker
+// validates upstream (`worker/config.ts`); the client's job is to URL-encode
+// it and use the right method + body shape. A refactor that breaks `{ mode }`
+// to `{ name }` on `setUserMode` would silently 400 at the worker, so the
+// body-shape assertion is load-bearing.
+const SAMPLE_UUID = "abc12345-6789-4abc-89ab-cdef01234567";
+
+describe("getUserMemory", () => {
+  it("sends GET with URL-encoded user id", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ memory: {} })));
+    await getUserMemory(SAMPLE_UUID);
+    expect(spy.mock.calls[0]![0]).toBe(
+      `/api/config/user-memory/${SAMPLE_UUID}`
+    );
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBeUndefined();
+  });
+
+  it("returns the response JSON unchanged", async () => {
+    const payload = { memory: { facts: ["foo"] }, message: "ok" };
+    mockFetchOnce(200, payload);
+    expect(await getUserMemory(SAMPLE_UUID)).toEqual(payload);
+  });
+
+  it("throws on non-ok response", async () => {
+    mockFetchOnce(404, "Not found");
+    await expect(getUserMemory(SAMPLE_UUID)).rejects.toThrow(
+      /Failed to load user memory \(404\)/
+    );
+  });
+});
+
+describe("deleteUserMemory", () => {
+  it("sends DELETE with URL-encoded user id", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    await deleteUserMemory(SAMPLE_UUID);
+    expect(spy.mock.calls[0]![0]).toBe(
+      `/api/config/user-memory/${SAMPLE_UUID}`
+    );
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe("DELETE");
+  });
+
+  it("throws on non-ok response", async () => {
+    mockFetchOnce(500, "boom");
+    await expect(deleteUserMemory(SAMPLE_UUID)).rejects.toThrow(
+      /Failed to delete user memory \(500\)/
+    );
+  });
+});
+
+describe("setUserMode", () => {
+  it("sends PUT with the body `{ mode }` (NOT `{ name }`)", async () => {
+    // Easy to mis-refactor to `{ name }` since the function param is the
+    // mode name. The worker validates the field at upstream. Pin the wire
+    // shape here so a refactor fails CI rather than 400ing in production.
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    await setUserMode(SAMPLE_UUID, "spoken");
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body as string)).toEqual({ mode: "spoken" });
+  });
+
+  it("URL-encodes the user id and sends Content-Type application/json", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    await setUserMode(SAMPLE_UUID, "spoken");
+    expect(spy.mock.calls[0]![0]).toBe(`/api/config/user-mode/${SAMPLE_UUID}`);
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/json"
+    );
+  });
+
+  it("throws on non-ok response", async () => {
+    mockFetchOnce(400, "Invalid mode");
+    await expect(setUserMode(SAMPLE_UUID, "bad")).rejects.toThrow(
+      /Failed to set user mode \(400\)/
+    );
+  });
+});
+
+describe("clearUserMode", () => {
+  it("sends DELETE with URL-encoded user id", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    await clearUserMode(SAMPLE_UUID);
+    expect(spy.mock.calls[0]![0]).toBe(`/api/config/user-mode/${SAMPLE_UUID}`);
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe("DELETE");
+  });
+
+  it("throws on non-ok response", async () => {
+    mockFetchOnce(500, "engine down");
+    await expect(clearUserMode(SAMPLE_UUID)).rejects.toThrow(
+      /Failed to clear user mode \(500\)/
     );
   });
 });
