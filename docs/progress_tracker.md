@@ -71,7 +71,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [ ] #99 — Admin password reset via `/api/admin/users` PUT doesn't invalidate target user's existing sessions. Filed 2026-05-08 while building #96 — pulled the password-reset field from the edit dialog until this lands. Pre-existing on the X-Admin-Secret CLI path too.
 - [x] **#102 — AlertDialogAction sweep** — shipped 2026-05-11, PR #108 at `65d69b5`. All five remaining destructive-confirm dialogs now use plain `<Button>` + manual close on success; policy extracted as `runConfirmedAction` helper in `src/lib/run-confirmed-action.ts` with 6 unit tests pinning the contract.
 - [ ] **#117 — `/api/chat/stream` accepts arbitrary `user_id`** (deferred from 2026-05-11 retrospective batch). Worker validates UUIDv4 shape but not session ownership. Needs design call between (1) namespacing test-chat UUIDs as `test:<session.userId>:<uuid>` (smallest blast radius but wire-format change), (2) requiring `isAdmin` for cross-user, or (3) KV-tracked session→testChatUserId.
-- [ ] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Modes is the replacement; six-box "daunting squares" page goes away. Phase 1 (hide sidebar entry) is small; Phase 2 (full removal of page + worker BFF route + engine endpoint) needs Ian to confirm engine still consumes `/api/v1/admin/orgs/{org}/prompt-overrides` at chat time.
+- [ ] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Modes is the replacement; six-box "daunting squares" page goes away. Phase 1 (hide sidebar entry) is small; Phase 2 (full removal of page + worker BFF route + upstream worker endpoint) needs Ian to confirm the worker still consumes `/api/v1/admin/orgs/{org}/prompt-overrides` at chat time.
 
 ## Session Log
 
@@ -259,7 +259,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - **PR #122 / #113 + #114 + #116 — UX cleanup cluster.** `putOrgOverrides` envelope unwrap (third instance of the pattern, with a shared `unwrapOverridesResponse` helper). "Save failed: …" banner on modes + manual-config + languages pages (with `genericMutationError` filter on languages to separate from the existing forbidden-error banner). `useAuth.login` calls `resetUi()` symmetrically with logout. Modes page got a defensive useEffect parallel to languages.tsx:207-211 that drops a stale `selectedMode`. **Frank P2 fix `09a6b0c`:** autosave previously retried indefinitely on a failed save (`isPending` flip re-fired the effect). New `lastFailedDoc` state pauses autosave for the same draft until the user edits further or clicks Save manually; clears on success or selection change. Applied symmetrically to languages.tsx and modes.tsx. 8 new tests for `getOrgOverrides` / `putOrgOverrides`. Merged at `89d3c90`.
 - **PR #123 / #118 + #119 — High-value test backfill.** `tests/permissions.test.ts` (18 tests) pins the trinary back-compat (`undefined` / `"*"` / `string[]`) on `hasLanguageRights`, `hasAnyLanguageRights`, `filterAuthorizedLanguages` — the sole portal-side language gate in the trusted-portal model. `tests/markdown-headings.test.ts` (18 tests) pins the four-state suppression machine (fence + paragraph comment + inline span + slug uniqueness) plus a combined-state regression. Merged at `92cfdf4`.
 - **PR #124 / #120 — API client test backfill.** `tests/admin-users-api.test.ts` (15 tests, new file) — entire `admin-users-api.ts` was untested; pins the 403-vs-other-4xx error-class branching that the UI dialogs depend on, URL-encoding on email path params, non-JSON error body resilience. Added `listModes` / `deleteMode` / `getUserMemory` / `deleteUserMemory` / `setUserMode` / `clearUserMode` coverage (15 new) — including a **load-bearing body-shape assertion** that `setUserMode` sends `{ mode }` not `{ name }` (easy mis-refactor since the function param is named `mode`). Added `listLanguages` / `getLanguage` / `deleteLanguage` coverage (11 new) — pins the `operation` discriminant (`read` / `delete`) on `LanguageForbiddenError`. Rebased on main during merge to resolve a `tests/config-api.test.ts` conflict with PR #122; merged at `f19f798`.
-- **Issue #125 filed:** Remove Prompt Overrides — per Elsy (Epic owner) + Christou ("we're essentially merging those squares into one big square"). The split-into-two-pages choice from PR #110 was transitional; the Epic's intent was full replacement. Phase 1 (hide sidebar entry) is small and matches Elsy's explicit ask; Phase 2 (delete page + worker BFF route + engine endpoint) needs Ian's confirmation on whether the engine still consumes `/api/v1/admin/orgs/{org}/prompt-overrides` at chat time.
+- **Issue #125 filed:** Remove Prompt Overrides — per Elsy (Epic owner) + Christou ("we're essentially merging those squares into one big square"). The split-into-two-pages choice from PR #110 was transitional; the Epic's intent was full replacement. Phase 1 (hide sidebar entry) is small and matches Elsy's explicit ask; Phase 2 (delete page + worker BFF route + upstream worker endpoint) needs Ian's confirmation on whether the worker still consumes `/api/v1/admin/orgs/{org}/prompt-overrides` at chat time.
 
 **In Progress:**
 
@@ -267,7 +267,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 **Blockers:**
 
-- **#125 Phase 2** awaits Ian's confirmation on engine consumption of `/api/config/prompt-overrides`.
+- **#125 Phase 2** awaits Ian's confirmation on worker consumption of `/api/v1/admin/orgs/{org}/prompt-overrides` at chat time.
 - **#77 visual half** — still on Ian's editor-library decision (CodeMirror 6 tentative).
 
 **Frank review patterns surfaced this session:**
@@ -285,7 +285,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 **Next Steps:**
 
-- **#125 — Remove (or hide) Prompt Overrides** is the highest-leverage next pick. Phase 1 (hide sidebar entry, ~3-line PR) matches Elsy's explicit ask and unblocks the Epic's "merging squares into one big square" intent. Phase 2 needs Ian for engine consumption check first.
+- **#125 — Remove (or hide) Prompt Overrides** is the highest-leverage next pick. Phase 1 (hide sidebar entry, ~3-line PR) matches Elsy's explicit ask and unblocks the Epic's "merging squares into one big square" intent. Phase 2 needs Ian for worker consumption check first.
 - **#77 backend half is now unblocked** (worker #201 closed today) but the visual half still awaits Ian's editor-library decision.
 - **Tech debt backlog**: **#99** (password-reset session invalidation), **#91** (Node 24 actions bump), **#117** (chat-stream `user_id` ownership — needs design call).
 - The Epic #72 demo path (`#spoken @arabic` end-to-end through the new editor) is now functionally complete; June 9 demo is in good shape with #77 visual-highlighting as the only optional polish remaining.
@@ -294,7 +294,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 - **#99 — Admin password-reset doesn't invalidate target user's existing sessions.** `PUT /api/admin/users/{email}` accepts a `password` field that updates the hash but leaves the user's existing session records valid until expiry. Pre-existing on the X-Admin-Secret CLI path; pulled the password-reset field from the `AdminUserEditDialog` (PR #100) until this is fixed.
 - **#117 — `/api/chat/stream` accepts arbitrary `user_id` from session-cookied users.** Worker validates UUIDv4 shape but not ownership; a logged-in user could submit another user's test-chat UUID. Discovery requires knowing/guessing a v4 — hard but not impossible (logs / screen-share / copy-paste). Deferred from 2026-05-11 retrospective batch pending a design call between (1) namespacing test-chat UUIDs as `test:<session.userId>:<uuid>`, (2) requiring `isAdmin` for cross-user UUIDs, or (3) KV-tracked session→testChatUserId.
-- **#125 — Prompt Overrides removal (in flight).** Per Elsy + Christou, Modes is the replacement; six-box "Prompt Overrides" page should be hidden/removed. Phase 1 (hide sidebar entry) is small; Phase 2 (full removal) needs Ian's confirmation on engine consumption of `/api/v1/admin/orgs/{org}/prompt-overrides`.
+- **#125 — Prompt Overrides removal (in flight).** Per Elsy + Christou, Modes is the replacement; six-box "Prompt Overrides" page should be hidden/removed. Phase 1 (hide sidebar entry) is small; Phase 2 (full removal) needs Ian's confirmation on worker consumption of `/api/v1/admin/orgs/{org}/prompt-overrides` at chat time.
 
 ## Architectural Decisions
 
