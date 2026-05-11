@@ -4,16 +4,54 @@ const SAME_ORIGIN_HEADERS = {
   "X-Requested-With": "XMLHttpRequest",
 } as const;
 
+export interface StreamChatOptions {
+  /**
+   * Active mode slug to prepend as `#<mode>` to the outgoing message.
+   * The worker's deterministic classifier parses leading trigger tokens
+   * and applies them as a per-turn override (bt-servant-worker #199 / #211).
+   */
+  mode?: string | null;
+  /** Active language slug to prepend as `@<language>`. */
+  language?: string | null;
+  signal?: AbortSignal;
+}
+
+/**
+ * Build the wire message: prepend `#<mode>` and/or `@<language>` to the
+ * user's text so the worker classifier applies them as a per-turn override.
+ * Strings only — both falsy means no prefix is added.
+ */
+export function applyTriggerPrefix(
+  message: string,
+  mode?: string | null,
+  language?: string | null
+): string {
+  const parts: string[] = [];
+  if (mode) parts.push(`#${mode}`);
+  if (language) parts.push(`@${language}`);
+  if (parts.length === 0) return message;
+  return `${parts.join(" ")} ${message}`;
+}
+
 export async function streamChat(
   message: string,
   userId: string,
-  signal?: AbortSignal
+  options: StreamChatOptions = {}
 ): Promise<Response> {
+  const wireMessage = applyTriggerPrefix(
+    message,
+    options.mode,
+    options.language
+  );
   const res = await fetch("/api/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
-    body: JSON.stringify({ message, message_type: "text", user_id: userId }),
-    signal,
+    body: JSON.stringify({
+      message: wireMessage,
+      message_type: "text",
+      user_id: userId,
+    }),
+    signal: options.signal,
   });
 
   if (!res.ok) {

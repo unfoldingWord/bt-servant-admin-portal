@@ -23,7 +23,16 @@
     "types": [
       "@cloudflare/workers-types",
       "@cloudflare/vitest-pool-workers/types"
-    ]
+    ],
+
+    /* Path alias for tests that exercise pure functions from src/.
+       Files reached via this alias are pulled into worker typecheck on
+       demand — keep transitively-imported src/ modules free of DOM/JSX
+       types so the worker tsconfig can resolve them. */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["worker", "tests", "vitest.config.ts"]
 }

@@ -7,9 +7,14 @@ import {
   streamChat,
 } from "@/lib/chat-api";
 import { consumeSSEStream } from "@/lib/sse-stream";
+import { useUiStore } from "@/lib/ui-store";
 import type { ChatHistoryEntry, ChatMessage } from "@/types/chat";
 
 export function useTestChat(userId: string) {
+  // Track the editor-tab selections so the next outgoing message carries
+  // `#<mode> @<language>` as a per-turn trigger override (#81 + worker #211).
+  const selectedMode = useUiStore((s) => s.selectedMode);
+  const selectedLanguage = useUiStore((s) => s.selectedLanguage);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
@@ -114,7 +119,11 @@ export function useTestChat(userId: string) {
       setStatusMessage(null);
 
       try {
-        const response = await streamChat(trimmed, userId, controller.signal);
+        const response = await streamChat(trimmed, userId, {
+          mode: selectedMode,
+          language: selectedLanguage,
+          signal: controller.signal,
+        });
 
         const { finalText, hadStreaming } = await consumeSSEStream(response, {
           onStatus: (msg) => setStatusMessage(msg),
@@ -156,7 +165,7 @@ export function useTestChat(userId: string) {
         setStatusMessage(null);
       }
     },
-    [isLoading, userId]
+    [isLoading, selectedLanguage, selectedMode, userId]
   );
 
   const clearMessages = useCallback(() => {
