@@ -14,6 +14,17 @@ Admin portal for managing bt-servant-worker configurations.
 
 ## Commands
 
+Run all project commands that execute Node/npm tooling inside the `uw-sandbox`
+container from `/workspace/bt-servant-admin-portal`. Do not run `npm`,
+`npx`, `vite`, `wrangler`, `tsc`, ESLint, Prettier, or Husky/pre-commit checks
+directly on the host for this project.
+
+Example:
+
+```bash
+docker exec uw-sandbox bash -lc 'cd /workspace/bt-servant-admin-portal && npm run typecheck'
+```
+
 ```bash
 npm run dev          # Start Vite dev server
 npm run build        # Production build
