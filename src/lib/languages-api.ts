@@ -84,7 +84,14 @@ export async function putLanguage(
     throw new Error(`Failed to save language (${res.status}): ${text}`);
   }
 
-  return (await res.json()) as Language;
+  const data = (await res.json()) as Record<string, unknown>;
+
+  // Worker wraps PUT response as { org, language, message }. Unwrap to
+  // match getLanguage so callers consistently get a Language object.
+  if ("language" in data && typeof data.language === "object") {
+    return data.language as Language;
+  }
+  return data as unknown as Language;
 }
 
 export async function deleteLanguage(

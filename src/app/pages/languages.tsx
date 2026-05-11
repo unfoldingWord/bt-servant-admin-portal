@@ -20,6 +20,7 @@ import {
   useLanguages,
   useSaveLanguage,
 } from "@/hooks/use-languages";
+import { useLanguageScaffold } from "@/hooks/use-language-scaffold";
 import type { MarkdownHeading } from "@/types/markdown";
 import {
   AlertDialog,
@@ -53,6 +54,7 @@ export function LanguagesPage() {
   const languageQuery = useLanguage(selectedLanguage);
   const saveLanguage = useSaveLanguage();
   const deleteLanguage = useDeleteLanguage();
+  const scaffoldQuery = useLanguageScaffold();
 
   // Filter the language list to only those the user has rights to. Engine
   // #207 will eventually filter server-side too, but until then this is the
@@ -215,19 +217,27 @@ export function LanguagesPage() {
 
   const handleCreateLanguage = useCallback(
     (name: string, label: string) => {
+      // Hard gate: never save a blank document. The create button in the
+      // selector is also disabled when scaffold isn't ready, but defense
+      // in depth — if anything ever programmatically triggers create
+      // before scaffold loads (keyboard shortcut, test, debugger), we
+      // refuse to save instead of silently committing an empty doc
+      // (Frank P2 on PR #106).
+      const scaffold = scaffoldQuery.data;
+      if (!scaffold) return;
       saveLanguage.mutate(
         {
           name,
           body: {
             label: label || undefined,
-            document: "",
+            document: scaffold.document,
             published: false,
           },
         },
         { onSuccess: () => setSelectedLanguage(name) }
       );
     },
-    [saveLanguage, setSelectedLanguage]
+    [saveLanguage, scaffoldQuery.data, setSelectedLanguage]
   );
 
   const handleSetPublished = useCallback(
@@ -334,6 +344,8 @@ export function LanguagesPage() {
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
               isAdmin={isAdmin}
+              isScaffoldReady={scaffoldQuery.isSuccess}
+              scaffoldError={scaffoldQuery.isError}
             />
           </div>
 
