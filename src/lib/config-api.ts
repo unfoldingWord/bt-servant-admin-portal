@@ -13,6 +13,23 @@ const SAME_ORIGIN_HEADERS = {
 // Org-level prompt overrides
 // ---------------------------------------------------------------------------
 
+function unwrapOverridesResponse(
+  data: Record<string, unknown>
+): PromptOverrides {
+  // Engine wraps the overrides in `{ prompt_overrides: {...} }` or
+  // `{ org, overrides: {...}, message? }`. GET has always unwrapped these;
+  // PUT used to cast the envelope directly, which left callers reading
+  // `result.identity` as undefined — same class of bug as the `putLanguage`
+  // / `putMode` envelope fixes from #106 / #110.
+  if ("prompt_overrides" in data && typeof data.prompt_overrides === "object") {
+    return data.prompt_overrides as PromptOverrides;
+  }
+  if ("overrides" in data && typeof data.overrides === "object") {
+    return data.overrides as PromptOverrides;
+  }
+  return data as unknown as PromptOverrides;
+}
+
 export async function getOrgOverrides(
   signal?: AbortSignal
 ): Promise<PromptOverrides> {
@@ -26,15 +43,7 @@ export async function getOrgOverrides(
     throw new Error(`Failed to load overrides (${res.status}): ${body}`);
   }
 
-  const data = (await res.json()) as Record<string, unknown>;
-
-  // Engine API may wrap overrides in { prompt_overrides: {...} } or { org, overrides: {...} }
-  if ("prompt_overrides" in data && typeof data.prompt_overrides === "object") {
-    return data.prompt_overrides as PromptOverrides;
-  } else if ("overrides" in data && typeof data.overrides === "object") {
-    return data.overrides as PromptOverrides;
-  }
-  return data as unknown as PromptOverrides;
+  return unwrapOverridesResponse((await res.json()) as Record<string, unknown>);
 }
 
 export async function putOrgOverrides(
@@ -53,7 +62,7 @@ export async function putOrgOverrides(
     throw new Error(`Failed to save overrides (${res.status}): ${body}`);
   }
 
-  return (await res.json()) as PromptOverrides;
+  return unwrapOverridesResponse((await res.json()) as Record<string, unknown>);
 }
 
 export async function deleteOrgOverrides(signal?: AbortSignal): Promise<void> {

@@ -157,6 +157,17 @@ export function ModesPage() {
     setPendingSwitch(null);
   }, [pendingSwitch, setSelectedMode]);
 
+  // Drop a stale `selectedMode` if it's no longer present in the list (admin
+  // deleted it, or the value persisted across a user switch on the same tab).
+  // Mirrors the parallel guard in `languages.tsx` and is defense-in-depth
+  // alongside `use-auth.ts` resetting the UI store on every login (#116).
+  useEffect(() => {
+    if (selectedMode === null) return;
+    if (!modesQuery.data) return;
+    if (modesQuery.data.modes.some((m) => m.name === selectedMode)) return;
+    setSelectedMode(null);
+  }, [selectedMode, modesQuery.data, setSelectedMode]);
+
   const handleCreateMode = useCallback(
     (name: string, label: string, description: string) => {
       saveMode.mutate(
@@ -224,6 +235,7 @@ export function ModesPage() {
 
   const error =
     modesQuery.error || (selectedMode !== null ? modeQuery.error : null);
+  const saveError = saveMode.error ?? deleteMode.error;
 
   const saveStatus = useMemo(() => {
     if (isSaving) return "Saving…";
@@ -281,8 +293,21 @@ export function ModesPage() {
       </div>
 
       {error && (
-        <div className="bg-destructive/10 text-destructive border-destructive border-l-2 px-6 py-3 text-sm">
+        <div
+          className="bg-destructive/10 text-destructive border-destructive border-l-2 px-6 py-3 text-sm"
+          role="alert"
+        >
           {error.message}
+        </div>
+      )}
+
+      {saveError && (
+        <div
+          className="bg-destructive/10 text-destructive border-destructive border-l-2 px-6 py-3 text-sm"
+          role="alert"
+          aria-live="polite"
+        >
+          Save failed: {saveError.message}
         </div>
       )}
 

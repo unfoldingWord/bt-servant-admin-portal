@@ -42,8 +42,21 @@ export function ManualConfigPage() {
       <div className="config-grid-bg min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="space-y-4 sm:space-y-6">
           {orgOverrides.error && (
-            <div className="bg-destructive/10 text-destructive border-destructive rounded-lg border-l-2 px-4 py-3 text-sm">
+            <div
+              className="bg-destructive/10 text-destructive border-destructive rounded-lg border-l-2 px-4 py-3 text-sm"
+              role="alert"
+            >
               {orgOverrides.error.message}
+            </div>
+          )}
+
+          {updateOrg.error && (
+            <div
+              className="bg-destructive/10 text-destructive border-destructive rounded-lg border-l-2 px-4 py-3 text-sm"
+              role="alert"
+              aria-live="polite"
+            >
+              Save failed: {updateOrg.error.message}
             </div>
           )}
 

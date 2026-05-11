@@ -306,6 +306,18 @@ export function LanguagesPage() {
     return null;
   }, [saveError, deleteError, loadError]);
   const error = forbiddenError ? null : loadError;
+  // Surface non-forbidden save / delete failures so the user can see *why* a
+  // save didn't stick — previously these were silently swallowed, leaving the
+  // "Unsaved changes" chip stuck without any explanation.
+  const genericMutationError = useMemo<Error | null>(() => {
+    if (saveError && !(saveError instanceof LanguageForbiddenError)) {
+      return saveError;
+    }
+    if (deleteError && !(deleteError instanceof LanguageForbiddenError)) {
+      return deleteError;
+    }
+    return null;
+  }, [saveError, deleteError]);
 
   const saveStatus = useMemo(() => {
     if (isSaving) return "Saving…";
@@ -365,8 +377,21 @@ export function LanguagesPage() {
       </div>
 
       {error && (
-        <div className="bg-destructive/10 text-destructive border-destructive border-l-2 px-6 py-3 text-sm">
+        <div
+          className="bg-destructive/10 text-destructive border-destructive border-l-2 px-6 py-3 text-sm"
+          role="alert"
+        >
           {error.message}
+        </div>
+      )}
+
+      {genericMutationError && (
+        <div
+          className="bg-destructive/10 text-destructive border-destructive border-l-2 px-6 py-3 text-sm"
+          role="alert"
+          aria-live="polite"
+        >
+          Save failed: {genericMutationError.message}
         </div>
       )}
 
