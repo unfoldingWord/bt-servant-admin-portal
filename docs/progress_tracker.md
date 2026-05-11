@@ -10,17 +10,19 @@
 
 ## Milestones
 
-| Milestone                             | Progress | Status             |
-| ------------------------------------- | -------- | ------------------ |
-| Per-PR ephemeral CF Workers (#83)     | 100%     | Shipped 2026-05-07 |
-| Auto-staging deploy on PR merge (#89) | 100%     | Shipped 2026-05-08 |
-| Language-shepherd permissions (#80)   | 100%     | Shipped 2026-05-08 |
-| Users admin UI (#96)                  | 100%     | Shipped 2026-05-08 |
-| Mode/language context accents (#78)   | 100%     | Shipped 2026-05-08 |
-| Language scaffold preload (#74)       | 100%     | Shipped 2026-05-11 |
-| Test chat trigger wiring (#81)        | 100%     | Shipped 2026-05-11 |
-| AlertDialogAction sweep (#102)        | 100%     | Shipped 2026-05-11 |
-| Epic #72 — Admin Portal Redesign      | ~75%     | In Progress        |
+| Milestone                             | Progress | Status                                    |
+| ------------------------------------- | -------- | ----------------------------------------- |
+| Per-PR ephemeral CF Workers (#83)     | 100%     | Shipped 2026-05-07                        |
+| Auto-staging deploy on PR merge (#89) | 100%     | Shipped 2026-05-08                        |
+| Language-shepherd permissions (#80)   | 100%     | Shipped 2026-05-08                        |
+| Users admin UI (#96)                  | 100%     | Shipped 2026-05-08                        |
+| Mode/language context accents (#78)   | 100%     | Shipped 2026-05-08                        |
+| Language scaffold preload (#74)       | 100%     | Shipped 2026-05-11                        |
+| Test chat trigger wiring (#81)        | 100%     | Shipped 2026-05-11                        |
+| AlertDialogAction sweep (#102)        | 100%     | Shipped 2026-05-11                        |
+| Mode markdown editor + TOC (#76, #82) | 100%     | Shipped 2026-05-11                        |
+| Retrospective audit batch (#112–#120) | 89%      | 8 of 9 shipped 2026-05-11 (#117 deferred) |
+| Epic #72 — Admin Portal Redesign      | ~95%     | In Progress (only #77 left)               |
 
 ### Per-PR ephemeral CF Workers — Shipped
 
@@ -52,9 +54,8 @@ This-repo sub-issues:
 - [x] **#78** — Visual differentiation between mode/language editor (shipped 2026-05-08, PR #103 at `4cb84cd`; brand-color top-strip accent on `PageHeader`)
 - [x] **#74** — Pre-load structural heading scaffold for new language documents (shipped 2026-05-11, PR #106 at `266017b`; Frank P2 fix: scaffold-readiness gate on Create button + hard guard in handler)
 - [x] **#81** — Wire test chat to active mode + language selection (shipped 2026-05-11, PR #107 at `3902613`; pre-pends `#<mode> @<lang>` per worker #211/#212 deterministic cascade)
-- [ ] #76 — Replace six-box mode editor with markdown editor + TOC — **NOW UNBLOCKED by worker #213 (Phase 1 migration shipped 2026-05-11)**
-- [ ] #77 — Comment-block syntax in editor (visual highlighting half: paused awaiting Ian's editor-library decision, tentative pick CodeMirror 6; backend stripping half tracked as bt-servant-worker#201)
-- [ ] #82 — Mode data migration (portal side) — **NOW UNBLOCKED by worker #213**
+- [x] **#76 + #82** — Mode markdown editor + TOC + portal-side migration (shipped 2026-05-11, PR #110 at `24e98c3`; new `/modes` page mirroring languages, six-box deprecated, `PromptMode.overrides` removed from portal type; #82 closed retroactively at EOD)
+- [ ] #77 — Comment-block syntax in editor (visual highlighting half: paused awaiting Ian's editor-library decision, tentative pick CodeMirror 6; backend stripping half — worker #201 closed 2026-05-11)
 
 Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API server — see 2026-05-08 evening session for the engine→worker refile audit):
 
@@ -62,13 +63,15 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [x] bt-servant-worker#198 — Per-org language scaffold endpoint — shipped 2026-05-09 (worker PR #205).
 - [x] bt-servant-worker#199 — `#<mode> @<language>` trigger syntax — superseded by worker #211; deterministic 3-tier cascade (exact → prefix → Levenshtein ≤ 2) with LLM-driven disambiguation downstream of parsing shipped 2026-05-11 (worker PR #212).
 - [x] bt-servant-worker#200 — Mode data migration Phase 1 (synthesize markdown on GET, tolerate both shapes on PUT) — shipped 2026-05-11 (worker PR #213).
-- [ ] bt-servant-worker#201 — Strip Ulysses-style comments at prompt assembly — filed 2026-05-08, replaces misfiled engine #205. **Last open worker blocker**; gates portal #77 backend half.
+- [x] bt-servant-worker#201 — Strip Ulysses-style comments at prompt assembly — closed 2026-05-11 by Ian (commit `ea5a911`); unblocks portal #77 backend half.
 
 ### Tech debt / housekeeping
 
 - [ ] #91 — Bump JavaScript actions to Node 24-compatible majors (`actions/checkout@v4` etc.) before GitHub's Jun 2 2026 forced opt-out / Sep 16 2026 hard removal. Filed 2026-05-08 after the deprecation annotation surfaced on the first staging-on-merge run.
 - [ ] #99 — Admin password reset via `/api/admin/users` PUT doesn't invalidate target user's existing sessions. Filed 2026-05-08 while building #96 — pulled the password-reset field from the edit dialog until this lands. Pre-existing on the X-Admin-Secret CLI path too.
 - [x] **#102 — AlertDialogAction sweep** — shipped 2026-05-11, PR #108 at `65d69b5`. All five remaining destructive-confirm dialogs now use plain `<Button>` + manual close on success; policy extracted as `runConfirmedAction` helper in `src/lib/run-confirmed-action.ts` with 6 unit tests pinning the contract.
+- [ ] **#117 — `/api/chat/stream` accepts arbitrary `user_id`** (deferred from 2026-05-11 retrospective batch). Worker validates UUIDv4 shape but not session ownership. Needs design call between (1) namespacing test-chat UUIDs as `test:<session.userId>:<uuid>` (smallest blast radius but wire-format change), (2) requiring `isAdmin` for cross-user, or (3) KV-tracked session→testChatUserId.
+- [ ] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Modes is the replacement; six-box "daunting squares" page goes away. Phase 1 (hide sidebar entry) is small; Phase 2 (full removal of page + worker BFF route + engine endpoint) needs Ian to confirm engine still consumes `/api/v1/admin/orgs/{org}/prompt-overrides` at chat time.
 
 ## Session Log
 
@@ -204,7 +207,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - **Other unblocked portal-side wins** (not Epic #72): **#102** (AlertDialogAction sweep — small, mechanical, three components), **#99** (admin password-reset session invalidation in portal worker BFF), **#91** (Node 24 actions bump, time-bound Sep 2026).
 - **Watch bt-servant-worker** for any of #197 / #198 / #199 / #200 / #201 to land — each unblocks portal-side work.
 
-### 2026-05-11 — Worker weekend cleared 4 blockers; portal shipped #74, #81, #102
+### 2026-05-11 (morning) — Worker weekend cleared 4 blockers; portal shipped #74, #81, #102
 
 **Context entering the session:** Ian shipped five worker PRs over the weekend, closing four of the five worker blockers (#197, #198, #199, #200; only #201 remained). Demo path `#spoken @arabic` end-to-end is now unblocked at the engine layer.
 
@@ -244,9 +247,54 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - **#77 visual half** — still paused on Ian's editor-library decision. Continue waiting.
 - **Backlog tech debt** when major Epic #72 demo path is in place: **#99** (password-reset session invalidation), **#91** (Node 24 actions bump).
 
+### 2026-05-11 (evening) — Mode markdown editor shipped; retrospective audit + cleanup batch
+
+**Context entering the session:** Worker #213 had just shipped Phase 1 mode migration earlier in the day; this evening session implemented the consumer side end-to-end, then ran a retrospective audit of the past 5 days of work and shipped 4 follow-up PRs from the findings.
+
+**Completed:**
+
+- **PR #110 / #76 + #82 — Mode markdown editor + TOC.** New `/modes` page mirrors the `languages.tsx` pattern (selector toolbar + `MarkdownToc` + `MarkdownEditor` + `lastSyncedDoc` autosave + pending-switch guards). `PromptMode.overrides` removed from the portal type per #82's "no legacy slot-map awareness" AC. `useSetModePublished` dropped — the new worker contract requires `document` on every PUT, so publish/unpublish goes through `useSaveMode` with the full body (mirrors `useSaveLanguage`). Existing `/prompt-configuration` route stripped to org-overrides-only and renamed "Prompt Overrides" in the sidebar with a new `faSliders` icon (Modes takes the `faPenToSquare` slot). Canonical 7-section H2 scaffold at `src/lib/mode-scaffold.ts` mirrors the worker's `toMarkdownView` synthesis for an empty mode so GET → PUT → GET is identity-clean. Drive-by: `putMode` now unwraps `{ org, mode, message }` envelope — third instance of the `putLanguage` / `putMode` pattern (the latent `putOrgOverrides` instance was caught in the audit immediately after).
+- **Retrospective audit of the 2026-05-07 → 2026-05-11 PR stretch.** Two parallel subagents — one for test-coverage gaps, one for latent-bug / missed-piece hunting. Findings synthesized into 9 issues: #112 (server-side authz hole on config mutations), #113 (`putOrgOverrides` envelope), #114 (silent save errors), #115 (createAdminUser password floor), #116 (UI selection leak across logins), #117 (chat-stream user_id ownership — deferred), #118 / #119 / #120 (test backfills). Codex/Frank confirmed the audit + reframed #111 (originally filed as UI-only) as the surface-side of #112's load-bearing server-side authz gap.
+- **PR #121 / #112 + #111 + #115 — Worker authz + password policy.** `worker/config.ts` now 403s non-admins on PUT/DELETE for both `/api/config/modes/{name}` and `/api/config/prompt-overrides`. `/modes` + `/prompt-configuration` wrapped in `<RequireAdmin>`. Sidebar entries gated on `isAdmin`. `mode-selector.tsx` "New Mode" + Delete buttons gated. `validatePasswordPolicy` (8 ≤ len ≤ 128) applied to `createUser` + `updateUser`. **Frank P2 fix `22ba60b`:** `updateUser` switched to `body.password !== undefined` so an empty-string admin reset doesn't silently no-op. 10 new tests in new `tests/config-authz.test.ts` + 7 new in `tests/admin-auth.test.ts`. Merged at `69d033b`.
+- **PR #122 / #113 + #114 + #116 — UX cleanup cluster.** `putOrgOverrides` envelope unwrap (third instance of the pattern, with a shared `unwrapOverridesResponse` helper). "Save failed: …" banner on modes + manual-config + languages pages (with `genericMutationError` filter on languages to separate from the existing forbidden-error banner). `useAuth.login` calls `resetUi()` symmetrically with logout. Modes page got a defensive useEffect parallel to languages.tsx:207-211 that drops a stale `selectedMode`. **Frank P2 fix `09a6b0c`:** autosave previously retried indefinitely on a failed save (`isPending` flip re-fired the effect). New `lastFailedDoc` state pauses autosave for the same draft until the user edits further or clicks Save manually; clears on success or selection change. Applied symmetrically to languages.tsx and modes.tsx. 8 new tests for `getOrgOverrides` / `putOrgOverrides`. Merged at `89d3c90`.
+- **PR #123 / #118 + #119 — High-value test backfill.** `tests/permissions.test.ts` (18 tests) pins the trinary back-compat (`undefined` / `"*"` / `string[]`) on `hasLanguageRights`, `hasAnyLanguageRights`, `filterAuthorizedLanguages` — the sole portal-side language gate in the trusted-portal model. `tests/markdown-headings.test.ts` (18 tests) pins the four-state suppression machine (fence + paragraph comment + inline span + slug uniqueness) plus a combined-state regression. Merged at `92cfdf4`.
+- **PR #124 / #120 — API client test backfill.** `tests/admin-users-api.test.ts` (15 tests, new file) — entire `admin-users-api.ts` was untested; pins the 403-vs-other-4xx error-class branching that the UI dialogs depend on, URL-encoding on email path params, non-JSON error body resilience. Added `listModes` / `deleteMode` / `getUserMemory` / `deleteUserMemory` / `setUserMode` / `clearUserMode` coverage (15 new) — including a **load-bearing body-shape assertion** that `setUserMode` sends `{ mode }` not `{ name }` (easy mis-refactor since the function param is named `mode`). Added `listLanguages` / `getLanguage` / `deleteLanguage` coverage (11 new) — pins the `operation` discriminant (`read` / `delete`) on `LanguageForbiddenError`. Rebased on main during merge to resolve a `tests/config-api.test.ts` conflict with PR #122; merged at `f19f798`.
+- **Issue #125 filed:** Remove Prompt Overrides — per Elsy (Epic owner) + Christou ("we're essentially merging those squares into one big square"). The split-into-two-pages choice from PR #110 was transitional; the Epic's intent was full replacement. Phase 1 (hide sidebar entry) is small and matches Elsy's explicit ask; Phase 2 (delete page + worker BFF route + engine endpoint) needs Ian's confirmation on whether the engine still consumes `/api/v1/admin/orgs/{org}/prompt-overrides` at chat time.
+
+**In Progress:**
+
+- None code-wise. #125 will be picked up in a fresh session.
+
+**Blockers:**
+
+- **#125 Phase 2** awaits Ian's confirmation on engine consumption of `/api/config/prompt-overrides`.
+- **#77 visual half** — still on Ian's editor-library decision (CodeMirror 6 tentative).
+
+**Frank review patterns surfaced this session:**
+
+- **Subagents catch bug clusters humans miss.** Two parallel subagents (one test-coverage, one latent-bug) produced 9 actionable issues from the 5-day stretch in ~5 minutes wall-clock. The latent-bug agent specifically caught the `putOrgOverrides` envelope-unwrap bug (third instance of a pattern I'd already fixed twice in `putLanguage` / `putMode`) — the kind of "I should have spotted this when writing it" miss that retrospective audits exist to catch.
+- **The "hammered-API retry" autosave failure mode.** Frank's PR-122 P2 — TanStack's `error` clears on each retry's `pending` phase, so a failing autosave both hammers the upstream API and flickers the error banner. The fix pattern (track `lastFailedDoc` separately; gate autosave on `debouncedDraft !== lastFailedDoc`; clear on edit or manual retry) is reusable for any optimistic-mutation UI.
+- **GitHub `Closes #N` only auto-closes the FIRST issue in a comma-list.** PR-body syntax `Closes #112, #111, #115` closed only #112 on merge — the others stayed open and needed manual closure at EOD. Captured in `feedback_gh_closes_keyword.md`. Workaround: repeat the keyword (`Closes #112, closes #111, closes #115`) or one-per-line.
+
+**Patterns / decisions captured today (evening):**
+
+- **Server-side authz is load-bearing; UI gates are defense-in-depth.** Per the trusted-portal model (worker holds the upstream admin token; engine has zero user identity), the portal worker is the only enforcement point. PR #110 added UI button gates on mode-selector, but PR #121 surfaced that the worker itself was happily proxying any authenticated session's PUT/DELETE. Both layers now exist; route `<RequireAdmin>` is the third backstop. Frank's framing was right: "UI gating without server gating is theater with a lint-friendly costume."
+- **Canonical mode scaffold matches the worker's synthesizer.** New modes open with all 7 H2 sections (`## Identity`, `## Teaching Methodology`, …) populated empty — matches what the worker emits via `toMarkdownView` for a slotted mode with empty bodies, so round-trip GET → PUT → GET is identity-clean at the section level. Constant lives at `src/lib/mode-scaffold.ts`.
+- **`lastFailedDoc` autosave gate.** Track failed-save drafts separately from `lastSyncedDoc`; pause autosave when `debouncedDraft === lastFailedDoc`; clear on success, selection change, or further edit. Without this, a 4xx-failing save retries on every `isPending → false` and hammers the API. Pattern in `src/app/pages/{languages,modes}.tsx`.
+- **GitHub `Closes` keyword is non-list-aware.** Captured as memory. Future PRs that close multiple issues should repeat the keyword.
+
+**Next Steps:**
+
+- **#125 — Remove (or hide) Prompt Overrides** is the highest-leverage next pick. Phase 1 (hide sidebar entry, ~3-line PR) matches Elsy's explicit ask and unblocks the Epic's "merging squares into one big square" intent. Phase 2 needs Ian for engine consumption check first.
+- **#77 backend half is now unblocked** (worker #201 closed today) but the visual half still awaits Ian's editor-library decision.
+- **Tech debt backlog**: **#99** (password-reset session invalidation), **#91** (Node 24 actions bump), **#117** (chat-stream `user_id` ownership — needs design call).
+- The Epic #72 demo path (`#spoken @arabic` end-to-end through the new editor) is now functionally complete; June 9 demo is in good shape with #77 visual-highlighting as the only optional polish remaining.
+
 ## Known Issues
 
 - **#99 — Admin password-reset doesn't invalidate target user's existing sessions.** `PUT /api/admin/users/{email}` accepts a `password` field that updates the hash but leaves the user's existing session records valid until expiry. Pre-existing on the X-Admin-Secret CLI path; pulled the password-reset field from the `AdminUserEditDialog` (PR #100) until this is fixed.
+- **#117 — `/api/chat/stream` accepts arbitrary `user_id` from session-cookied users.** Worker validates UUIDv4 shape but not ownership; a logged-in user could submit another user's test-chat UUID. Discovery requires knowing/guessing a v4 — hard but not impossible (logs / screen-share / copy-paste). Deferred from 2026-05-11 retrospective batch pending a design call between (1) namespacing test-chat UUIDs as `test:<session.userId>:<uuid>`, (2) requiring `isAdmin` for cross-user UUIDs, or (3) KV-tracked session→testChatUserId.
+- **#125 — Prompt Overrides removal (in flight).** Per Elsy + Christou, Modes is the replacement; six-box "Prompt Overrides" page should be hidden/removed. Phase 1 (hide sidebar entry) is small; Phase 2 (full removal) needs Ian's confirmation on engine consumption of `/api/v1/admin/orgs/{org}/prompt-overrides`.
 
 ## Architectural Decisions
 
@@ -273,6 +321,14 @@ Notable decisions made 2026-05-08:
 - **Worker test infrastructure pattern.** `@cloudflare/vitest-pool-workers` + miniflare with bindings declared inline (`bindings`, `kvNamespaces`). `Cloudflare.Env` augmented in `worker/env.d.ts` to `extends WorkerEnv` so test code is fully typed and the binding interface stays single-sourced in `worker/helpers.ts`. Tests run in-process in workerd, ~500ms for the auth matrix.
 - **The portal's API target is `bt-servant-worker`, not `bt-servant-engine`** (evening session). The env var `ENGINE_BASE_URL` is misleading — it points to `https://api.btservant.ai` which resolves to bt-servant-worker (Cloudflare Worker on Hono). bt-servant-engine (Python/FastAPI) is dormant since 2026-01-16 (last commit) — the CloudFlare Rebuild EPIC (engine #178, closed 2026-01-15) migrated all chat orchestration to the worker. Backend work for the portal lands in `bt-servant-worker`. The trusted-portal auth model previously attributed to "engine" is actually the worker's auth model — same conclusion (single shared admin token, no per-user identity on admin paths), correct repo.
 - **Brand context accents (issue #78).** Mode-editing and language-editing surfaces share a `PageHeader` and would otherwise look identical. A 3px top accent strip — Inspire blue (`oklch(0.71 0.108 226)`) for Modes, Cultivate teal (`oklch(0.78 0.054 195)`) for Languages — gives at-a-glance context. Tokens live as `--brand-modes` / `--brand-languages` in `globals.css`. Variant-prop opt-in keeps neutral consumers (Baruch, Admin Users) untouched.
+
+Notable decisions made 2026-05-11 (evening — retrospective batch):
+
+- **Server-side authz is the load-bearing gate; UI gating is defense-in-depth.** Trusted-portal model means the worker holds the upstream admin token and the engine has zero user identity. `worker/config.ts` now 403s non-admins on PUT/DELETE for both `/api/config/modes/{name}` and `/api/config/prompt-overrides`. UI button gates + `<RequireAdmin>` route wrappers + sidebar-entry gates are belt-and-suspenders. GETs stay open because non-admin sessions still need to read modes for the test-chat trigger lookup.
+- **Canonical mode scaffold matches worker synthesizer.** New mode documents open with all seven H2 sections (`## Identity` through `## Closing`) so that GET → PUT → GET is identity-clean at the section level vs. a not-yet-migrated slotted mode the worker synthesizes via `toMarkdownView`. Constant lives at `src/lib/mode-scaffold.ts`.
+- **`lastFailedDoc` autosave gate.** Track failed-save drafts separately from `lastSyncedDoc`; pause autosave when `debouncedDraft === lastFailedDoc`; clear on success, selection change, or further edit. Without this, a 4xx-failing save retries on every `isPending → false` (TanStack clears `error` while pending, so the banner also flickers). Pattern in `src/app/pages/{languages,modes}.tsx`.
+- **Password policy is centralized in `worker/admin.ts`.** `validatePasswordPolicy` (8 ≤ length ≤ 128) is used by both `createUser` and `updateUser` and mirrors `handleChangePassword` in `worker/auth.ts`. `updateUser`'s password branch uses `body.password !== undefined` (not truthy-check) so an empty-string admin reset rejects with the policy error rather than silently no-op'ing.
+- **GitHub `Closes` keyword is per-token, not list-aware.** `Closes #A, #B, #C` only closes `#A`. Captured in memory; future multi-issue PR bodies must repeat the keyword (`Closes #A, closes #B, closes #C`) or use one-per-line.
 
 Notable decisions made 2026-05-11:
 
