@@ -299,7 +299,10 @@ async function updateUser(
   if (body.isAdmin !== undefined) {
     user.isAdmin = body.isAdmin;
   }
-  if (body.password) {
+  // `!== undefined` (not truthy) so `{ password: "" }` falls into the
+  // policy check and rejects with "at least 8 characters" rather than
+  // silently no-op'ing and returning success.
+  if (body.password !== undefined) {
     const passwordError = validatePasswordPolicy(body.password);
     if (passwordError) {
       return errorResponse(passwordError, 400);

@@ -531,6 +531,41 @@ describe("admin password policy", () => {
     expect((body as { error: string }).error).toMatch(/at least 8/);
   });
 
+  it("update user with empty-string password → 400 (not silent no-op)", async () => {
+    // `if (body.password)` is falsy on "" and would skip validation entirely,
+    // returning 200 with no password change. The fix uses
+    // `body.password !== undefined` so empty string hits the policy check.
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    const originalHash = bob.passwordHash;
+    const session = await seedSession(alice);
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${bob.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: { password: "" },
+    });
+
+    expect(status).toBe(400);
+    expect((body as { error: string }).error).toMatch(/at least 8/);
+    // Stored hash must be unchanged.
+    const after = await env.AUTH_KV.get<StoredUser>("user:bob@acme.com", {
+      type: "json",
+    });
+    expect(after?.passwordHash).toBe(originalHash);
+  });
+
   it("create user with >128 char password → 400", async () => {
     const longPassword = "x".repeat(129);
     const { status, body } = await call({
