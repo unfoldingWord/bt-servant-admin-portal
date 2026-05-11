@@ -20,6 +20,7 @@ import {
   useLanguages,
   useSaveLanguage,
 } from "@/hooks/use-languages";
+import { useLanguageScaffold } from "@/hooks/use-language-scaffold";
 import type { MarkdownHeading } from "@/types/markdown";
 import {
   AlertDialog,
@@ -53,6 +54,7 @@ export function LanguagesPage() {
   const languageQuery = useLanguage(selectedLanguage);
   const saveLanguage = useSaveLanguage();
   const deleteLanguage = useDeleteLanguage();
+  const scaffoldQuery = useLanguageScaffold();
 
   // Filter the language list to only those the user has rights to. Engine
   // #207 will eventually filter server-side too, but until then this is the
@@ -215,19 +217,25 @@ export function LanguagesPage() {
 
   const handleCreateLanguage = useCallback(
     (name: string, label: string) => {
+      // Pre-populate the new language with the org's structural scaffold so
+      // shepherds don't start from a blank textarea (#74). The scaffold is
+      // fetched eagerly when the page mounts; if it hasn't arrived yet or
+      // the fetch failed, fall back to an empty document — losing the
+      // scaffold is a UX regression, not a correctness failure.
+      const scaffoldDoc = scaffoldQuery.data?.document ?? "";
       saveLanguage.mutate(
         {
           name,
           body: {
             label: label || undefined,
-            document: "",
+            document: scaffoldDoc,
             published: false,
           },
         },
         { onSuccess: () => setSelectedLanguage(name) }
       );
     },
-    [saveLanguage, setSelectedLanguage]
+    [saveLanguage, scaffoldQuery.data, setSelectedLanguage]
   );
 
   const handleSetPublished = useCallback(

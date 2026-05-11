@@ -152,5 +152,18 @@ export async function handleConfig(
     ]);
   }
 
+  // /api/config/language-scaffold → GET (org-scope; worker returns
+  // a bundled default if no override is stored). PUT/DELETE are not
+  // wired yet — there's no UI for editing the template, and exposing
+  // mutation paths without admin gating would be unsafe.
+  if (pathname === "/api/config/language-scaffold") {
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${org}/language-scaffold`,
+      ["GET"]
+    );
+  }
+
   return errorResponse("Not found", 404);
 }
