@@ -614,6 +614,212 @@ describe("admin password policy", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Password reset → session invalidation (#99)
+// ---------------------------------------------------------------------------
+
+// Helper: count sessions in AUTH_KV whose stored email matches `email`.
+async function countSessionsForEmail(email: string): Promise<number> {
+  let cursor: string | undefined;
+  let count = 0;
+  do {
+    const page = await env.AUTH_KV.list({ prefix: "session:", cursor });
+    for (const key of page.keys) {
+      const sess = await env.AUTH_KV.get<SessionData>(key.name, {
+        type: "json",
+      });
+      if (sess?.email === email) count += 1;
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return count;
+}
+
+describe("admin password-reset → session invalidation (#99)", () => {
+  it("cookie path: admin resets another user's password → target's sessions deleted, caller's session intact", async () => {
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    const aliceSession = await seedSession(alice);
+    // Bob has two active sessions (e.g., laptop + phone).
+    await seedSession(bob);
+    await seedSession(bob);
+
+    expect(await countSessionsForEmail(bob.email)).toBe(2);
+
+    const { status } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${bob.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: aliceSession,
+      body: { password: "new-password-123" },
+    });
+
+    expect(status).toBe(200);
+    expect(await countSessionsForEmail(bob.email)).toBe(0);
+    // Alice's session must still validate — her cookie shouldn't get
+    // collateral-damaged by Bob's reset.
+    expect(await countSessionsForEmail(alice.email)).toBe(1);
+  });
+
+  it("cookie path: admin resets own password → current session preserved, other own-email sessions deleted", async () => {
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    // Alice is logged in on two devices; she resets her own password from
+    // the first one. The first session is the caller; the second should
+    // be invalidated.
+    const aliceCurrentSession = await seedSession(alice);
+    await seedSession(alice);
+
+    expect(await countSessionsForEmail(alice.email)).toBe(2);
+
+    const { status } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${alice.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: aliceCurrentSession,
+      body: { password: "new-alice-password" },
+    });
+
+    expect(status).toBe(200);
+    // Only the caller's session survives.
+    expect(await countSessionsForEmail(alice.email)).toBe(1);
+    const surviving = await env.AUTH_KV.get(`session:${aliceCurrentSession}`);
+    expect(surviving).not.toBeNull();
+  });
+
+  it("X-Admin-Secret path: resets another user's password → all target sessions deleted (no caller session)", async () => {
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    await seedSession(bob);
+    await seedSession(bob);
+    await seedSession(bob);
+
+    expect(await countSessionsForEmail(bob.email)).toBe(3);
+
+    const { status } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${bob.email}`,
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: { password: "new-bob-password" },
+    });
+
+    expect(status).toBe(200);
+    expect(await countSessionsForEmail(bob.email)).toBe(0);
+  });
+
+  it("PUT without password → target's sessions untouched", async () => {
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    const aliceSession = await seedSession(alice);
+    await seedSession(bob);
+    await seedSession(bob);
+
+    const { status } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${bob.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: aliceSession,
+      body: { name: "Bob Updated", language_rights: ["es"] },
+    });
+
+    expect(status).toBe(200);
+    // Bob's two sessions are both preserved — non-password PUTs must not
+    // log users out.
+    expect(await countSessionsForEmail(bob.email)).toBe(2);
+  });
+
+  it("failed password policy → no sessions deleted (atomic: hash is not written, sessions not killed)", async () => {
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    const aliceSession = await seedSession(alice);
+    await seedSession(bob);
+    await seedSession(bob);
+
+    const { status } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${bob.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: aliceSession,
+      // Below the 8-char floor — must reject without touching sessions.
+      body: { password: "short" },
+    });
+
+    expect(status).toBe(400);
+    expect(await countSessionsForEmail(bob.email)).toBe(2);
+  });
+
+  it("password reset does not delete sessions belonging to OTHER users", async () => {
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    const carol = await seedUser({
+      email: "carol@acme.com",
+      name: "Carol",
+      org: "acme",
+    });
+    const aliceSession = await seedSession(alice);
+    await seedSession(bob);
+    await seedSession(carol);
+    await seedSession(carol);
+
+    const { status } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${bob.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: aliceSession,
+      body: { password: "new-bob-password" },
+    });
+
+    expect(status).toBe(200);
+    expect(await countSessionsForEmail(bob.email)).toBe(0);
+    // Carol's two sessions and Alice's caller session are untouched.
+    expect(await countSessionsForEmail(carol.email)).toBe(2);
+    expect(await countSessionsForEmail(alice.email)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Mixed paths
 // ---------------------------------------------------------------------------
 

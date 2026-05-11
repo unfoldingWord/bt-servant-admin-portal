@@ -46,6 +46,7 @@ export function AdminUserEditDialog({
   const [name, setName] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [rights, setRights] = useState<LanguageRights | undefined>(undefined);
+  const [password, setPassword] = useState("");
   const [errorText, setErrorText] = useState<string | null>(null);
 
   // Re-sync form state from the user prop whenever the target changes
@@ -55,6 +56,7 @@ export function AdminUserEditDialog({
     setName(user.name);
     setIsAdmin(user.isAdmin);
     setRights(user.language_rights);
+    setPassword("");
     setErrorText(null);
     updateUser.reset();
     // updateUser is a stable reference from React Query
@@ -83,6 +85,16 @@ export function AdminUserEditDialog({
     const nextSerialized = JSON.stringify(rights ?? null);
     if (currentSerialized !== nextSerialized && rights !== undefined) {
       body.language_rights = rights;
+    }
+    // Password is opt-in: only include when the admin actually typed
+    // something. Empty = leave the existing hash alone. Mirror the
+    // server's 8-char floor (worker rejects shorter with 400).
+    if (password) {
+      if (password.length < 8) {
+        setErrorText("Password must be at least 8 characters.");
+        return;
+      }
+      body.password = password;
     }
 
     if (Object.keys(body).length === 0) {
@@ -166,6 +178,31 @@ export function AdminUserEditDialog({
               availableLanguages={availableLanguages}
               showLegacyHint
             />
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-user-password">Reset password</Label>
+              <Input
+                id="edit-user-password"
+                type="text"
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Leave blank to keep current"
+              />
+              <p className="text-muted-foreground text-xs">
+                {isSelf ? (
+                  <>
+                    Sets a new password for your account. Your other sessions
+                    are signed out; this tab keeps working.
+                  </>
+                ) : (
+                  <>
+                    Sets a new password and signs the user out of every active
+                    session. Share the new password with them out-of-band.
+                  </>
+                )}
+              </p>
+            </div>
 
             {errorText && (
               <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">

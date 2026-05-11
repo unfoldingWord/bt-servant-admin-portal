@@ -37,10 +37,42 @@ async function isRateLimited(
 // Session helpers
 // ---------------------------------------------------------------------------
 
-function getSessionId(request: Request): string | null {
+export function getSessionId(request: Request): string | null {
   const cookie = request.headers.get("Cookie") || "";
   const match = cookie.match(/(?:^|;\s*)session=([^\s;]+)/);
   return match?.[1] ?? null;
+}
+
+// Scans session:* in AUTH_KV and deletes every session whose stored email
+// matches targetEmail. Optionally skips one session id — used by callers
+// that want to preserve their own cookie (self-change-password, admin
+// resetting their own password). Awaits all deletes before returning so
+// callers can be sure invalidation took effect before responding.
+export async function invalidateUserSessions(
+  env: Env,
+  targetEmail: string,
+  exceptSessionId?: string | null
+): Promise<void> {
+  let cursor: string | undefined;
+  const deletePromises: Promise<void>[] = [];
+  do {
+    const page = await env.AUTH_KV.list({ prefix: "session:", cursor });
+    const reads = page.keys
+      .filter(
+        (key) => !exceptSessionId || key.name !== `session:${exceptSessionId}`
+      )
+      .map(async (key) => {
+        const sess = await env.AUTH_KV.get<SessionData>(key.name, {
+          type: "json",
+        });
+        if (sess?.email === targetEmail) {
+          deletePromises.push(env.AUTH_KV.delete(key.name));
+        }
+      });
+    await Promise.all(reads);
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  await Promise.all(deletePromises);
 }
 
 function sessionCookie(
@@ -280,30 +312,10 @@ export async function handleChangePassword(
 
   await env.AUTH_KV.put(`user:${session.email}`, JSON.stringify(user));
 
-  // Invalidate all other sessions for this user
-  const currentSessionId = getSessionId(request);
-  let cursor: string | undefined;
-  const deletePromises: Promise<void>[] = [];
-  do {
-    const page = await env.AUTH_KV.list({
-      prefix: "session:",
-      cursor,
-    });
-
-    const reads = page.keys
-      .filter((key) => key.name !== `session:${currentSessionId}`)
-      .map(async (key) => {
-        const sess = await env.AUTH_KV.get<SessionData>(key.name, {
-          type: "json",
-        });
-        if (sess?.email === session.email) {
-          deletePromises.push(env.AUTH_KV.delete(key.name));
-        }
-      });
-    await Promise.all(reads);
-
-    cursor = page.list_complete ? undefined : page.cursor;
-  } while (cursor);
+  // Invalidate all other sessions for this user. The caller's session is
+  // preserved so they don't get logged out of the tab where they just
+  // changed their password.
+  await invalidateUserSessions(env, session.email, getSessionId(request));
 
   return jsonResponse({ ok: true });
 }

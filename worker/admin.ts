@@ -1,4 +1,4 @@
-import { validateSession } from "./auth";
+import { getSessionId, invalidateUserSessions, validateSession } from "./auth";
 import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
@@ -61,7 +61,15 @@ function parseLanguageRights(
 
 type AdminScope =
   | { kind: "super" }
-  | { kind: "org"; org: string; selfEmail: string };
+  | {
+      kind: "org";
+      org: string;
+      selfEmail: string;
+      // Caller's session id, so a self-password-reset can preserve the
+      // current browser tab while still invalidating every other session
+      // for that email.
+      selfSessionId: string | null;
+    };
 
 async function requireAdminAuth(
   request: Request,
@@ -83,7 +91,12 @@ async function requireAdminAuth(
     return errorResponse("Forbidden", 403);
   }
 
-  return { kind: "org", org: session.org, selfEmail: session.email };
+  return {
+    kind: "org",
+    org: session.org,
+    selfEmail: session.email,
+    selfSessionId: getSessionId(request),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -302,13 +315,14 @@ async function updateUser(
   // `!== undefined` (not truthy) so `{ password: "" }` falls into the
   // policy check and rejects with "at least 8 characters" rather than
   // silently no-op'ing and returning success.
-  if (body.password !== undefined) {
-    const passwordError = validatePasswordPolicy(body.password);
+  const passwordChanged = body.password !== undefined;
+  if (passwordChanged) {
+    const passwordError = validatePasswordPolicy(body.password as string);
     if (passwordError) {
       return errorResponse(passwordError, 400);
     }
     user.salt = generateSalt();
-    user.passwordHash = await hashPassword(body.password, user.salt);
+    user.passwordHash = await hashPassword(body.password as string, user.salt);
   }
   if (body.language_rights !== undefined) {
     const rightsResult = parseLanguageRights(body.language_rights);
@@ -319,6 +333,19 @@ async function updateUser(
   }
 
   await env.AUTH_KV.put(`user:${email}`, JSON.stringify(user));
+
+  // After a password change, every existing session for the target user
+  // must be invalidated so the new password is actually required to
+  // continue. Preserve the caller's own session when they're resetting
+  // their own password via the cookie path; the X-Admin-Secret CLI path
+  // has no caller session to preserve.
+  if (passwordChanged) {
+    const exceptSessionId =
+      scope.kind === "org" && scope.selfEmail === email
+        ? scope.selfSessionId
+        : null;
+    await invalidateUserSessions(env, email, exceptSessionId);
+  }
 
   return jsonResponse({ user: safeUser(user) });
 }
