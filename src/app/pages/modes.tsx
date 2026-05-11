@@ -59,6 +59,11 @@ export function ModesPage() {
   const [draft, setDraft] = useState("");
   const [lastSyncedDoc, setLastSyncedDoc] = useState("");
   const [lastSyncedPublished, setLastSyncedPublished] = useState(false);
+  // Pauses autosave on a draft that already failed once, so a failed save
+  // doesn't loop on every isPending → false transition (Frank P2 on
+  // PR #122). User recovers by editing further (changes debouncedDraft) or
+  // by clicking Save manually (which routes through `flushSave`).
+  const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activeLine = useActiveHeadingLine(textareaRef, draft, headings);
@@ -74,6 +79,7 @@ export function ModesPage() {
       setDraft("");
       setLastSyncedDoc("");
       setLastSyncedPublished(false);
+      setLastFailedDoc(null);
       return;
     }
     if (!modeQuery.data) return;
@@ -82,6 +88,7 @@ export function ModesPage() {
     setDraft(modeQuery.data.document);
     setLastSyncedDoc(modeQuery.data.document);
     setLastSyncedPublished(modeQuery.data.published ?? false);
+    setLastFailedDoc(null);
     syncedNameRef.current = selectedMode;
   }, [selectedMode, modeQuery.data]);
 
@@ -102,7 +109,13 @@ export function ModesPage() {
             published: lastSyncedPublished,
           },
         },
-        { onSuccess: () => setLastSyncedDoc(doc) }
+        {
+          onSuccess: () => {
+            setLastSyncedDoc(doc);
+            setLastFailedDoc(null);
+          },
+          onError: () => setLastFailedDoc(doc),
+        }
       );
     },
     [
@@ -118,11 +131,13 @@ export function ModesPage() {
     if (!selectedMode) return;
     if (saveMode.isPending) return;
     if (debouncedDraft === lastSyncedDoc) return;
+    if (debouncedDraft === lastFailedDoc) return;
     performSave(debouncedDraft);
   }, [
     debouncedDraft,
     saveMode.isPending,
     lastSyncedDoc,
+    lastFailedDoc,
     performSave,
     selectedMode,
   ]);

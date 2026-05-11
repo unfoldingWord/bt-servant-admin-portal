@@ -92,6 +92,12 @@ export function LanguagesPage() {
   // Publish/Unpublish click reads stale `published` from the cache and the
   // PUT silently reverts the toggle (Frank P2 review of #93).
   const [lastSyncedPublished, setLastSyncedPublished] = useState(false);
+  // The most recently autosaved doc that failed. Used to pause autosave on
+  // the same draft until the user edits it again or hits Save manually — a
+  // failed save would otherwise retry indefinitely (Frank P2 on PR #122),
+  // hammering the API and flickering the error banner because TanStack
+  // clears `error` while a retry is `pending`.
+  const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activeLine = useActiveHeadingLine(textareaRef, draft, headings);
@@ -110,6 +116,7 @@ export function LanguagesPage() {
       setDraft("");
       setLastSyncedDoc("");
       setLastSyncedPublished(false);
+      setLastFailedDoc(null);
       return;
     }
     // Wait for the query data to arrive AND match the current selection
@@ -121,6 +128,7 @@ export function LanguagesPage() {
     setDraft(languageQuery.data.document);
     setLastSyncedDoc(languageQuery.data.document);
     setLastSyncedPublished(languageQuery.data.published ?? false);
+    setLastFailedDoc(null);
     syncedNameRef.current = selectedLanguage;
   }, [selectedLanguage, languageQuery.data]);
 
@@ -148,7 +156,13 @@ export function LanguagesPage() {
             published: lastSyncedPublished,
           },
         },
-        { onSuccess: () => setLastSyncedDoc(doc) }
+        {
+          onSuccess: () => {
+            setLastSyncedDoc(doc);
+            setLastFailedDoc(null);
+          },
+          onError: () => setLastFailedDoc(doc),
+        }
       );
     },
     [lastSyncedPublished, saveLanguage, selectedLanguage, serverLabel]
@@ -158,15 +172,25 @@ export function LanguagesPage() {
   // Re-runs when an in-flight save settles so a "save in progress, user
   // typed more" scenario flushes the newer edits as soon as the first
   // save returns.
+  //
+  // The `lastFailedDoc` gate pauses autosave for a draft that already
+  // failed once — without it, the effect would re-fire as soon as
+  // `isPending` flips back to false, putting us in an indefinite retry
+  // loop that hammers the API and flickers the error banner. The user
+  // recovers by either (a) editing the draft (changes `debouncedDraft`)
+  // or (b) clicking Save manually (which routes through `flushSave` and
+  // explicitly retries the failed doc).
   useEffect(() => {
     if (!selectedLanguage) return;
     if (saveLanguage.isPending) return;
     if (debouncedDraft === lastSyncedDoc) return;
+    if (debouncedDraft === lastFailedDoc) return;
     performSave(debouncedDraft);
   }, [
     debouncedDraft,
     saveLanguage.isPending,
     lastSyncedDoc,
+    lastFailedDoc,
     performSave,
     selectedLanguage,
   ]);
