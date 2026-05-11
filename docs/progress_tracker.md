@@ -5,7 +5,7 @@
 ## Current Status
 
 **Phase**: Active development on Epic #72 (Admin Portal Redesign for Response Tuning)
-**Last Updated**: 2026-05-08
+**Last Updated**: 2026-05-11
 **Demo target**: June 9 — `#spoken @arabic` working end-to-end with the new editor
 
 ## Milestones
@@ -17,7 +17,10 @@
 | Language-shepherd permissions (#80)   | 100%     | Shipped 2026-05-08 |
 | Users admin UI (#96)                  | 100%     | Shipped 2026-05-08 |
 | Mode/language context accents (#78)   | 100%     | Shipped 2026-05-08 |
-| Epic #72 — Admin Portal Redesign      | ~55%     | In Progress        |
+| Language scaffold preload (#74)       | 100%     | Shipped 2026-05-11 |
+| Test chat trigger wiring (#81)        | 100%     | Shipped 2026-05-11 |
+| AlertDialogAction sweep (#102)        | 100%     | Shipped 2026-05-11 |
+| Epic #72 — Admin Portal Redesign      | ~75%     | In Progress        |
 
 ### Per-PR ephemeral CF Workers — Shipped
 
@@ -47,25 +50,25 @@ This-repo sub-issues:
 - [x] **#80** — Language-shepherd permissions (shipped 2026-05-08, PR #95 at `b349707`; 5 review rounds with Frank)
 - [x] **#96** — Users admin UI for assigning rights (shipped 2026-05-08, follow-up to #80; backend PR #97 at `8a1c345`, frontend PR #100 at `e119596`)
 - [x] **#78** — Visual differentiation between mode/language editor (shipped 2026-05-08, PR #103 at `4cb84cd`; brand-color top-strip accent on `PageHeader`)
-- [ ] #74 — Pre-load structural heading scaffold for new language documents (depends on bt-servant-worker#198)
-- [ ] #76 — Replace six-box mode editor with markdown editor + TOC (depends on #75 + bt-servant-worker#200)
+- [x] **#74** — Pre-load structural heading scaffold for new language documents (shipped 2026-05-11, PR #106 at `266017b`; Frank P2 fix: scaffold-readiness gate on Create button + hard guard in handler)
+- [x] **#81** — Wire test chat to active mode + language selection (shipped 2026-05-11, PR #107 at `3902613`; pre-pends `#<mode> @<lang>` per worker #211/#212 deterministic cascade)
+- [ ] #76 — Replace six-box mode editor with markdown editor + TOC — **NOW UNBLOCKED by worker #213 (Phase 1 migration shipped 2026-05-11)**
 - [ ] #77 — Comment-block syntax in editor (visual highlighting half: paused awaiting Ian's editor-library decision, tentative pick CodeMirror 6; backend stripping half tracked as bt-servant-worker#201)
-- [ ] #81 — Wire test chat to active mode + language selection (mode-only is unblocked but ships as half-feature; language wiring blocked on bt-servant-worker#197 + #199)
-- [ ] #82 — Mode data migration (portal side; depends on bt-servant-worker#200)
+- [ ] #82 — Mode data migration (portal side) — **NOW UNBLOCKED by worker #213**
 
 Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API server — see 2026-05-08 evening session for the engine→worker refile audit):
 
-- [ ] bt-servant-worker#197 — Add Language CRUD endpoints (mirror of modes endpoints) — filed 2026-05-08, replaces misfiled engine #206. Blocks portal #74 / #76 / #82 + real validation of #79 / #73.
-- [ ] bt-servant-worker#198 — Per-org language scaffold endpoint — filed 2026-05-08. Blocks portal #74.
-- [ ] bt-servant-worker#199 — `#<mode> @<language>` trigger syntax in chat preprocessing — filed 2026-05-08, replaces misfiled engine #203 (and supersedes worker #192 which was closed without implementation).
-- [ ] bt-servant-worker#200 — Mode data migration Phase 1 — filed 2026-05-08, replaces misfiled engine #204.
-- [ ] bt-servant-worker#201 — Strip Ulysses-style comments at prompt assembly — filed 2026-05-08, replaces misfiled engine #205.
+- [x] bt-servant-worker#197 — Language CRUD endpoints — shipped 2026-05-09 (worker PR #202).
+- [x] bt-servant-worker#198 — Per-org language scaffold endpoint — shipped 2026-05-09 (worker PR #205).
+- [x] bt-servant-worker#199 — `#<mode> @<language>` trigger syntax — superseded by worker #211; deterministic 3-tier cascade (exact → prefix → Levenshtein ≤ 2) with LLM-driven disambiguation downstream of parsing shipped 2026-05-11 (worker PR #212).
+- [x] bt-servant-worker#200 — Mode data migration Phase 1 (synthesize markdown on GET, tolerate both shapes on PUT) — shipped 2026-05-11 (worker PR #213).
+- [ ] bt-servant-worker#201 — Strip Ulysses-style comments at prompt assembly — filed 2026-05-08, replaces misfiled engine #205. **Last open worker blocker**; gates portal #77 backend half.
 
 ### Tech debt / housekeeping
 
 - [ ] #91 — Bump JavaScript actions to Node 24-compatible majors (`actions/checkout@v4` etc.) before GitHub's Jun 2 2026 forced opt-out / Sep 16 2026 hard removal. Filed 2026-05-08 after the deprecation annotation surfaced on the first staging-on-merge run.
 - [ ] #99 — Admin password reset via `/api/admin/users` PUT doesn't invalidate target user's existing sessions. Filed 2026-05-08 while building #96 — pulled the password-reset field from the edit dialog until this lands. Pre-existing on the X-Admin-Secret CLI path too.
-- [ ] **#102 — AlertDialogAction sweep** (filed 2026-05-08). Frank's anti-pattern from PR #100 also affects `src/components/language-selector.tsx` (Delete + Unpublish), `src/components/mode-selector.tsx` (Delete + Unpublish), and `src/components/user-memory-dialog.tsx` (one destructive action). Same fix as `admin-users.tsx` (PR #100, fff8366): swap `AlertDialogAction` → plain `<Button>`, close manually on success.
+- [x] **#102 — AlertDialogAction sweep** — shipped 2026-05-11, PR #108 at `65d69b5`. All five remaining destructive-confirm dialogs now use plain `<Button>` + manual close on success; policy extracted as `runConfirmedAction` helper in `src/lib/run-confirmed-action.ts` with 6 unit tests pinning the contract.
 
 ## Session Log
 
@@ -201,10 +204,49 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - **Other unblocked portal-side wins** (not Epic #72): **#102** (AlertDialogAction sweep — small, mechanical, three components), **#99** (admin password-reset session invalidation in portal worker BFF), **#91** (Node 24 actions bump, time-bound Sep 2026).
 - **Watch bt-servant-worker** for any of #197 / #198 / #199 / #200 / #201 to land — each unblocks portal-side work.
 
+### 2026-05-11 — Worker weekend cleared 4 blockers; portal shipped #74, #81, #102
+
+**Context entering the session:** Ian shipped five worker PRs over the weekend, closing four of the five worker blockers (#197, #198, #199, #200; only #201 remained). Demo path `#spoken @arabic` end-to-end is now unblocked at the engine layer.
+
+**Completed:**
+
+- **PR #105 — AGENTS.md uw-sandbox routing note.** Tiny housekeeping: explicit "run npm/wrangler/etc. inside `uw-sandbox`" instruction added at the top of `AGENTS.md` Commands section. Prevents host/container toolchain drift. Frank cleared no findings. Merged at `cca0f72`.
+- **PR #106 / #74 — Pre-load structural scaffold for new language documents.** Wires the portal to bt-servant-worker's new per-org `language-scaffold` endpoint (worker PR #205). New `useLanguageScaffold` hook + `getLanguageScaffold` API client + BFF route (`GET /api/config/language-scaffold` only; PUT/DELETE not exposed yet — no UI to gate them). `LanguagesPage.handleCreateLanguage` reads cached scaffold; on create the new doc opens with the org's structural template (5 H2 sections with `%%` Ulysses guidance comments) instead of an empty textarea. **Drive-by:** `putLanguage` unwrap fix to match `getLanguage` (response shape was `{ org, language, message }` but the client cast it directly as `Language`). Tests added for scaffold + putLanguage unwrap (10 cases total via `vi.spyOn(globalThis.fetch)`). **Frank P2:** the initial cut fell back to `document: ""` when the scaffold query hadn't resolved or had failed — that's exactly the bug the feature meant to fix. Two-layer gate landed in `5b532f4`: Create button disabled until `scaffoldQuery.isSuccess`, with inline loading/error message; `handleCreateLanguage` hard-returns if scaffold data is absent. Frank re-reviewed clean. Merged at `266017b`.
+- **PR #107 / #81 — Wire test chat to active mode + language selection.** Pre-pends `#<mode> @<language>` from the editor-tab selections to the outgoing chat message; the worker classifier strips both matched and unmatched tokens before history, so the prepended trigger never pollutes the stored conversation. New `applyTriggerPrefix` pure helper + 9 unit tests covering all (mode×lang) null/set permutations, message preservation, power-user mid-message-trigger override case, and empty message edge. New `<ActiveTriggerStrip>` row below the chat header shows the literal trigger that will be prepended (e.g. `#spoken @arabic`) in monospace, or _Default — no override_ italic muted when neither is set; reads live from `ui-store` so it updates as the user navigates tabs. Frank cleared both rounds. Merged at `3902613`.
+- **PR #108 / #102 — AlertDialogAction sweep.** All five remaining destructive-confirm dialogs (`language-selector` Unpublish + Delete, `mode-selector` Unpublish + Delete, `user-memory-dialog` ClearMemoryButton) now use plain `<Button>` + controlled-dialog state + manual close on success, matching the `admin-users.tsx` precedent from PR #100. Policy extracted as `runConfirmedAction` in `src/lib/run-confirmed-action.ts` — 6 unit tests pin the contract (happy path, rejection → no onSuccess, Error.message extraction, non-Error fallback, default fallback, temporal ordering). Parent callback signatures changed to `Promise<void>` so dialogs can await; `mutateAsync` adopted in `languages.tsx` and `manual-config.tsx`. **Frank P2:** the synchronous-fire Publish button (no confirmation dialog) was calling `void onSetPublished(...)` — `void` doesn't catch a rejection, so a failed publish bubbled as an unhandled promise rejection. Fixed in `1197608` with explicit `.catch(() => {})` matching pre-PR silent-failure behavior. Frank re-reviewed clean. Merged at `65d69b5`.
+- **Upstream PR: `unfoldingWord/uw-dev-skills#1` — local-date session conventions.** Surfaced when wrapping up: the SOD/EOD/progress templates implicitly assumed `date` in the shell, but `uw-sandbox` reports UTC so evening sessions could create a duplicate next-day tracker entry. Updated all three command templates to (a) use the user-local date from the system prompt's `currentDate` field and (b) document the multi-session-per-day convention (append qualifier `morning`/`afternoon`/`evening`/`late-evening` rather than duplicate top-level date heading). Merged.
+
+**In Progress:**
+
+- None — all four PRs merged.
+
+**Blockers:**
+
+- **bt-servant-worker#201** (Strip Ulysses-style comments at prompt assembly) — only remaining open worker blocker; gates portal #77 backend half. Portal #77 visual-highlighting half remains paused on Ian's editor-library decision.
+
+**Frank review patterns surfaced this session:**
+
+- **Cite the SHA you reviewed.** Two reviews this session bit on stale code — Frank cited line numbers from an older commit while CI ran against a newer one. Both resolved by re-running review against the fix SHA. The fix → re-review cycle works as long as the SHA the reviewer cites is named explicitly.
+- **`mutateAsync` rejection handling.** Switching from `mutate` to `mutateAsync` is not free — `void` operator suppresses no-floating-promises lint but does NOT catch the rejection. Any sync-fire caller of an async callback needs an explicit `.catch()`, or it'll show up as an unhandled promise rejection in production console.
+
+**Patterns / decisions captured today:**
+
+- **Tests under `tests/` can pull from `src/` via `@/*` path mapping in `tsconfig.worker.json`.** Added the path mapping so `tests/chat-api.test.ts`, `tests/languages-api.test.ts`, etc. can `import { applyTriggerPrefix } from "@/lib/chat-api"`. Transitively-imported `src/` modules typecheck under worker tsconfig as long as they only use Web/Worker types (no DOM, no JSX). Lives in `tsconfig.worker.json:32-35`.
+- **`runConfirmedAction` is the canonical destructive-dialog policy.** Single helper in `src/lib/run-confirmed-action.ts` owns the "clear error → await → close on success, set error and stay open on failure" lifecycle. All five destructive-confirm dialogs call it identically; future destructive UIs should reuse it rather than re-implementing.
+- **Worker contract validation: static analysis suffices when both sides are source-readable.** The Languages CRUD + scaffold endpoint contracts were validated by reading worker `src/index.ts` head + portal client code, without live curl. Worker has 572 tests + Ian designed the endpoints to match portal calls. Net cost: ~10 minutes; net value: high confidence to start building. Live smoke can come pre-demo.
+- **The `#mode @language` trigger lives entirely in the message text.** No new wire field on the chat endpoint. Worker classifier extracts tokens deterministically (3-tier cascade: exact → unique prefix → unique Levenshtein ≤ 2; worker #211 / PR #212), strips both matched and unmatched tokens before history, and routes unmatched to the orchestrator's system prompt for a contextual "did you mean…" reply. Portal-side: just prepend `#<mode> @<lang>` to the outgoing message.
+- **Local user date for session entries, not container `date`.** `uw-sandbox`'s system clock often reports UTC; during local-evening sessions that's tomorrow's date. SOD/EOD/progress templates and memory entry `feedback_local_date_for_sessions.md` now codify: read from system prompt's `currentDate`, append session-qualified sub-entries for same-day continuation rather than duplicate date headings.
+
+**Next Steps:**
+
+- **#76 — Replace six-box mode editor with markdown editor + TOC.** Now unblocked (worker #213 shipped today). This is the load-bearing piece left for the June 9 demo path — once it lands, `#spoken @arabic` end-to-end works from the new editor. Pairs with #82 (portal-side mode data migration) which is also unblocked.
+- **#82 — Mode data migration (portal side).** Companion to worker #213. Worker now synthesizes markdown on GET (`format: "markdown"` + `originalSlots` for diagnostics) and tolerates both shapes on PUT — portal just needs the editor wire-up.
+- **#77 visual half** — still paused on Ian's editor-library decision. Continue waiting.
+- **Backlog tech debt** when major Epic #72 demo path is in place: **#99** (password-reset session invalidation), **#91** (Node 24 actions bump).
+
 ## Known Issues
 
 - **#99 — Admin password-reset doesn't invalidate target user's existing sessions.** `PUT /api/admin/users/{email}` accepts a `password` field that updates the hash but leaves the user's existing session records valid until expiry. Pre-existing on the X-Admin-Secret CLI path; pulled the password-reset field from the `AdminUserEditDialog` (PR #100) until this is fixed.
-- **#102 — AlertDialogAction sweep** (filed 2026-05-08). Frank's anti-pattern from PR #100 affects three components: `src/components/language-selector.tsx` (Delete + Unpublish), `src/components/mode-selector.tsx` (Delete + Unpublish), and `src/components/user-memory-dialog.tsx` (one destructive action). Same fix as `admin-users.tsx` (PR #100, fff8366): swap `AlertDialogAction` → plain `<Button>`, hold dialog open during async, close manually on success.
 
 ## Architectural Decisions
 
@@ -231,3 +273,10 @@ Notable decisions made 2026-05-08:
 - **Worker test infrastructure pattern.** `@cloudflare/vitest-pool-workers` + miniflare with bindings declared inline (`bindings`, `kvNamespaces`). `Cloudflare.Env` augmented in `worker/env.d.ts` to `extends WorkerEnv` so test code is fully typed and the binding interface stays single-sourced in `worker/helpers.ts`. Tests run in-process in workerd, ~500ms for the auth matrix.
 - **The portal's API target is `bt-servant-worker`, not `bt-servant-engine`** (evening session). The env var `ENGINE_BASE_URL` is misleading — it points to `https://api.btservant.ai` which resolves to bt-servant-worker (Cloudflare Worker on Hono). bt-servant-engine (Python/FastAPI) is dormant since 2026-01-16 (last commit) — the CloudFlare Rebuild EPIC (engine #178, closed 2026-01-15) migrated all chat orchestration to the worker. Backend work for the portal lands in `bt-servant-worker`. The trusted-portal auth model previously attributed to "engine" is actually the worker's auth model — same conclusion (single shared admin token, no per-user identity on admin paths), correct repo.
 - **Brand context accents (issue #78).** Mode-editing and language-editing surfaces share a `PageHeader` and would otherwise look identical. A 3px top accent strip — Inspire blue (`oklch(0.71 0.108 226)`) for Modes, Cultivate teal (`oklch(0.78 0.054 195)`) for Languages — gives at-a-glance context. Tokens live as `--brand-modes` / `--brand-languages` in `globals.css`. Variant-prop opt-in keeps neutral consumers (Baruch, Admin Users) untouched.
+
+Notable decisions made 2026-05-11:
+
+- **`#mode @language` override is inline in the message text, not a wire field.** Final form of worker #199 (shipped via #211 / PR #212) is a deterministic 3-tier cascade (exact → unique prefix → unique Levenshtein ≤ 2) parsed from the leading tokens of the user message. The worker strips both matched and unmatched tokens before history, and routes unmatched tokens to the orchestrator's system prompt for a contextual "did you mean…" reply. Portal-side, the per-turn override is implemented by pre-pending `#<mode> @<lang>` to the outgoing message — `applyTriggerPrefix` in `src/lib/chat-api.ts`. No new field on the chat endpoint contract.
+- **`runConfirmedAction` is the canonical destructive-confirmation policy.** Lives at `src/lib/run-confirmed-action.ts`. Owns the "clear error → await → close on success, set error and stay open on failure" lifecycle for any async destructive confirmation. Used by all five destructive-confirm dialogs in the app as of PR #108. Future destructive UI should reuse this helper rather than re-implementing the try/catch/state-machine inline.
+- **Tests in `tests/` can import from `src/`.** `tsconfig.worker.json` now declares `"@/*": ["./src/*"]` so test files exercise pure functions and fetch-wrappers from the browser-side codebase using the project's standard alias. Transitively-pulled `src/` modules must stay free of DOM/JSX types for this to typecheck under the worker tsconfig (currently true for `src/types/chat`, `src/types/language*`, `src/lib/chat-api`, `src/lib/languages-api`, `src/lib/language-scaffold-api`).
+- **Local user date for session tracking, not container `date`.** `uw-sandbox`'s system clock is UTC; during local-evening sessions it may have already rolled to tomorrow. Skill templates (`.claude/commands/sod.md`, `eod.md`, `progress.md`) and upstream `unfoldingWord/uw-dev-skills` codify: use the user's local date from system prompt `currentDate`; for multiple sessions on one local day, append `(morning)` / `(afternoon)` / `(evening)` / `(late-evening)` sub-headings rather than duplicate top-level date headings.
