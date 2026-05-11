@@ -10,19 +10,21 @@
 
 ## Milestones
 
-| Milestone                             | Progress | Status                                    |
-| ------------------------------------- | -------- | ----------------------------------------- |
-| Per-PR ephemeral CF Workers (#83)     | 100%     | Shipped 2026-05-07                        |
-| Auto-staging deploy on PR merge (#89) | 100%     | Shipped 2026-05-08                        |
-| Language-shepherd permissions (#80)   | 100%     | Shipped 2026-05-08                        |
-| Users admin UI (#96)                  | 100%     | Shipped 2026-05-08                        |
-| Mode/language context accents (#78)   | 100%     | Shipped 2026-05-08                        |
-| Language scaffold preload (#74)       | 100%     | Shipped 2026-05-11                        |
-| Test chat trigger wiring (#81)        | 100%     | Shipped 2026-05-11                        |
-| AlertDialogAction sweep (#102)        | 100%     | Shipped 2026-05-11                        |
-| Mode markdown editor + TOC (#76, #82) | 100%     | Shipped 2026-05-11                        |
-| Retrospective audit batch (#112–#120) | 89%      | 8 of 9 shipped 2026-05-11 (#117 deferred) |
-| Epic #72 — Admin Portal Redesign      | ~95%     | In Progress (only #77 left)               |
+| Milestone                                 | Progress | Status                                                   |
+| ----------------------------------------- | -------- | -------------------------------------------------------- |
+| Per-PR ephemeral CF Workers (#83)         | 100%     | Shipped 2026-05-07                                       |
+| Auto-staging deploy on PR merge (#89)     | 100%     | Shipped 2026-05-08                                       |
+| Language-shepherd permissions (#80)       | 100%     | Shipped 2026-05-08                                       |
+| Users admin UI (#96)                      | 100%     | Shipped 2026-05-08                                       |
+| Mode/language context accents (#78)       | 100%     | Shipped 2026-05-08                                       |
+| Language scaffold preload (#74)           | 100%     | Shipped 2026-05-11                                       |
+| Test chat trigger wiring (#81)            | 100%     | Shipped 2026-05-11                                       |
+| AlertDialogAction sweep (#102)            | 100%     | Shipped 2026-05-11                                       |
+| Mode markdown editor + TOC (#76, #82)     | 100%     | Shipped 2026-05-11                                       |
+| Retrospective audit batch (#112–#120)     | 89%      | 8 of 9 shipped 2026-05-11 (#117 deferred)                |
+| Admin password reset → invalidation (#99) | 100%     | Shipped 2026-05-11                                       |
+| Prompt Overrides retirement (#125)        | 50%      | Phase 1 shipped 2026-05-11; Phase 2 gated on worker #215 |
+| Epic #72 — Admin Portal Redesign          | ~95%     | In Progress (only #77 left)                              |
 
 ### Per-PR ephemeral CF Workers — Shipped
 
@@ -68,10 +70,10 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 ### Tech debt / housekeeping
 
 - [ ] #91 — Bump JavaScript actions to Node 24-compatible majors (`actions/checkout@v4` etc.) before GitHub's Jun 2 2026 forced opt-out / Sep 16 2026 hard removal. Filed 2026-05-08 after the deprecation annotation surfaced on the first staging-on-merge run.
-- [ ] #99 — Admin password reset via `/api/admin/users` PUT doesn't invalidate target user's existing sessions. Filed 2026-05-08 while building #96 — pulled the password-reset field from the edit dialog until this lands. Pre-existing on the X-Admin-Secret CLI path too.
+- [x] **#99 — Admin password reset → session invalidation** — shipped 2026-05-11, PR #128 at `fbadf98`. New `invalidateUserSessions(env, targetEmail, exceptSessionId?)` helper in `worker/auth.ts` (also fixes a latent fire-and-forget delete bug in `handleChangePassword`); cookie-path admins resetting their own password keep their current tab via `AdminScope.selfSessionId`; X-Admin-Secret path wipes wholesale. Password-reset field re-introduced in `AdminUserEditDialog` (was pulled in PR #100 pending this fix). 6 new worker tests in `tests/admin-auth.test.ts`.
 - [x] **#102 — AlertDialogAction sweep** — shipped 2026-05-11, PR #108 at `65d69b5`. All five remaining destructive-confirm dialogs now use plain `<Button>` + manual close on success; policy extracted as `runConfirmedAction` helper in `src/lib/run-confirmed-action.ts` with 6 unit tests pinning the contract.
 - [ ] **#117 — `/api/chat/stream` accepts arbitrary `user_id`** (deferred from 2026-05-11 retrospective batch). Worker validates UUIDv4 shape but not session ownership. Needs design call between (1) namespacing test-chat UUIDs as `test:<session.userId>:<uuid>` (smallest blast radius but wire-format change), (2) requiring `isAdmin` for cross-user, or (3) KV-tracked session→testChatUserId.
-- [ ] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Modes is the replacement; six-box "daunting squares" page goes away. Phase 1 (hide sidebar entry) is small; Phase 2 (full removal of page + worker BFF route + upstream worker endpoint) needs Ian to confirm the worker still consumes `/api/v1/admin/orgs/{org}/prompt-overrides` at chat time.
+- [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
 
@@ -290,11 +292,49 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - **Tech debt backlog**: **#99** (password-reset session invalidation), **#91** (Node 24 actions bump), **#117** (chat-stream `user_id` ownership — needs design call).
 - The Epic #72 demo path (`#spoken @arabic` end-to-end through the new editor) is now functionally complete; June 9 demo is in good shape with #77 visual-highlighting as the only optional polish remaining.
 
+### 2026-05-11 (late-evening) — #125 Phase 1 + worker companion filed + #99 shipped
+
+**Context entering the session:** Started as a continuation of the evening session (per local-date convention). Frank had cleared PR #126 but flagged a P2 on stale "engine" terminology in the #125 references. The natural next pick from the evening's Next Steps was Phase 1 of #125 (sidebar hide), then #99 (password reset session invalidation).
+
+**Completed:**
+
+- **PR #126 follow-up — Frank P2 fix on tracker terminology.** Six occurrences of stale "engine" wording in the #125 roadmap text replaced with "worker / upstream worker endpoint / worker consumption" to match the project's actual architecture (engine dormant since 2026-01-16; ENGINE_BASE_URL var points at bt-servant-worker). Path corrected from `/api/config/prompt-overrides` (portal BFF) to `/api/v1/admin/orgs/{org}/prompt-overrides` (worker upstream) in the AC line that specifically refers to chat-time consumption. Audited closed Epic #72 sub-issues (#79, #80, #81, #82, #96) — all still contain "engine" references but they're accurate historical artifacts from before the 2026-05-08 refile audit; left untouched per Seth. Issue #125's body also patched for the same drift (7 lines). Merged at `8dd4f96` after Frank re-approved.
+- **PR #127 / #125 Phase 1 — Hide Prompt Overrides sidebar entry.** Matches Elsy's exact ask ("hide Prompt Overrides from the Menu"). Single-file change: removed the `<ActivityBarItem>` block + `faSliders` light/solid imports in `src/components/activity-bar.tsx`. `/prompt-configuration` route + `worker/config.ts` proxy + `"prompt-configuration"` UI section entry + `use-sync-section` mapping all preserved deliberately as an emergency URL escape during the transition. Frank approved no findings (1 file, 14 deletions). Merged at `a39954f`.
+- **Worker companion issue filed: bt-servant-worker#215.** Pre-emptively investigated whether Phase 2 was safe before proceeding. Two parallel Explore agents traced the chat pipeline in `/workspace/bt-servant-worker` and surfaced that the worker still consumes org-level overrides on **every** chat request: `readAllOrgKV` (`src/index.ts:832–838`) → DO body injection at line 943 → `resolvePromptOverrides(orgOverrides, modeOverrides, userOverrides)` (`user-do.ts:1088–1090`) → all 7 slots concatenated into `buildSystemPrompt` (`system-prompt.ts:204–228`). Filed bt-servant-worker#215 with a 5-step migration plan: ~10-line worker patch (drop the KV read; pass `{}` to resolver), the existing hardcoded `DEFAULT_PROMPT_VALUES` (`bt-servant-worker/src/types/prompt-overrides.ts:104–160`) as the safe fall-through, KV inventory commands, and a clean architectural alignment note (Ian's commit `0a7edc8` already removed the parallel `defaultMode` concept). Pre-flight KV inventory came back empty (zero non-`:modes` keys in both staging `1416f321fbda450095214111d38d211a` and prod `c1828624ab434f079776bddd171882d9`) — worker patch will be invisible to all orgs. Cross-link comment on portal #125 with revised 5-phase sequence (worker patch → soak → portal Phase 2 → KV cleanup no-op → worker admin-route cleanup). Phase 2 in this repo paused pending #215. Seth confirmed his scope is admin-portal only and Ian handles worker work; I'm not authoring the worker PR.
+- **PR #128 / #99 — Admin password reset invalidates target sessions.** Closes the "reset password but the old cookie keeps working" gap on `PUT /api/admin/users/{email}`. Extracted `invalidateUserSessions(env, targetEmail, exceptSessionId?)` helper in `worker/auth.ts` — pagination over `session:*`, filter by stored email, optional skip, **awaits all deletes** before returning (fixed a latent fire-and-forget bug in the existing `handleChangePassword` pattern in the process). Plumbing: `getSessionId` now exported from `auth.ts`; `AdminScope.org` gains `selfSessionId: string | null` populated by `requireAdminAuth` so the cookie-path admin can preserve their current tab when resetting their own password; X-Admin-Secret CLI has no caller session by design. `updateUser` only invalidates when `body.password !== undefined` (PUTs that just touch name/role/language_rights leave sessions intact). Frontend: re-introduced the password field in `AdminUserEditDialog` per AC #4 (was pulled in PR #100 pending this fix) with hint text adapting to self vs other ("this tab keeps working" vs "share the new password out-of-band"). 6 new worker tests covering the matrix; 160/160 across full suite. Frank approved no findings. Merged at `fbadf98`.
+
+**In Progress:**
+
+- None code-wise.
+
+**Blockers:**
+
+- **bt-servant-worker#215** — gates portal #125 Phase 2. Ian's queue; no portal-side action available.
+- **#77 visual highlighting half** — still paused on Ian's editor-library decision (CodeMirror 6 tentative).
+
+**Frank review patterns surfaced this session:**
+
+- **One clean pass per PR.** Three PRs this session (#126, #127, #128); all approved on first review with no findings. The PR descriptions were thorough and tightly scoped, which seems to be doing a lot of the work — Frank flags less when the PR is already "reading like it's been reviewed."
+- **Sub-agent pre-flight prevents Frank P2s.** Before opening the worker companion PR (which I ultimately didn't author per scope), I ran two parallel Explore agents to verify Phase 2 was safe. The investigation surfaced the chat-pipeline consumption that the #125 issue's own AC gate clause anticipated but the user's "Ian said proceed" had verbally cleared. Catching that _before_ opening a PR (instead of after Frank flags it) saved a review round.
+
+**Patterns / decisions captured today (late-evening):**
+
+- **`Closes #N` fires regardless of prose qualifier.** PR #127's body said `Closes #125 only partially — Phase 2 stays open` and GitHub auto-closed #125 anyway. The "only partially" wording is invisible to GitHub's keyword parser. Reopened with explanation. Compounds with the earlier "Closes is non-list-aware" gotcha — combined rule: if you don't want a PR to auto-close an issue, **omit the keyword entirely** (use "Tracks #N" or "Related to #N"). Captured in updated memory.
+- **Cross-repo deletion sequencing.** When the portal needs to retire a feature whose data is consumed by the worker, the right sequence is: (1) verify pre-flight inventory of the storage namespace; (2) file a PR-ready issue in the worker repo with a migration patch sketch; (3) wait for the worker to stop consuming; (4) only then delete the portal-side editing surface. Trying to delete the portal-side surface first strands the storage as un-editable hidden state still influencing chat. Encoded as project decision under #125's sequence.
+- **`invalidateUserSessions` helper and the fire-and-forget bug.** Cloudflare Workers don't guarantee unawaited promises complete after a response is returned. The existing `handleChangePassword` built up `deletePromises` and never awaited them — deletes were best-effort. The new helper always awaits before returning. Latency cost is proportional to total session count for that email and is acceptable for low-frequency endpoints (admin password reset, self change-password).
+- **Scope = admin-portal only across the bt-servant family.** Seth's coding duties are scoped to bt-servant-admin-portal; Ian handles work in sibling repos (worker, engine, etc.). Even when a cross-repo change is technically clear-cut, file a PR-ready issue in the sibling repo with crosslinks rather than switching directories. Encoded as memory `feedback_scope_admin_portal_only`.
+
+**Next Steps:**
+
+- **bt-servant-worker#215** — wait for Ian. Once that lands and soaks, portal #125 Phase 2 PR opens here (full deletion of `manual-config.tsx`, `prompt-panel.tsx`, the `/prompt-configuration` route, the `/api/config/prompt-overrides` branch in `worker/config.ts`, the three org-overrides functions in `config-api.ts`, `useOrgOverrides`/`useUpdateOrgOverrides` hooks, the `"prompt-configuration"` section entry, and ~12 tests). The Phase 2 PR also can't blindly delete `src/types/prompt-override.ts` — `mode-scaffold.ts` still imports `PROMPT_SLOTS` and `SLOT_LABELS` for the modes scaffold; only the org-overrides exports become dead.
+- **#91 — Node 24 actions bump** — surfaced as a deprecation annotation on every CI run today; time-bound to Sep 16 2026 hard removal but not urgent. Mechanical fix.
+- **README cleanup** — Frank flagged a stale `/manual-config` table entry on PR #127 (pre-existing drift from PR #110). Small docs PR.
+- **#117 — chat-stream `user_id` ownership** — still waiting on a design call.
+
 ## Known Issues
 
-- **#99 — Admin password-reset doesn't invalidate target user's existing sessions.** `PUT /api/admin/users/{email}` accepts a `password` field that updates the hash but leaves the user's existing session records valid until expiry. Pre-existing on the X-Admin-Secret CLI path; pulled the password-reset field from the `AdminUserEditDialog` (PR #100) until this is fixed.
 - **#117 — `/api/chat/stream` accepts arbitrary `user_id` from session-cookied users.** Worker validates UUIDv4 shape but not ownership; a logged-in user could submit another user's test-chat UUID. Discovery requires knowing/guessing a v4 — hard but not impossible (logs / screen-share / copy-paste). Deferred from 2026-05-11 retrospective batch pending a design call between (1) namespacing test-chat UUIDs as `test:<session.userId>:<uuid>`, (2) requiring `isAdmin` for cross-user UUIDs, or (3) KV-tracked session→testChatUserId.
-- **#125 — Prompt Overrides removal (in flight).** Per Elsy + Christou, Modes is the replacement; six-box "Prompt Overrides" page should be hidden/removed. Phase 1 (hide sidebar entry) is small; Phase 2 (full removal) needs Ian's confirmation on worker consumption of `/api/v1/admin/orgs/{org}/prompt-overrides` at chat time.
+- **#125 — Prompt Overrides removal (in flight).** Phase 1 shipped 2026-05-11 (sidebar entry hidden). Phase 2 (full removal of page + BFF route + types) gated on bt-servant-worker#215 stopping the chat-time consumption of org-level prompt-overrides. Pre-flight KV inventory clear in both staging and prod.
 
 ## Architectural Decisions
 
@@ -336,3 +376,11 @@ Notable decisions made 2026-05-11:
 - **`runConfirmedAction` is the canonical destructive-confirmation policy.** Lives at `src/lib/run-confirmed-action.ts`. Owns the "clear error → await → close on success, set error and stay open on failure" lifecycle for any async destructive confirmation. Used by all five destructive-confirm dialogs in the app as of PR #108. Future destructive UI should reuse this helper rather than re-implementing the try/catch/state-machine inline.
 - **Tests in `tests/` can import from `src/`.** `tsconfig.worker.json` now declares `"@/*": ["./src/*"]` so test files exercise pure functions and fetch-wrappers from the browser-side codebase using the project's standard alias. Transitively-pulled `src/` modules must stay free of DOM/JSX types for this to typecheck under the worker tsconfig (currently true for `src/types/chat`, `src/types/language*`, `src/lib/chat-api`, `src/lib/languages-api`, `src/lib/language-scaffold-api`).
 - **Local user date for session tracking, not container `date`.** `uw-sandbox`'s system clock is UTC; during local-evening sessions it may have already rolled to tomorrow. Skill templates (`.claude/commands/sod.md`, `eod.md`, `progress.md`) and upstream `unfoldingWord/uw-dev-skills` codify: use the user's local date from system prompt `currentDate`; for multiple sessions on one local day, append `(morning)` / `(afternoon)` / `(evening)` / `(late-evening)` sub-headings rather than duplicate top-level date headings.
+
+Notable decisions made 2026-05-11 (late-evening):
+
+- **Cross-repo deletion sequencing.** When the portal retires a feature whose backing data is consumed by the worker, the safe sequence is: (1) verify pre-flight KV inventory of the storage namespace, (2) file a PR-ready issue in the worker repo with a migration patch sketch + crosslink, (3) wait for the worker to stop consuming + soak, (4) only then delete the portal-side editing surface. Deleting the portal surface first strands the storage as un-editable hidden state still influencing chat. Codified via the portal #125 ↔ bt-servant-worker#215 pair.
+- **`invalidateUserSessions` helper is the canonical session-invalidation policy.** Lives in `worker/auth.ts`. Paginates `session:*`, filters by stored email, optionally skips a session id, and **awaits all deletes before returning**. Used by both `handleChangePassword` (self-change) and `updateUser` (admin reset). Replaces the prior fire-and-forget pattern in `handleChangePassword` where `deletePromises` were never awaited — Cloudflare Workers don't guarantee unawaited promises complete after the response.
+- **`AdminScope.org` carries `selfSessionId`.** So password-change branches can preserve the caller's own cookie when the admin happens to be resetting their own password via the browser path. Captured at auth time in `requireAdminAuth` via the now-exported `getSessionId`. X-Admin-Secret CLI has no caller session by design.
+- **`Closes #N` fires regardless of prose qualifier.** GitHub auto-closes on any `Closes #N` keyword in a PR body, even if the surrounding prose says "only partially" or similar. Combined with the earlier "Closes is non-list-aware" finding: if a PR shouldn't auto-close an issue, **omit the keyword entirely** — use "Tracks #N" or "Related to #N" instead.
+- **Scope = admin-portal only across the bt-servant family.** Coding duties for the bt-servant family are scoped to bt-servant-admin-portal. When cross-repo changes are needed (worker, engine, etc.), file a PR-ready issue with crosslinks in the sibling repo — don't switch directories and author the PR there. Ian handles cross-repo execution. Encoded as memory `feedback_scope_admin_portal_only`.
