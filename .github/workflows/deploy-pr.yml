@@ -32,9 +32,9 @@ jobs:
       WORKER_NAME: ${{ github.event.pull_request.number && format('bt-servant-admin-portal-pr-{0}', github.event.pull_request.number) || 'bt-servant-admin-portal-dev' }}
       WORKER_URL: ${{ github.event.pull_request.number && format('https://bt-servant-admin-portal-pr-{0}.unfoldingword.workers.dev', github.event.pull_request.number) || 'https://bt-servant-admin-portal-dev.unfoldingword.workers.dev' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -72,7 +72,7 @@ jobs:
 
       - name: Comment PR with deploy URL
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           WORKER_NAME: ${{ env.WORKER_NAME }}
           WORKER_URL: ${{ env.WORKER_URL }}
