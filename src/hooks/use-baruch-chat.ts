@@ -15,7 +15,6 @@ export function useBaruchChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-  const [isCompleting, setIsCompleting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +22,6 @@ export function useBaruchChat() {
   const [isInitiating, setIsInitiating] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
-  const pendingCompleteRef = useRef<{ message: ChatMessage } | null>(null);
   const initiatingRef = useRef(false);
 
   // Abort streaming on unmount
@@ -102,7 +100,7 @@ export function useBaruchChat() {
     async function runInitiation() {
       const res = await baruchInitiateConversation(controller.signal);
 
-      const { finalText, hadStreaming } = await consumeSSEStream(res, {
+      const { finalText } = await consumeSSEStream(res, {
         onProgress: (_text, acc) => setStreamingText(acc),
       });
 
@@ -113,13 +111,8 @@ export function useBaruchChat() {
         createdAt: new Date(),
       };
 
-      if (hadStreaming) {
-        pendingCompleteRef.current = { message: finalMessage };
-        setIsCompleting(true);
-      } else {
-        setMessages((prev) => [...prev, finalMessage]);
-      }
-
+      setMessages((prev) => [...prev, finalMessage]);
+      setStreamingText("");
       setNeedsInitiation(false);
       setIsInitiating(false);
       initiatingRef.current = false;
@@ -141,20 +134,6 @@ export function useBaruchChat() {
       initiatingRef.current = false;
     };
   }, [needsInitiation]);
-
-  // Called by the component when AnimatedText finishes catching up
-  const finalizeComplete = useCallback(() => {
-    const pending = pendingCompleteRef.current;
-    if (!pending) return;
-
-    pendingCompleteRef.current = null;
-    // React 18+ auto-batches these into a single render
-    setIsCompleting(false);
-    setIsLoading(false);
-    setStatusMessage(null);
-    setMessages((prev) => [...prev, pending.message]);
-    setStreamingText("");
-  }, []);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -183,7 +162,7 @@ export function useBaruchChat() {
       try {
         const response = await streamBaruchChat(trimmed, controller.signal);
 
-        const { finalText, hadStreaming } = await consumeSSEStream(response, {
+        const { finalText } = await consumeSSEStream(response, {
           onStatus: (msg) => setStatusMessage(msg),
           onProgress: (_text, acc) => setStreamingText(acc),
           onToolUse: (tool) => setStatusMessage(`Using tool: ${tool}`),
@@ -204,20 +183,10 @@ export function useBaruchChat() {
           createdAt: new Date(),
         };
 
-        if (!hadStreaming) {
-          setMessages((prev) => [...prev, assistantMessage]);
-          setIsLoading(false);
-          setStatusMessage(null);
-          setStreamingText("");
-        } else {
-          pendingCompleteRef.current = { message: assistantMessage };
-          // Don't call setStreamingText(finalText) here — the animation is
-          // already playing the accumulated text. Let the animation finish;
-          // finalizeComplete will swap in the permanent message once it
-          // catches up.
-          setIsCompleting(true);
-          setStatusMessage(null);
-        }
+        setMessages((prev) => [...prev, assistantMessage]);
+        setIsLoading(false);
+        setStatusMessage(null);
+        setStreamingText("");
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setError(err instanceof Error ? err.message : "An error occurred");
@@ -231,11 +200,9 @@ export function useBaruchChat() {
 
   const clearMessages = useCallback(() => {
     abortRef.current?.abort();
-    pendingCompleteRef.current = null;
     initiatingRef.current = false;
     setMessages([]);
     setIsLoading(false);
-    setIsCompleting(false);
     setIsInitiating(false);
     setStreamingText("");
     setStatusMessage(null);
@@ -268,12 +235,10 @@ export function useBaruchChat() {
     isLoading,
     isLoadingHistory,
     isInitiating,
-    isCompleting,
     statusMessage,
     streamingText,
     error,
     sendMessage,
     clearMessages,
-    finalizeComplete,
   };
 }

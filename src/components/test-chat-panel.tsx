@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { faBookBible } from "@fortawesome/pro-duotone-svg-icons";
 import {
   faPaperPlaneTop,
@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/lib/theme-store";
 import { useUiStore } from "@/lib/ui-store";
 import { useTestChat } from "@/hooks/use-test-chat";
+import { useChatInput } from "@/hooks/use-chat-input";
 import {
   useModes,
   useSetUserMode,
@@ -80,25 +81,21 @@ export function TestChatPanel() {
     messages,
     isLoading,
     isLoadingHistory,
-    isCompleting,
     statusMessage,
     streamingText,
     error,
     sendMessage,
     clearMessages,
-    finalizeComplete,
   } = useTestChat(testChatUserId);
 
-  const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
   const hasMessages = messages.length > 0;
 
-  // Stable callback ref for AnimatedText
-  const handleAnimationCaughtUp = useCallback(() => {
-    finalizeComplete();
-  }, [finalizeComplete]);
+  const { input, setInput, inputRef, handleSubmit, handleKeyDown } =
+    useChatInput({
+      onSubmit: (text) => void sendMessage(text),
+      isBusy: isLoading,
+    });
 
   // Auto-scroll to bottom on new messages or streaming updates
   useEffect(() => {
@@ -107,33 +104,6 @@ export function TestChatPanel() {
       el.scrollTop = el.scrollHeight;
     }
   }, [messages, streamingText, isLoading]);
-
-  // Restore focus to the input after a response completes
-  const prevLoadingRef = useRef(false);
-  useEffect(() => {
-    if (prevLoadingRef.current && !isLoading) {
-      inputRef.current?.focus();
-    }
-    prevLoadingRef.current = isLoading;
-  }, [isLoading]);
-
-  function doSubmit() {
-    if (!input.trim() || isLoading) return;
-    void sendMessage(input);
-    setInput("");
-  }
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    doSubmit();
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      doSubmit();
-    }
-  }
 
   return (
     <div className="bg-card flex h-full flex-col">
@@ -217,12 +187,7 @@ export function TestChatPanel() {
               msg.role === "user" ? (
                 <UserMessage key={msg.id} message={msg} />
               ) : (
-                <AssistantMessage
-                  key={msg.id}
-                  message={msg}
-                  isCompleting={isCompleting}
-                  onAnimationCaughtUp={handleAnimationCaughtUp}
-                />
+                <AssistantMessage key={msg.id} message={msg} />
               )
             )}
             {isLoading && !streamingText && (

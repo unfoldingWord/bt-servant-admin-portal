@@ -1,10 +1,9 @@
-import { useEffect, useRef } from "react";
+import { Fragment } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
-import { useAnimatedText } from "@/hooks/use-animated-text";
 import type { ChatMessage } from "@/types/chat";
 
 /**
@@ -64,7 +63,13 @@ function renderNormalizedText(text: string): React.ReactNode {
 /** Recursively walk React children, normalizing text nodes. */
 function normalizeChildren(children: React.ReactNode): React.ReactNode {
   if (typeof children === "string") return renderNormalizedText(children);
-  if (Array.isArray(children)) return children.map(normalizeChildren);
+  if (Array.isArray(children)) {
+    // Position-based keys are stable here because react-markdown produces a
+    // deterministic child order from the parsed markdown tree. Issue #48.
+    return children.map((child, index) => (
+      <Fragment key={index}>{normalizeChildren(child)}</Fragment>
+    ));
+  }
   return children;
 }
 
@@ -131,63 +136,14 @@ export function UserMessage({ message }: { message: ChatMessage }) {
   );
 }
 
-export function AnimatedText({
-  text,
-  isCompleting,
-  onAnimationCaughtUp,
-}: {
-  text: string;
-  isCompleting: boolean;
-  onAnimationCaughtUp: () => void;
-}) {
-  const [displayedText, isAnimationDone] = useAnimatedText(text);
-  const calledRef = useRef(false);
-
-  // Reset the guard when isCompleting flips to true (new completion cycle)
-  const prevCompletingRef = useRef(false);
-  if (isCompleting && !prevCompletingRef.current) {
-    calledRef.current = false;
-  }
-  prevCompletingRef.current = isCompleting;
-
-  useEffect(() => {
-    if (isCompleting && isAnimationDone && !calledRef.current) {
-      calledRef.current = true;
-      onAnimationCaughtUp();
-    }
-  }, [isCompleting, isAnimationDone, onAnimationCaughtUp]);
-
-  return (
-    <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-      {displayedText}
-    </Markdown>
-  );
-}
-
-export function AssistantMessage({
-  message,
-  isCompleting,
-  onAnimationCaughtUp,
-}: {
-  message: ChatMessage;
-  isCompleting: boolean;
-  onAnimationCaughtUp: () => void;
-}) {
+export function AssistantMessage({ message }: { message: ChatMessage }) {
   return (
     <div className="text-foreground pl-1 text-base leading-relaxed">
-      {message.isStreaming ? (
-        <>
-          <AnimatedText
-            text={message.content}
-            isCompleting={isCompleting}
-            onAnimationCaughtUp={onAnimationCaughtUp}
-          />
-          <span className="bg-foreground/80 ml-0.5 inline-block h-3.5 w-[2px] animate-pulse" />
-        </>
-      ) : (
-        <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-          {message.content}
-        </Markdown>
+      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {message.content}
+      </Markdown>
+      {message.isStreaming && (
+        <span className="bg-foreground/80 ml-0.5 inline-block h-3.5 w-[2px] animate-pulse" />
       )}
     </div>
   );
