@@ -18,13 +18,11 @@ export function useTestChat(userId: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-  const [isCompleting, setIsCompleting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
-  const pendingCompleteRef = useRef<{ message: ChatMessage } | null>(null);
 
   // Abort streaming on unmount
   useEffect(() => {
@@ -80,20 +78,6 @@ export function useTestChat(userId: string) {
     };
   }, [userId]);
 
-  // Called by the component when AnimatedText finishes catching up
-  const finalizeComplete = useCallback(() => {
-    const pending = pendingCompleteRef.current;
-    if (!pending) return;
-
-    pendingCompleteRef.current = null;
-    // React 18+ auto-batches these into a single render
-    setIsCompleting(false);
-    setIsLoading(false);
-    setStatusMessage(null);
-    setMessages((prev) => [...prev, pending.message]);
-    setStreamingText("");
-  }, []);
-
   const sendMessage = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
@@ -125,7 +109,7 @@ export function useTestChat(userId: string) {
           signal: controller.signal,
         });
 
-        const { finalText, hadStreaming } = await consumeSSEStream(response, {
+        const { finalText } = await consumeSSEStream(response, {
           onStatus: (msg) => setStatusMessage(msg),
           onProgress: (_text, acc) => setStreamingText(acc),
           onToolUse: (tool) => setStatusMessage(`Using tool: ${tool}`),
@@ -141,22 +125,10 @@ export function useTestChat(userId: string) {
           createdAt: new Date(),
         };
 
-        if (!hadStreaming) {
-          setMessages((prev) => [...prev, assistantMessage]);
-          setIsLoading(false);
-          setStatusMessage(null);
-          setStreamingText("");
-        } else {
-          pendingCompleteRef.current = { message: assistantMessage };
-          // Don't call setStreamingText(finalText) here — the animation is
-          // already playing the accumulated text.  Feeding a different string
-          // (responses.join) causes useAnimatedText to detect a divergence and
-          // reset the animation from the beginning.  Instead, let the animation
-          // finish with what it has; finalizeComplete will swap in the permanent
-          // message (which carries the canonical finalText) once it catches up.
-          setIsCompleting(true);
-          setStatusMessage(null);
-        }
+        setMessages((prev) => [...prev, assistantMessage]);
+        setIsLoading(false);
+        setStatusMessage(null);
+        setStreamingText("");
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setError(err instanceof Error ? err.message : "An error occurred");
@@ -170,10 +142,8 @@ export function useTestChat(userId: string) {
 
   const clearMessages = useCallback(() => {
     abortRef.current?.abort();
-    pendingCompleteRef.current = null;
     setMessages([]);
     setIsLoading(false);
-    setIsCompleting(false);
     setStreamingText("");
     setStatusMessage(null);
     setError(null);
@@ -210,12 +180,10 @@ export function useTestChat(userId: string) {
     messages: allMessages,
     isLoading,
     isLoadingHistory,
-    isCompleting,
     statusMessage,
     streamingText,
     error,
     sendMessage,
     clearMessages,
-    finalizeComplete,
   };
 }

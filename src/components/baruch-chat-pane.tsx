@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { faBookBible } from "@fortawesome/pro-duotone-svg-icons";
 import {
   faPaperPlaneTop,
@@ -10,6 +10,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/lib/theme-store";
 import { useBaruchChat } from "@/hooks/use-baruch-chat";
+import { useChatInput } from "@/hooks/use-chat-input";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -30,7 +31,6 @@ export function BaruchChatPane() {
     isLoading,
     isLoadingHistory,
     isInitiating,
-    isCompleting,
     statusMessage,
     // streamingText is used only for auto-scroll — the hook embeds the
     // in-flight text into allMessages as a synthetic streaming entry so
@@ -39,19 +39,14 @@ export function BaruchChatPane() {
     error,
     sendMessage,
     clearMessages,
-    finalizeComplete,
   } = useBaruchChat();
 
-  const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
   const hasMessages = messages.length > 0;
   const isBusy = isLoading || isInitiating;
 
-  const handleAnimationCaughtUp = useCallback(() => {
-    finalizeComplete();
-  }, [finalizeComplete]);
+  const { input, setInput, inputRef, handleSubmit, handleKeyDown } =
+    useChatInput({ onSubmit: (text) => void sendMessage(text), isBusy });
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -59,33 +54,6 @@ export function BaruchChatPane() {
       el.scrollTop = el.scrollHeight;
     }
   }, [messages, streamingText, isLoading]);
-
-  // Restore focus to the input after a response completes
-  const prevBusyRef = useRef(false);
-  useEffect(() => {
-    if (prevBusyRef.current && !isBusy) {
-      inputRef.current?.focus();
-    }
-    prevBusyRef.current = isBusy;
-  }, [isBusy]);
-
-  function doSubmit() {
-    if (!input.trim() || isLoading) return;
-    void sendMessage(input);
-    setInput("");
-  }
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    doSubmit();
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      doSubmit();
-    }
-  }
 
   return (
     <div className="flex h-full flex-col">
@@ -106,12 +74,7 @@ export function BaruchChatPane() {
               msg.role === "user" ? (
                 <UserMessage key={msg.id} message={msg} />
               ) : (
-                <AssistantMessage
-                  key={msg.id}
-                  message={msg}
-                  isCompleting={isCompleting}
-                  onAnimationCaughtUp={handleAnimationCaughtUp}
-                />
+                <AssistantMessage key={msg.id} message={msg} />
               )
             )}
             {isInitiating && !streamingText && (
