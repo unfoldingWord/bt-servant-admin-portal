@@ -5,8 +5,9 @@
 ## Current Status
 
 **Phase**: Active development on Epic #72 (Admin Portal Redesign for Response Tuning)
-**Last Updated**: 2026-05-11
+**Last Updated**: 2026-05-13
 **Demo target**: June 9 — `#spoken @arabic` working end-to-end with the new editor
+**Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` — 33 commits since 2026-04-24, Epic #72 batch + CI tech-debt + dark mode + chat panes)
 
 ## Milestones
 
@@ -24,6 +25,9 @@
 | Retrospective audit batch (#112–#120)     | 89%      | 8 of 9 shipped 2026-05-11 (#117 deferred)                |
 | Admin password reset → invalidation (#99) | 100%     | Shipped 2026-05-11                                       |
 | Prompt Overrides retirement (#125)        | 50%      | Phase 1 shipped 2026-05-11; Phase 2 gated on worker #215 |
+| Node 24 actions bump (#91)                | 100%     | Shipped 2026-05-13                                       |
+| Dark mode polish (#133 + 6 subs)          | 100%     | Shipped 2026-05-13                                       |
+| Chat panes cleanup (#31, #48, #50)        | 100%     | Shipped 2026-05-13                                       |
 | Epic #72 — Admin Portal Redesign          | ~95%     | In Progress (only #77 left)                              |
 
 ### Per-PR ephemeral CF Workers — Shipped
@@ -330,6 +334,79 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - **#91 — Node 24 actions bump** — surfaced as a deprecation annotation on every CI run today; time-bound to Sep 16 2026 hard removal but not urgent. Mechanical fix.
 - **README cleanup** — Frank flagged a stale `/manual-config` table entry on PR #127 (pre-existing drift from PR #110). Small docs PR.
 - **#117 — chat-stream `user_id` ownership** — still waiting on a design call.
+
+### 2026-05-13 — Issue triage + cleanup batch (Node 24, dark mode, chat panes); 19-day prod promotion
+
+**Context entering the session:** SOD opened with PR #129 (the 2026-05-11 late-evening progress tracker) sitting unmerged with green CI. Three Next-Step items from the late-evening session were unblocked: README cleanup (Frank P2), #91 Node 24 actions bump, and (newly surfaced) a triage of open portal issues against the Epic #72 pivot to see what was actually still live vs superseded.
+
+**Completed:**
+
+- **PR #130 — README drift cleanup.** Three small drifts in one focused docs PR: Pages table dropped the `/manual-config` row (no longer in the sidebar; Phase 2 deletes the page) and added the three actually-reachable surfaces (`/modes`, `/languages`, `/admin/users`) with their access gates; `worker/config.ts` architecture-diagram comment now mentions languages (added in PR #92); Worker BFF Routes table fixed dual-auth on `/api/admin/*` ("Admin secret or session" per the 2026-05-08 retrospective audit) and replaced the stale "Prompt overrides, modes, default mode" with "Modes, languages, prompt overrides" (default mode removed in worker #211 / PR #212). Frank cleared no findings. Merged at `ff8046e`.
+- **PR #129 — late-evening progress tracker merged** at `eebd3e6`. (User-instructed merge after CI cleared; no Frank review needed for a docs-only PR.)
+- **PR #131 / #91 — Node 24 actions bump.** Cleared the runner-side "Node.js 20 actions are deprecated" annotation that had fired on every CI run since the staging-on-merge rewire (PR #90, 2026-05-08). Bumped `actions/checkout@v4 → @v6`, `actions/setup-node@v4 → @v6`, `actions/github-script@v7 → @v8` (one major below v9 to avoid the `require('@actions/github')` ESM break which our scripts don't trigger but tightens surface for future edits), `actions/upload-artifact@v4 → @v6` (skipped v7's opt-in direct-upload feature we don't use). `gitleaks/gitleaks-action@v2` stays — no v3 exists and `action.yml` is explicitly `using: "node20"` — workaround per the issue's escape-hatch note: `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"` env on the `secret-scan` job with an inline comment flagging the workaround as transitional. Validated end-to-end: 3 of 4 CI jobs have zero deprecation annotations after the bump; the 4th (secret-scan) has only the expected transitional "being forced to run on Node.js 24: gitleaks/gitleaks-action@v2" warning. Merged at `5a9d1c8`.
+- **Issue triage batch — 7 issues closed as superseded-by-pivot.** Audited the 26 open portal issues against the #125 Phase 2 + Epic #72 pivot. Closed 7 with clear pivot reasoning:
+  - **#67** (prompt config card buttons overflow), **#55** (resizable expanded editor), **#54** (default size of expanded editor), **#51** (mobile tap-to-expand spec) — all on the dying `/prompt-configuration` surface (#125 Phase 1 hid the sidebar; Phase 2 deletes the page entirely).
+  - **#9 + #10** (slot color tokens in `prompt-panel.tsx`) — that file is only imported by `manual-config.tsx`; deleted with the page in #125 Phase 2.
+  - **#18** (`.config-grid-bg` off-system value) — only consumed by `manual-config.tsx`; same gate. Caught during the dark-mode PR triage and folded into the same pivot bucket.
+- **Catalog comment on #59 (Benjamin's ideas)** — left open as backlog reference. Cataloged: "fewer categories" + "one box" ✅ done via #110's single-document editor; "glossary table" still live as a portal-side backlog feature (post-Epic #72); "skill use" / "progressive disclosure" / "prompt caching" are worker-scope (defer for Ian's worker backlog).
+- **Dark mode polish umbrella — #133 filed.** Grouped the 7 surviving dark-mode issues into a single design-pass epic so the token audit could be done cohesively. Scope: #11, #12, #13, #14, #16, #18, #19. Updated #133 down to **6 issues** when #18 turned out to be on the dying surface.
+- **Epic #72 body updated.** Added a Status section listing all 9 shipped sub-issues + 3 remaining (#125 Phase 2, #77, **language-file loading via bt-servant-worker#191**). Surfaced bt-servant-worker#191 as the **fifth Goal's DoD blocker** — previously invisible in the epic body. Cross-repo dependency table at the bottom: worker #215 ↔ #125 Phase 2; worker #191 ↔ language loading; (not filed) ↔ #77 visual-highlight.
+- **PR #134 / #133 — Dark mode polish in one design pass.** Six issues addressed coherently:
+  - **#14** foreground chroma — bumped 6 `.dark` foreground tokens (`--foreground`, `--card-foreground`, `--popover-foreground`, `--secondary-foreground`, `--muted-foreground`, `--sidebar-foreground`) from zero-chroma neutral grey to hue 248, chroma 0.008 (below visible-tint threshold; "warmth without coloring"). `--accent-foreground` and `--sidebar-accent-foreground` left at pure white intentionally.
+  - **#12** activity bar hover — added `dark:hover:bg-white/[0.08]` so the hover delta exceeds the perceptibility threshold. Light mode still uses `hover:bg-accent`.
+  - **#13** active nav background — added `bg-primary/8 dark:bg-primary/12` to the active branch so the signal doesn't ride entirely on the 2px primary strip + a small text-color delta.
+  - **#16** activity bar shadow — added `dark:shadow-[2px_0_12px_rgba(0,0,0,0.35)]` so the side shadow punches through the darker ambient surface.
+  - **#11** mode + language selector icon backgrounds — bumped `bg-primary/10` to `dark:bg-primary/20` in both `mode-selector.tsx` and `language-selector.tsx`. The issue body noted both surfaces.
+  - **#19** destructive button — dropped `dark:bg-destructive/60` alpha modifier. The dark-mode `--destructive` token is already a hand-picked darker red (`oklch(0.637 0.237 25)` vs light-mode `oklch(0.577 0.245 27.325)`); adding `/60` on top was a double-mute. Kept the `dark:focus-visible:ring-destructive/40` ring tweak (unrelated to body fill).
+  - Frank flagged three process/metadata items on the first review: commit author (declined — `CLAUDE.md` says Claude is author; `AGENTS.md` is symmetric for Codex's own commits), past-tense "deleted" wording on out-of-scope items (fixed — changed to "scheduled for deletion in Phase 2"), and `closingIssuesReferences: []` because the "## Closes" header + bare `#N` bullets aren't recognized as keywords (fixed — `Closes #N` per line; verified post-edit via `gh pr view --json closingIssuesReferences` that all 7 references parse). All 4 CI checks green. Merged at `99da477`.
+- **PR #135 / chat panes cleanup — three issues bundled.** Net **−185 lines** across 6 modified files + 1 new hook (+51 lines):
+  - **#31** typing-animation removal — deleted `src/hooks/use-animated-text.ts` entirely (was animating at 2 chars / 16ms ≈ 125 chars/sec, slower than the real SSE token rate). `AnimatedText` component collapsed into a direct Markdown render in `AssistantMessage`; streaming cursor pulse kept for the live-stream affordance. Cascade cleanup in both `useTestChat` and `useBaruchChat`: `isCompleting` state, `pendingCompleteRef`, `finalizeComplete` callback, and the two-branch `hadStreaming` finalization all dead without animation — removed. Pane components no longer destructure or pass any of `isCompleting` / `onAnimationCaughtUp` / `finalizeComplete`.
+  - **#50** input dedup — extracted `useChatInput({ onSubmit, isBusy })` to `src/hooks/use-chat-input.ts`. Owns `input` state, `inputRef`, `handleSubmit`, `handleKeyDown` (Enter without Shift), and busy→idle focus restoration. Both panes lost ~25 lines each of duplicated state + handlers. Auto-scroll effect (5 lines, identical deps in both panes) left inlined — extracting it would require an `eslint-disable react-hooks/exhaustive-deps` for a passed deps array; cost > benefit.
+  - **#48** stable React keys — wrapped `normalizeChildren`'s array `.map()` output in `<Fragment key={index}>`. Position-based keys are stable because react-markdown produces a deterministic child order from the parsed markdown tree.
+  - Frank cleared no medium+ issues. Residual risk noted: no React-hook test infrastructure in this repo (vitest-pool-workers is workerd-only, no DOM); manual smoke is the meaningful validation for cursor pulse, focus restore, Enter vs Shift+Enter, and Baruch initiation. Merged at `25ea9c1`.
+- **Prod promotion — 19-day batch.** Elsy approved staging at 14:45 local. Triggered `Deploy Production` workflow dispatch on `main` at HEAD `25ea9c1`. **33 commits accumulated since the last prod deploy (2026-04-24)** — basically the entire Epic #72 ship (markdown editor + TOC for modes and languages, Languages tab + CRUD, Users admin, brand context accents, language scaffold preload, test chat trigger wiring, AlertDialogAction sweep, admin authz tightening, password reset session invalidation, Prompt Overrides Phase 1) plus the CI tech-debt (Node 22, Node 24 actions, per-PR workers, staging-on-merge) plus today's dark-mode + chat-panes work. Workflow has a built-in CI re-gate (typecheck + lint + build + npm audit) before the wrangler deploy.
+- **Frank-collaboration patterns surfaced this session:**
+  - **Cross-agent author convention.** `CLAUDE.md` says Claude is author for Claude's commits; `AGENTS.md` says Codex is author for Codex's commits. Each rule applies to its own agent. Frank misread this on PR #134 round 1; pushed back with explicit reasoning and added a "Reviewer notes" section to PR #135's body so the convention is visible on future PRs. Memory `team_frank_reviewer` updated to capture this.
+  - **GitHub auto-close keyword discipline.** The "## Closes" header + bare `#N` bullets pattern doesn't trip GitHub's parser. Must be `Closes #N` per line (or comma-list with repeated keyword, but that's verbose). Verified empirically via `gh pr view --json closingIssuesReferences` after each PR-body edit. Encoded as part of the existing memory `feedback_gh_closes_keyword`.
+
+**Day rollup:**
+
+| Merged                  | Commit    | Closes                             |
+| ----------------------- | --------- | ---------------------------------- |
+| #129 progress tracker   | `eebd3e6` | —                                  |
+| #130 README cleanup     | `ff8046e` | — (Frank P2 follow-up)             |
+| #131 Node 24 actions    | `5a9d1c8` | #91                                |
+| #134 dark mode polish   | `99da477` | #11, #12, #13, #14, #16, #19, #133 |
+| #135 chat panes cleanup | `25ea9c1` | #31, #48, #50                      |
+
+**5 PRs merged, 11 issues auto-closed, 7 issues closed in triage (#9, #10, #18, #51, #54, #55, #67), 1 umbrella issue filed (#133), 1 issue body refresh (Epic #72), 1 backlog catalog comment (#59).**
+
+Open portal issue count: **26 → 10**. Remaining: #28 (deep links), #49 (field-sizing tracker), #56 + #57 (User Memory viewer), #52 + #53 (perf nits), #59 (Benjamin catch-all), #72 (Epic), #77 + #117 + #125 (gated).
+
+**In Progress:**
+
+- None code-wise. Prod promotion landed successfully (run `25822043201`, CI Gate 42s + Deploy 41s = ~83s wall-clock).
+
+**Blockers:**
+
+- **bt-servant-worker#215** — gates portal #125 Phase 2. Ian's queue; no movement since the 2026-05-11 pre-flight KV inventory comment.
+- **bt-servant-worker#191** — gates Epic #72's fifth Goal (dynamic language-file loading). Now surfaced in the Epic #72 body. Ian's queue.
+- **#77 visual highlighting** — still paused on Ian's editor-library decision (CodeMirror 6 tentative).
+- **#117** — chat-stream `user_id` ownership; awaiting design call.
+
+**Patterns / decisions captured today:**
+
+- **Pre-filing triage prevents wasted umbrella scope.** Filed dark-mode umbrella #133 with 7 sub-issues; during the implementation PR triage discovered #18 was on the dying `.config-grid-bg` surface (same pivot as #9/#10). Closed #18, narrowed umbrella to 6, updated body. Lesson: when scoping an umbrella/epic, run a quick file-usage check against any known dying surfaces before listing sub-issues — saves a "wait, that's not actually in scope" revision later.
+- **GitHub `closingIssuesReferences` is the truth.** Don't trust prose. After every PR body edit that includes issue-closing references, run `gh pr view <N> --json closingIssuesReferences` to confirm the parser picked them up. The `## Closes` header pattern doesn't trip auto-close even though it reads as obvious intent.
+- **Cross-agent author convention is real.** `CLAUDE.md` and `AGENTS.md` have parallel rules: each agent's instruction file specifies its own author. Frank/Codex reads AGENTS.md and may flag Claude's author on review — declining is the correct response with an explicit reference to the cross-agent convention.
+- **No-test-infra ≠ no-tests-needed.** Per `feedback_real_tests`, pure functions with discrete edge cases need a `.test.ts`. But React hooks aren't pure functions; the chat-panes cleanup PR didn't add new pure functions (only extracted a React hook, `useChatInput`); no testing-library setup exists in this repo (vitest-pool-workers is workerd-only). Manual smoke is the meaningful validation path. Frank's residual-risk note correctly identifies the gap but it's structural, not actionable in a follow-up PR.
+
+**Next Steps:**
+
+- **PR 4 — User Memory enhancements** (next in proposed sequence): #56 (auto-load admin's own memory), #57 (UUID-to-email dropdown), #53 (TextEncoder allocation perf). All touch `user-memory-dialog.tsx`. #57 likely needs a worker companion for the UUID→email mapping API; investigate before scoping.
+- **PR 5 — Deep link mode slugs** (#28): React Router resolver for `/<mode-slug>` → activate mode + redirect to `/modes`. Cross-repo overlap with worker #137 — close one as duplicate (portal-owning is more natural since URL routing is portal-side).
+- **PR 6 — Shell perf nit** (#52): one-line `useEffect` cleanup. Micro-PR.
+- **Watch for worker movement**: Ian on bt-servant-worker#215 + #191. Once #215 lands and soaks, portal #125 Phase 2 PR opens here (full deletion of `manual-config.tsx`, `prompt-panel.tsx`, the `/prompt-configuration` route, the `/api/config/prompt-overrides` branch in `worker/config.ts`, the three org-overrides functions in `config-api.ts`, `useOrgOverrides`/`useUpdateOrgOverrides` hooks, the `"prompt-configuration"` section entry, the `.config-grid-bg` CSS class, and ~12 tests).
 
 ## Known Issues
 
