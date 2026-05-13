@@ -13,8 +13,13 @@ jobs:
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-latest
+    # gitleaks-action@v2 ships `runs.using: node20` and has no v3 release.
+    # FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 transitions it onto Node 24 ahead of
+    # GitHub's Sep 16 2026 Node 20 removal. Drop this when v3 ships.
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
@@ -30,10 +35,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "npm"
@@ -70,10 +75,10 @@ jobs:
     needs: quality
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "npm"
@@ -104,7 +109,7 @@ jobs:
           echo "**Build completed successfully**" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: build
           path: dist
