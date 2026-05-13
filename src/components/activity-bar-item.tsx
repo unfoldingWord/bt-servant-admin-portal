@@ -42,12 +42,18 @@ export function ActivityBarItem({
           className={cn(
             "text-muted-foreground relative size-10 rounded-md transition-all",
             "focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2",
+            // Dark-mode hover uses a white overlay because the accent token is
+            // only 0.073 L away from the card surface — below the perceptibility
+            // threshold for a hover state. Issue #12.
             !disabled &&
-              "hover:bg-accent hover:text-foreground hover:shadow-sm active:scale-95",
+              "hover:bg-accent hover:text-foreground hover:shadow-sm active:scale-95 dark:hover:bg-white/[0.08]",
             disabled && "cursor-not-allowed opacity-40",
+            // Active state pairs the left-edge primary strip with a subtle
+            // background fill so the signal isn't carried on a 2px stripe + a
+            // small text lightness delta alone. Issue #13.
             isActive &&
               !disabled &&
-              "text-foreground before:bg-primary before:absolute before:inset-y-1.5 before:-left-1 before:w-0.5 before:rounded-full before:transition-all"
+              "bg-primary/8 text-foreground dark:bg-primary/12 before:bg-primary before:absolute before:inset-y-1.5 before:-left-1 before:w-0.5 before:rounded-full before:transition-all"
           )}
         >
           <FontAwesomeIcon

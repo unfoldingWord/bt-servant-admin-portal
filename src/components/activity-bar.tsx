@@ -28,7 +28,7 @@ export function ActivityBar() {
   const canAccessLanguages = hasAnyLanguageRights(languageRights);
 
   return (
-    <div className="bg-card relative z-10 flex h-full w-12 flex-col items-center py-3 shadow-[2px_0_12px_rgba(0,0,0,0.2)]">
+    <div className="bg-card relative z-10 flex h-full w-12 flex-col items-center py-3 shadow-[2px_0_12px_rgba(0,0,0,0.2)] dark:shadow-[2px_0_12px_rgba(0,0,0,0.35)]">
       <div className="flex flex-col items-center gap-1.5">
         <ActivityBarItem
           icon={faMessageBotLight}

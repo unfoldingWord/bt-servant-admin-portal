@@ -130,7 +130,7 @@ export function LanguageSelector({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-2.5 sm:flex-initial">
-          <div className="bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-lg">
+          <div className="bg-primary/10 dark:bg-primary/20 text-primary flex size-8 shrink-0 items-center justify-center rounded-lg">
             <FontAwesomeIcon icon={faLanguage} className="text-base" />
           </div>
           <Select
