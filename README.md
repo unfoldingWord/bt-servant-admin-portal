@@ -86,9 +86,10 @@ The Cloudflare Worker acts as a BFF proxy, authenticating requests and forwardin
 
 ## Bootstrapping a new org
 
-An "org" in the portal is a free-text string on each user record — it "exists" the moment the first user with that org string is created. Provisioning a new tenant (or any cross-org user creation) goes through the portal worker's `X-Admin-Secret` path, since org-scoped admins can only create users in their own org.
+An "org" in the portal is a free-text string on each user record — it "exists" the moment the first user with that org string is created. Two paths:
 
-A stopgap CLI wraps the call so operators don't hand-craft curls. (A proper super-admin UI is tracked in [#138](https://github.com/unfoldingWord/bt-servant-admin-portal/issues/138); this script remains the recovery / CI path.)
+1. **From the UI as a super admin** — on `/admin/users` the create-user dialog has an editable Org field for super admins. Typing a new slug creates that org with this user as a member. (See "Bootstrapping a super admin" below for how to get the first super admin.)
+2. **Via the CLI with `X-Admin-Secret`** — the recovery / CI path, also used before any super admin exists in an environment.
 
 ```bash
 # Source ADMIN_SECRET from your password manager (1Password example below)
@@ -111,3 +112,21 @@ ADMIN_SECRET=… npm run create-org-admin -- --help
 ```
 
 On success the script prints the created user and the initial password — share both out-of-band; the user can change the password after first sign-in. `ADMIN_SECRET` is the portal worker's wrangler secret (see `worker/admin.ts` for the auth model); it is never echoed back.
+
+## Bootstrapping a super admin
+
+A super admin has cross-org powers: they see users across every org on `/admin/users`, can create users in any org, can move users between orgs, and can grant/revoke `isSuperAdmin` on others. This is intentionally a small set of people (typically the maintainers).
+
+The first super admin in any environment is granted via a one-time curl against the portal worker with `X-Admin-Secret`. After that, super admins can grant the role to each other from the UI.
+
+```bash
+op run -- curl -X PUT \
+  https://bt-servant-admin-portal-staging.unfoldingword.workers.dev/api/admin/users/seth@example.com \
+  -H "X-Admin-Secret: $ADMIN_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"isSuperAdmin": true}'
+```
+
+The grant takes effect on the user's next request (the session re-hydrates from the live user record on every request, so no logout/login is required — but they may need to refresh the page to see the new UI affordances).
+
+Revocation works the same way with `{"isSuperAdmin": false}`. A super admin cannot self-revoke from the UI (the worker rejects with 400 to prevent locking yourself out); use the CLI for that.

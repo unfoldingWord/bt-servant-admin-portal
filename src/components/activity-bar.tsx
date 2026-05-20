@@ -11,7 +11,7 @@ import { faUsers as faUsersSolid } from "@fortawesome/pro-solid-svg-icons";
 import { useNavigate } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
-import { hasAnyLanguageRights } from "@/lib/permissions";
+import { hasAdminPowers, hasAnyLanguageRights } from "@/lib/permissions";
 import { useUiStore } from "@/lib/ui-store";
 import { Separator } from "@/components/ui/separator";
 import { ActivityBarItem } from "@/components/activity-bar-item";
@@ -24,7 +24,9 @@ export function ActivityBar() {
   const testChatOpen = useUiStore((s) => s.testChatOpen);
   const toggleTestChat = useUiStore((s) => s.toggleTestChat);
   const languageRights = useAuthStore((s) => s.user?.language_rights);
-  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
+  // Uses hasAdminPowers so super admins (even without isAdmin) see the
+  // Modes + Users entries. Mirrors worker's "super trumps" rule.
+  const isAdmin = useAuthStore((s) => hasAdminPowers(s.user));
   const canAccessLanguages = hasAnyLanguageRights(languageRights);
 
   return (

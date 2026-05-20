@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   filterAuthorizedLanguages,
+  hasAdminPowers,
   hasAnyLanguageRights,
   hasLanguageRights,
 } from "../src/lib/permissions";
@@ -62,6 +63,40 @@ describe("hasAnyLanguageRights", () => {
 
   it("empty array → false (explicit deny-all)", () => {
     expect(hasAnyLanguageRights([])).toBe(false);
+  });
+});
+
+describe("hasAdminPowers", () => {
+  // "super trumps isAdmin" mirror. Pin every (isAdmin, isSuperAdmin) cell
+  // and the null cases so the next person touching the helper can see the
+  // truth table at a glance.
+
+  it("null user → false", () => {
+    expect(hasAdminPowers(null)).toBe(false);
+  });
+
+  it("undefined user → false", () => {
+    expect(hasAdminPowers(undefined)).toBe(false);
+  });
+
+  it("isAdmin=true, no isSuperAdmin → true (existing org-admin path)", () => {
+    expect(hasAdminPowers({ isAdmin: true })).toBe(true);
+  });
+
+  it("isAdmin=false, isSuperAdmin=true → true (super trumps)", () => {
+    expect(hasAdminPowers({ isAdmin: false, isSuperAdmin: true })).toBe(true);
+  });
+
+  it("isAdmin=true, isSuperAdmin=true → true (both set)", () => {
+    expect(hasAdminPowers({ isAdmin: true, isSuperAdmin: true })).toBe(true);
+  });
+
+  it("isAdmin=false, isSuperAdmin=false → false", () => {
+    expect(hasAdminPowers({ isAdmin: false, isSuperAdmin: false })).toBe(false);
+  });
+
+  it("both flags undefined → false (neither set ≠ admin)", () => {
+    expect(hasAdminPowers({})).toBe(false);
   });
 });
 
