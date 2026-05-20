@@ -5,10 +5,13 @@
 # string near "password" / "secret" / "key" / "token". Synthetic test
 # fixtures like "mallory-test-password" satisfy the worker's 8-char password
 # policy in create-user tests and trip the entropy threshold even though
-# they are clearly not real credentials. Code review remains the load-
-# bearing check against a real secret accidentally landing in tests/*;
-# .dev.vars / .env* / .npmrc are gitignored separately so the actual
-# credentials never reach git.
+# they are clearly not real credentials.
+#
+# Scope: only the generic-api-key rule is allowlisted inside tests/*.test.ts.
+# All other default rules (aws-token, github-pat, slack-webhook, etc.) still
+# fire in test files. Outside tests/, the full default ruleset applies
+# unchanged. .dev.vars / .env* / .npmrc are gitignored separately so real
+# credentials never reach git in the first place.
 #
 # Both CI (gitleaks-action) and the pre-commit hook (.husky/pre-commit) read
 # this config when present.
@@ -18,6 +21,7 @@ title = "BT Servant Admin Portal"
 [extend]
 useDefault = true
 
-[allowlist]
-description = "Test fixture strings"
+[[allowlists]]
+description = "Generic-api-key false positives on test fixture passwords in tests/*"
+targetRules = ["generic-api-key"]
 paths = ['''tests/.*\.test\.ts$''']

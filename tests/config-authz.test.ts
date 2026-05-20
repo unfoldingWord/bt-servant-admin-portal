@@ -170,3 +170,83 @@ describe("config authz — /api/config/modes (list)", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Super-admin parity (#138)
+// ---------------------------------------------------------------------------
+//
+// "super trumps isAdmin" is the principle in worker/admin.ts. It must apply
+// uniformly across the worker — without these tests, a super-admin who
+// self-demotes isAdmin (allowed) gets a weird partial-power state: they can
+// manage users but can't edit modes/prompt-overrides. Pin the parity here
+// so the next person touching isAdminMutation doesn't accidentally regress
+// the isSuperAdmin branch.
+
+describe("config authz — super admin trumps isAdmin", () => {
+  it("super admin without isAdmin can PUT /api/config/modes/{name}", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/modes/spoken", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: "## Identity\n" }),
+      }),
+      env,
+      makeSession({ isAdmin: false, isSuperAdmin: true }),
+      "/api/config/modes/spoken"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("PUT");
+  });
+
+  it("super admin without isAdmin can DELETE /api/config/modes/{name}", async () => {
+    const fetchSpy = spyFetch();
+    await handleConfig(
+      makeRequest("DELETE", "/api/config/modes/spoken"),
+      env,
+      makeSession({ isAdmin: false, isSuperAdmin: true }),
+      "/api/config/modes/spoken"
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("DELETE");
+  });
+
+  it("super admin without isAdmin can PUT /api/config/prompt-overrides", async () => {
+    const fetchSpy = spyFetch();
+    await handleConfig(
+      new Request("https://portal.example.test/api/config/prompt-overrides", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identity: "hi" }),
+      }),
+      env,
+      makeSession({ isAdmin: false, isSuperAdmin: true }),
+      "/api/config/prompt-overrides"
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("admin with isSuperAdmin: true also still works (mixed-role regression)", async () => {
+    const fetchSpy = spyFetch();
+    await handleConfig(
+      makeRequest("DELETE", "/api/config/prompt-overrides"),
+      env,
+      makeSession({ isAdmin: true, isSuperAdmin: true }),
+      "/api/config/prompt-overrides"
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("neither isAdmin nor isSuperAdmin → 403 (regression on baseline)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequest("PUT", "/api/config/modes/spoken"),
+      env,
+      makeSession({ isAdmin: false, isSuperAdmin: false }),
+      "/api/config/modes/spoken"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
