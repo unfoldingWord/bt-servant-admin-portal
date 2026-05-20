@@ -35,7 +35,9 @@ Optional:
                             comma-separated list of language slugs
   --not-admin               Set isAdmin: false (default: true — first user of
                             a new org typically needs admin to self-administer)
-  --confirm-prod            Required when --env prod (guards against typos)
+  --confirm-prod            Required when targeting prod (--env prod, or
+                            --url matching the known prod URL, or any
+                            unrecognized --url that could be prod/custom)
   --dry-run                 Print the request that would be made and exit
   --help, -h                Show this help
 
@@ -103,6 +105,21 @@ export function resolvePortalUrl({ url, env }) {
 }
 
 /**
+ * Classify a resolved portal URL against the known set. "prod" and
+ * "unknown" both require --confirm-prod; "dev" and "staging" do not.
+ * Used to close the trapdoor where --url could target prod (or an
+ * unknown host) while --env was left at the staging default.
+ * @param {string} resolvedUrl
+ * @returns {"dev" | "staging" | "prod" | "unknown"}
+ */
+export function classifyResolvedUrl(resolvedUrl) {
+  if (resolvedUrl === PORTAL_URLS.prod) return "prod";
+  if (resolvedUrl === PORTAL_URLS.staging) return "staging";
+  if (resolvedUrl === PORTAL_URLS.dev) return "dev";
+  return "unknown";
+}
+
+/**
  * Build the request body sent to POST /api/admin/users.
  * @param {{
  *   email: string,
@@ -165,12 +182,6 @@ async function main() {
   }
 
   const env = values.env ?? "staging";
-  if (env === "prod" && !values["confirm-prod"] && !values["dry-run"]) {
-    fail(
-      "Refusing to target prod without --confirm-prod. Re-run with --confirm-prod once you have verified the org slug, email, and that this is the right environment."
-    );
-    return;
-  }
 
   const adminSecret = process.env.ADMIN_SECRET;
   if (!adminSecret && !values["dry-run"]) {
@@ -185,6 +196,24 @@ async function main() {
     portalUrl = resolvePortalUrl({ url: values.url, env });
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
+    return;
+  }
+
+  // Confirmation guard: check the *resolved* target, not just --env, since
+  // --url overrides --env. Require --confirm-prod when the resolved URL
+  // matches the known prod URL OR is unknown (could be a custom prod
+  // domain we don't recognize). Dev/staging proceed without confirmation.
+  const targetClass = classifyResolvedUrl(portalUrl);
+  if (
+    (targetClass === "prod" || targetClass === "unknown") &&
+    !values["confirm-prod"] &&
+    !values["dry-run"]
+  ) {
+    fail(
+      targetClass === "prod"
+        ? `Refusing to target prod (${portalUrl}) without --confirm-prod. Re-run with --confirm-prod once you have verified the org slug, email, and that this is the right environment.`
+        : `Refusing to target a non-standard URL (${portalUrl}) without --confirm-prod. The known dev/staging URLs are recognized automatically; any --url override could be prod or a custom domain and must be explicitly confirmed.`
+    );
     return;
   }
 
