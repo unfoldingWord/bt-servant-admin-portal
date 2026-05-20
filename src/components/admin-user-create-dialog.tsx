@@ -5,6 +5,7 @@ import type { LanguageRights } from "@/types/auth";
 import {
   AdminUsersForbiddenError,
   AdminUsersRequestError,
+  isReservedOrgSlug,
 } from "@/lib/admin-users-api";
 import { useCreateAdminUser } from "@/hooks/use-admin-users";
 import { Button } from "@/components/ui/button";
@@ -92,6 +93,13 @@ export function AdminUserCreateDialog({
     }
     if (callerIsSuperAdmin && !trimmedOrg) {
       setErrorText("Org cannot be empty.");
+      return;
+    }
+    // Reserved by the UI for the "all orgs" filter Select. Without this
+    // guard a super admin could create an org with the sentinel slug,
+    // which would then be unfilterable on this page.
+    if (callerIsSuperAdmin && isReservedOrgSlug(trimmedOrg)) {
+      setErrorText("That org slug is reserved by the UI — pick another.");
       return;
     }
     if (password.length < 8) {

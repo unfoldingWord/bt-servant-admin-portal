@@ -7,6 +7,7 @@ import type { AdminUser } from "@/types/admin-users";
 import {
   AdminUsersForbiddenError,
   AdminUsersRequestError,
+  ORG_FILTER_ALL_SENTINEL,
 } from "@/lib/admin-users-api";
 import { useAuthStore } from "@/lib/auth-store";
 import { useAdminUsers, useDeleteAdminUser } from "@/hooks/use-admin-users";
@@ -33,11 +34,6 @@ import { AdminUserCreateDialog } from "@/components/admin-user-create-dialog";
 import { AdminUserEditDialog } from "@/components/admin-user-edit-dialog";
 import { PageHeader } from "@/components/page-header";
 
-// Sentinel for the "all orgs" entry in the super-admin org filter Select.
-// Radix Select disallows empty-string item values, so we use a literal
-// that can never collide with a real org slug.
-const ALL_ORGS = "__all__";
-
 export function AdminUsersPage() {
   const callerEmail = useAuthStore((s) => s.user?.email ?? "");
   const callerOrg = useAuthStore((s) => s.user?.org ?? "");
@@ -53,7 +49,7 @@ export function AdminUsersPage() {
     null
   );
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [orgFilter, setOrgFilter] = useState<string>(ALL_ORGS);
+  const [orgFilter, setOrgFilter] = useState<string>(ORG_FILTER_ALL_SENTINEL);
 
   const editingUser = useMemo(
     () => usersQuery.data?.find((u) => u.email === editingEmail) ?? null,
@@ -75,7 +71,7 @@ export function AdminUsersPage() {
 
   const visibleUsers = useMemo(() => {
     if (!usersQuery.data) return [];
-    if (!callerIsSuperAdmin || orgFilter === ALL_ORGS) {
+    if (!callerIsSuperAdmin || orgFilter === ORG_FILTER_ALL_SENTINEL) {
       return usersQuery.data;
     }
     return usersQuery.data.filter((u) => u.org === orgFilter);
@@ -119,7 +115,9 @@ export function AdminUsersPage() {
                 <SelectValue placeholder="Filter by org" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_ORGS}>All organizations</SelectItem>
+                <SelectItem value={ORG_FILTER_ALL_SENTINEL}>
+                  All organizations
+                </SelectItem>
                 {distinctOrgs.map((org) => (
                   <SelectItem key={org} value={org}>
                     {org}
@@ -163,7 +161,7 @@ export function AdminUsersPage() {
               No users in <span className="font-mono">{orgFilter}</span>.{" "}
               <button
                 type="button"
-                onClick={() => setOrgFilter(ALL_ORGS)}
+                onClick={() => setOrgFilter(ORG_FILTER_ALL_SENTINEL)}
                 className="text-foreground underline-offset-2 hover:underline"
               >
                 Clear filter
@@ -312,10 +310,14 @@ function UserRow({
       )}
       <td className="px-6 py-3">
         <div className="flex flex-wrap gap-1">
-          {user.isSuperAdmin && (
-            // Distinct visual from the org Admin badge so the cross-org
-            // role is obvious at a glance. Only super-admin viewers see
-            // this field populated (org admins get an org-filtered list).
+          {callerIsSuperAdmin && user.isSuperAdmin && (
+            // Gated on the viewer (callerIsSuperAdmin), not just the row.
+            // The worker's safeUser returns isSuperAdmin to every admin
+            // caller — including org admins viewing their own org-filtered
+            // list — so an unsuper viewer seeing a same-org colleague who
+            // happens to also hold super would leak the cross-org role.
+            // A worker-side redaction is a more durable fix (track as a
+            // follow-up) but the UI gate closes the leak today.
             <Badge className="bg-primary/15 text-primary hover:bg-primary/20 border-primary/30 border">
               Super
             </Badge>

@@ -6,6 +6,7 @@ import type { Language } from "@/types/language";
 import {
   AdminUsersForbiddenError,
   AdminUsersRequestError,
+  isReservedOrgSlug,
 } from "@/lib/admin-users-api";
 import { useUpdateAdminUser } from "@/hooks/use-admin-users";
 import { Button } from "@/components/ui/button";
@@ -87,6 +88,13 @@ export function AdminUserEditDialog({
     const trimmedOrg = org.trim();
     if (callerIsSuperAdmin && !trimmedOrg) {
       setErrorText("Org cannot be empty.");
+      return;
+    }
+    // Reserved by the UI for the "all orgs" filter Select — refuse to
+    // move a user into the sentinel slug. (Same guard as the create
+    // dialog; see ORG_FILTER_ALL_SENTINEL in lib/admin-users-api.)
+    if (callerIsSuperAdmin && isReservedOrgSlug(trimmedOrg)) {
+      setErrorText("That org slug is reserved by the UI — pick another.");
       return;
     }
 

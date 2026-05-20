@@ -4,6 +4,20 @@ import type {
   UpdateUserBody,
 } from "@/types/admin-users";
 
+// Sentinel for the "all orgs" entry in the super-admin org filter Select.
+// Radix Select disallows empty-string item values, so a literal stands in
+// for "no filter". The value is deliberately distinctive — `@@` brackets
+// + the project namespace — so any realistic org slug ("acme", "haneen",
+// "uw", "tools", …) won't collide. Dialogs additionally refuse to create
+// or move an org to exactly this slug via isReservedOrgSlug.
+export const ORG_FILTER_ALL_SENTINEL = "@@bt-servant:all-orgs@@";
+
+// One source of truth so the sentinel and the dialog guards can't drift
+// apart on future renames.
+export function isReservedOrgSlug(slug: string): boolean {
+  return slug === ORG_FILTER_ALL_SENTINEL;
+}
+
 // X-Requested-With is the same-origin marker the worker requires on the
 // cookie-auth path (see worker/admin.ts requireAdminAuth). All admin user
 // requests from the browser must include it.
