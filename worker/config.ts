@@ -63,6 +63,16 @@ async function proxyToEngine(
 // Config route handler
 // ---------------------------------------------------------------------------
 
+// "Has admin powers" — true for org admins AND for super admins. Mirrors
+// the principle in worker/admin.ts that isSuperAdmin trumps isAdmin: a
+// super admin who self-demoted isAdmin (allowed; they retain cross-org
+// powers via super) still needs to be able to mutate prompt configuration,
+// not just /api/admin/users. Without this, the super-admin partial-power
+// state would be inconsistent across the worker.
+function hasAdminPowers(session: SessionData): boolean {
+  return session.isAdmin || (session.isSuperAdmin ?? false);
+}
+
 // Mutations on org-wide prompt configuration (modes + prompt-overrides) are
 // admin-only. The trusted-portal model (single shared ADMIN_API_TOKEN
 // upstream, no per-user identity on admin paths) means this worker is the
@@ -71,8 +81,8 @@ async function proxyToEngine(
 // open because non-admins need to read modes for the test-chat / trigger
 // lookup, and prompt-overrides GET carries no sensitive data beyond the
 // org's prompt configuration.
-function isAdminMutation(method: string, isAdmin: boolean): boolean {
-  return (method === "PUT" || method === "DELETE") && !isAdmin;
+function isAdminMutation(method: string, session: SessionData): boolean {
+  return (method === "PUT" || method === "DELETE") && !hasAdminPowers(session);
 }
 
 export async function handleConfig(
@@ -85,7 +95,7 @@ export async function handleConfig(
 
   // /api/config/prompt-overrides → GET (any session) / PUT/DELETE (admin)
   if (pathname === "/api/config/prompt-overrides") {
-    if (isAdminMutation(request.method, session.isAdmin)) {
+    if (isAdminMutation(request.method, session)) {
       return errorResponse("Forbidden", 403);
     }
     return proxyToEngine(
@@ -99,7 +109,7 @@ export async function handleConfig(
   // /api/config/modes/{name} → GET (any session) / PUT/DELETE (admin)
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);
   if (modeMatch?.[1]) {
-    if (isAdminMutation(request.method, session.isAdmin)) {
+    if (isAdminMutation(request.method, session)) {
       return errorResponse("Forbidden", 403);
     }
     const modeName = decodeURIComponent(modeMatch[1]);

@@ -13,6 +13,7 @@ interface SeedUserInput {
   name: string;
   org: string;
   isAdmin?: boolean;
+  isSuperAdmin?: boolean;
   language_rights?: LanguageRights;
 }
 
@@ -27,6 +28,7 @@ async function seedUser(input: SeedUserInput): Promise<StoredUser> {
     passwordHash,
     salt,
     isAdmin: input.isAdmin ?? false,
+    isSuperAdmin: input.isSuperAdmin ?? false,
     language_rights: input.language_rights,
   };
   await env.AUTH_KV.put(`user:${input.email}`, JSON.stringify(stored));
@@ -41,6 +43,7 @@ async function seedSession(user: StoredUser): Promise<string> {
     name: user.name,
     org: user.org,
     isAdmin: user.isAdmin ?? false,
+    isSuperAdmin: user.isSuperAdmin ?? false,
     createdAt: new Date().toISOString(),
     language_rights: user.language_rights,
   };
@@ -843,5 +846,452 @@ describe("admin auth — mixed paths", () => {
     expect(status).toBe(200);
     // Super scope listed all (just Bob in this test)
     expect((body as { users: unknown[] }).users).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Session super-admin (#138 — super-by-session scope)
+// ---------------------------------------------------------------------------
+//
+// Super-admin via cookie is the cross-org browser role. It mirrors the
+// X-Admin-Secret super scope's powers (cross-org list/create/move/delete,
+// can grant/revoke isSuperAdmin) but is subject to the self-mutation guards
+// the cookie path enforces (no self-delete; no self-demote of isSuperAdmin —
+// which would lock the caller out of cross-org powers).
+
+describe("admin auth — session super-admin (super-by-session scope)", () => {
+  it("isSuperAdmin + XHR → 200, lists users from ALL orgs", async () => {
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    await seedUser({ email: "alice@acme.com", name: "Alice", org: "acme" });
+    await seedUser({ email: "carol@other.com", name: "Carol", org: "other" });
+    const session = await seedSession(seth);
+
+    const { status, body } = await call({
+      method: "GET",
+      pathname: "/api/admin/users",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+    });
+
+    expect(status).toBe(200);
+    const users = (body as { users: { email: string; org: string }[] }).users;
+    expect(users).toHaveLength(3);
+    expect(new Set(users.map((u) => u.org))).toEqual(
+      new Set(["tools", "acme", "other"])
+    );
+  });
+
+  it("isSuperAdmin without isAdmin still passes admin auth (super trumps)", async () => {
+    // Edge case: a user explicitly demoted from isAdmin but still flagged
+    // isSuperAdmin should still get in. This is the "super trumps" rule —
+    // without it, demoting your own isAdmin would silently lock you out
+    // even though you still hold super.
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: false,
+      isSuperAdmin: true,
+    });
+    const session = await seedSession(seth);
+
+    const { status } = await call({
+      method: "GET",
+      pathname: "/api/admin/users",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+    });
+
+    expect(status).toBe(200);
+  });
+
+  it("can create user in a different org (bootstrap-new-org path)", async () => {
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    const session = await seedSession(seth);
+
+    const { status, body } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: {
+        email: "haneen@haneen.org",
+        password: "haneen-test-password",
+        name: "Haneen",
+        org: "haneen",
+        isAdmin: true,
+      },
+    });
+
+    expect(status).toBe(201);
+    const user = (body as { user: { org: string; email: string } }).user;
+    expect(user.org).toBe("haneen");
+    expect(user.email).toBe("haneen@haneen.org");
+  });
+
+  it("can move a user across orgs", async () => {
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    const session = await seedSession(seth);
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${bob.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: { org: "other" },
+    });
+
+    expect(status).toBe(200);
+    expect((body as { user: { org: string } }).user.org).toBe("other");
+  });
+
+  it("can delete a user in another org", async () => {
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    await seedUser({ email: "carol@other.com", name: "Carol", org: "other" });
+    const session = await seedSession(seth);
+
+    const { status } = await call({
+      method: "DELETE",
+      pathname: "/api/admin/users/carol@other.com",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+    });
+
+    expect(status).toBe(200);
+    expect(await env.AUTH_KV.get("user:carol@other.com")).toBeNull();
+  });
+
+  it("can grant isSuperAdmin to another user", async () => {
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    const ian = await seedUser({
+      email: "ian@example.com",
+      name: "Ian",
+      org: "tools",
+      isAdmin: true,
+    });
+    const session = await seedSession(seth);
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${ian.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: { isSuperAdmin: true },
+    });
+
+    expect(status).toBe(200);
+    expect(
+      (body as { user: { isSuperAdmin: boolean } }).user.isSuperAdmin
+    ).toBe(true);
+  });
+
+  it("cannot self-demote isSuperAdmin (would lock out of cross-org)", async () => {
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    const session = await seedSession(seth);
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${seth.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: { isSuperAdmin: false },
+    });
+
+    expect(status).toBe(400);
+    expect((body as { error: string }).error).toMatch(/super admin/i);
+    // Stored record must be unchanged.
+    const record = await env.AUTH_KV.get<StoredUser>(`user:${seth.email}`, {
+      type: "json",
+    });
+    expect(record?.isSuperAdmin).toBe(true);
+  });
+
+  it("CAN self-demote isAdmin (super remains, no lockout)", async () => {
+    // Mirror of the org-admin self-demote test. For super-by-session, the
+    // isAdmin self-demote guard does NOT apply because the caller retains
+    // cross-org powers via isSuperAdmin regardless of isAdmin.
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    const session = await seedSession(seth);
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${seth.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: { isAdmin: false },
+    });
+
+    expect(status).toBe(200);
+    expect((body as { user: { isAdmin: boolean } }).user.isAdmin).toBe(false);
+  });
+
+  it("cannot self-delete", async () => {
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    const session = await seedSession(seth);
+
+    const { status } = await call({
+      method: "DELETE",
+      pathname: `/api/admin/users/${seth.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+    });
+
+    expect(status).toBe(400);
+    expect(await env.AUTH_KV.get(`user:${seth.email}`)).not.toBeNull();
+  });
+
+  it("self-password-reset preserves caller's session (mirrors org-admin path)", async () => {
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    const callerSession = await seedSession(seth);
+    // Another active session on a different device.
+    await seedSession(seth);
+    expect(await countSessionsForEmail(seth.email)).toBe(2);
+
+    const { status } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${seth.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: callerSession,
+      body: { password: "new-seth-password" },
+    });
+
+    expect(status).toBe(200);
+    // Only the caller's session survives.
+    expect(await countSessionsForEmail(seth.email)).toBe(1);
+    expect(await env.AUTH_KV.get(`session:${callerSession}`)).not.toBeNull();
+  });
+
+  it("isSuperAdmin field is returned by safeUser in list response", async () => {
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    const session = await seedSession(seth);
+
+    const { status, body } = await call({
+      method: "GET",
+      pathname: "/api/admin/users",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+    });
+
+    expect(status).toBe(200);
+    const users = (
+      body as { users: { email: string; isSuperAdmin: boolean }[] }
+    ).users;
+    expect(users.find((u) => u.email === seth.email)?.isSuperAdmin).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Org admin scope cannot escalate via isSuperAdmin
+// ---------------------------------------------------------------------------
+//
+// Defense-in-depth: an org admin POST/PUT carrying isSuperAdmin must be
+// rejected loud (403). Silent drop would mask UI bugs and let an attacker
+// repeatedly probe the field hoping for a missing check.
+
+describe("admin auth — org admin cannot touch isSuperAdmin", () => {
+  it("org admin POST with isSuperAdmin → 403, user not created", async () => {
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const session = await seedSession(alice);
+
+    const { status, body } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: {
+        email: "mallory@acme.com",
+        password: "mallory-test-password",
+        name: "Mallory",
+        org: "acme",
+        isSuperAdmin: true,
+      },
+    });
+
+    expect(status).toBe(403);
+    expect((body as { error: string }).error).toMatch(/isSuperAdmin/);
+    expect(await env.AUTH_KV.get("user:mallory@acme.com")).toBeNull();
+  });
+
+  it("org admin PUT with isSuperAdmin → 403, stored record unchanged", async () => {
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    const session = await seedSession(alice);
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${bob.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: { isSuperAdmin: true },
+    });
+
+    expect(status).toBe(403);
+    expect((body as { error: string }).error).toMatch(/isSuperAdmin/);
+    const after = await env.AUTH_KV.get<StoredUser>(`user:${bob.email}`, {
+      type: "json",
+    });
+    expect(after?.isSuperAdmin ?? false).toBe(false);
+  });
+
+  it("org admin PUT with isSuperAdmin:false (no-op revoke) also rejects → 403", async () => {
+    // Even revoking is forbidden — an org admin couldn't have granted it in
+    // the first place, so they shouldn't be able to strip a co-worker's
+    // super-admin either. Symmetric to the grant block.
+    const alice = await seedUser({
+      email: "alice@acme.com",
+      name: "Alice",
+      org: "acme",
+      isAdmin: true,
+    });
+    const ian = await seedUser({
+      email: "ian@acme.com",
+      name: "Ian",
+      org: "acme",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    const session = await seedSession(alice);
+
+    const { status } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${ian.email}`,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: { isSuperAdmin: false },
+    });
+
+    expect(status).toBe(403);
+    const after = await env.AUTH_KV.get<StoredUser>(`user:${ian.email}`, {
+      type: "json",
+    });
+    expect(after?.isSuperAdmin).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// X-Admin-Secret retains all super powers (regression for #138)
+// ---------------------------------------------------------------------------
+
+describe("admin auth — X-Admin-Secret retains super powers post-#138", () => {
+  it("can grant isSuperAdmin via X-Admin-Secret (bootstrap path)", async () => {
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+    });
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${seth.email}`,
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: { isSuperAdmin: true },
+    });
+
+    expect(status).toBe(200);
+    expect(
+      (body as { user: { isSuperAdmin: boolean } }).user.isSuperAdmin
+    ).toBe(true);
+  });
+
+  it("can revoke isSuperAdmin from any user (recovery path)", async () => {
+    const seth = await seedUser({
+      email: "seth@example.com",
+      name: "Seth",
+      org: "tools",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${seth.email}`,
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: { isSuperAdmin: false },
+    });
+
+    expect(status).toBe(200);
+    expect(
+      (body as { user: { isSuperAdmin: boolean } }).user.isSuperAdmin
+    ).toBe(false);
   });
 });

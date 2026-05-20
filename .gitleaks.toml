@@ -1,0 +1,38 @@
+# Repo gitleaks config. Extends the bundled default ruleset and adds a
+# narrow allowlist for fixture-shaped false positives in test files.
+#
+# Background: the bundled generic-api-key rule flags any high-entropy quoted
+# string near "password" / "secret" / "key" / "token". Synthetic test
+# fixtures like "mallory-test-password" or "haneen-pw-123" satisfy the
+# worker's 8-char password policy in create-user tests and trip the entropy
+# threshold even though they are clearly not real credentials.
+#
+# Scope: allowlist requires BOTH conditions to match before exempting a
+# finding (condition = "AND"):
+#   1. Path is under tests/*.test.ts
+#   2. The matched secret is a simple lowercase-alphanumeric-dashes string
+#      (5–40 chars, starts with a letter)
+#
+# Real credentials don't match (2): AWS access keys start with AKIA and
+# contain uppercase; GitHub PATs start with ghp_; Stripe keys have sk_
+# prefixes; Slack webhooks have URL slashes. So a real credential
+# accidentally pasted into a test file would still be reported. Outside
+# tests/, the full default ruleset applies unchanged.
+#
+# .dev.vars / .env* / .npmrc are gitignored separately so real credentials
+# never reach git in the first place. Code review remains the load-bearing
+# check.
+#
+# Both CI (gitleaks-action) and the pre-commit hook (.husky/pre-commit) read
+# this config when present.
+
+title = "BT Servant Admin Portal"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fixture-shaped strings in test files"
+condition = "AND"
+paths = ['''tests/.*\.test\.ts$''']
+regexes = ['''^[a-z][a-z0-9-]{4,40}$''']
