@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AdminUsersForbiddenError,
   AdminUsersRequestError,
+  ORG_FILTER_ALL_SENTINEL,
   createAdminUser,
   deleteAdminUser,
+  isReservedOrgSlug,
   listAdminUsers,
   updateAdminUser,
 } from "../src/lib/admin-users-api";
@@ -220,5 +222,38 @@ describe("error parsing edge cases", () => {
       // Falls back to the default "Request failed (500)" message.
       expect(err.message).toBe("Request failed (500)");
     }
+  });
+});
+
+describe("isReservedOrgSlug", () => {
+  // Pin the exact sentinel string so a rename of ORG_FILTER_ALL_SENTINEL
+  // without updating the matcher would fail loudly here.
+  it("returns true for the exact sentinel", () => {
+    expect(isReservedOrgSlug(ORG_FILTER_ALL_SENTINEL)).toBe(true);
+  });
+
+  it("is exact-match (no trimming, no case-folding, no partial)", () => {
+    // Trim discipline lives in the dialogs (they trim before the check),
+    // so this helper itself must not silently accept whitespace variants.
+    expect(isReservedOrgSlug(` ${ORG_FILTER_ALL_SENTINEL} `)).toBe(false);
+    expect(isReservedOrgSlug(ORG_FILTER_ALL_SENTINEL.toUpperCase())).toBe(
+      false
+    );
+    expect(isReservedOrgSlug(`prefix${ORG_FILTER_ALL_SENTINEL}suffix`)).toBe(
+      false
+    );
+  });
+
+  it("returns false for realistic org slugs", () => {
+    expect(isReservedOrgSlug("acme")).toBe(false);
+    expect(isReservedOrgSlug("haneen")).toBe(false);
+    expect(isReservedOrgSlug("uw")).toBe(false);
+    expect(isReservedOrgSlug("tools")).toBe(false);
+  });
+
+  it("returns false for empty string and other non-sentinel values", () => {
+    expect(isReservedOrgSlug("")).toBe(false);
+    expect(isReservedOrgSlug("@@")).toBe(false);
+    expect(isReservedOrgSlug("__all__")).toBe(false);
   });
 });

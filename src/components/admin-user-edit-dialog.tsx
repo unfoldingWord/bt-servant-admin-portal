@@ -6,6 +6,7 @@ import type { Language } from "@/types/language";
 import {
   AdminUsersForbiddenError,
   AdminUsersRequestError,
+  isReservedOrgSlug,
 } from "@/lib/admin-users-api";
 import { useUpdateAdminUser } from "@/hooks/use-admin-users";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,10 @@ interface EditUserDialogProps {
   // controls (the worker also enforces these — UI just prevents the obvious
   // footgun before the request goes out).
   callerEmail: string;
+  // When true, render the editable Org field (move-org) and the
+  // Super-admin checkbox. When false, the dialog matches the original
+  // org-admin shape exactly.
+  callerIsSuperAdmin: boolean;
   availableLanguages: Language[] | undefined;
 }
 
@@ -39,12 +44,15 @@ export function AdminUserEditDialog({
   open,
   onOpenChange,
   callerEmail,
+  callerIsSuperAdmin,
   availableLanguages,
 }: EditUserDialogProps) {
   const updateUser = useUpdateAdminUser();
 
   const [name, setName] = useState("");
+  const [org, setOrg] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [rights, setRights] = useState<LanguageRights | undefined>(undefined);
   const [password, setPassword] = useState("");
   const [errorText, setErrorText] = useState<string | null>(null);
@@ -54,7 +62,9 @@ export function AdminUserEditDialog({
   useEffect(() => {
     if (!user) return;
     setName(user.name);
+    setOrg(user.org);
     setIsAdmin(user.isAdmin);
+    setIsSuperAdmin(user.isSuperAdmin ?? false);
     setRights(user.language_rights);
     setPassword("");
     setErrorText(null);
@@ -75,10 +85,26 @@ export function AdminUserEditDialog({
       setErrorText("Name cannot be empty.");
       return;
     }
+    const trimmedOrg = org.trim();
+    if (callerIsSuperAdmin && !trimmedOrg) {
+      setErrorText("Org cannot be empty.");
+      return;
+    }
+    // Reserved by the UI for the "all orgs" filter Select — refuse to
+    // move a user into the sentinel slug. (Same guard as the create
+    // dialog; see ORG_FILTER_ALL_SENTINEL in lib/admin-users-api.)
+    if (callerIsSuperAdmin && isReservedOrgSlug(trimmedOrg)) {
+      setErrorText("That org slug is reserved by the UI — pick another.");
+      return;
+    }
 
     const body: UpdateUserBody = {};
     if (trimmedName !== user.name) body.name = trimmedName;
+    if (callerIsSuperAdmin && trimmedOrg !== user.org) body.org = trimmedOrg;
     if (isAdmin !== user.isAdmin) body.isAdmin = isAdmin;
+    if (callerIsSuperAdmin && isSuperAdmin !== (user.isSuperAdmin ?? false)) {
+      body.isSuperAdmin = isSuperAdmin;
+    }
     // Send language_rights when the value differs. Comparing arrays needs
     // a deep compare; we serialize.
     const currentSerialized = JSON.stringify(user.language_rights ?? null);
@@ -154,23 +180,67 @@ export function AdminUserEditDialog({
               />
             </div>
 
+            {callerIsSuperAdmin && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-user-org">Organization</Label>
+                <Input
+                  id="edit-user-org"
+                  value={org}
+                  onChange={(e) => setOrg(e.target.value)}
+                  placeholder="org-slug"
+                  required
+                />
+                <p className="text-muted-foreground text-xs">
+                  Changing this moves the user to a different org. Typing a new
+                  slug creates that org with this user as a member.
+                </p>
+              </div>
+            )}
+
             <label className="hover:bg-accent flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60">
               <input
                 type="checkbox"
                 checked={isAdmin}
-                disabled={isSelf}
+                // Org admins can't self-demote isAdmin (worker rejects
+                // with 400). Super admins can — they keep cross-org powers
+                // via isSuperAdmin.
+                disabled={isSelf && !callerIsSuperAdmin}
                 onChange={(e) => setIsAdmin(e.target.checked)}
                 className="mt-0.5"
               />
               <div className="space-y-0.5">
                 <div className="text-sm font-medium">Org admin</div>
                 <div className="text-muted-foreground text-xs">
-                  {isSelf
+                  {isSelf && !callerIsSuperAdmin
                     ? "You cannot demote yourself. Use the X-Admin-Secret CLI if you really need to."
                     : "Can manage users in this org. Independent of language access."}
                 </div>
               </div>
             </label>
+
+            {callerIsSuperAdmin && (
+              <label className="hover:bg-accent flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60">
+                <input
+                  type="checkbox"
+                  checked={isSuperAdmin}
+                  // The worker rejects self-demote of isSuperAdmin with
+                  // 400 (would lock the caller out of cross-org powers).
+                  // Disabling when isSelf && currently-super surfaces that
+                  // boundary up-front rather than after a failed PUT.
+                  disabled={isSelf && isSuperAdmin}
+                  onChange={(e) => setIsSuperAdmin(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <div className="space-y-0.5">
+                  <div className="text-sm font-medium">Super admin</div>
+                  <div className="text-muted-foreground text-xs">
+                    {isSelf && isSuperAdmin
+                      ? "You cannot demote yourself from super admin. Use the X-Admin-Secret CLI if you really need to."
+                      : "Cross-org powers. Can manage users in any org, grant super admin to others."}
+                  </div>
+                </div>
+              </label>
+            )}
 
             <LanguageRightsSelector
               value={rights}

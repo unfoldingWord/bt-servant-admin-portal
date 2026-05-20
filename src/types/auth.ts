@@ -10,5 +10,11 @@ export interface AuthUser {
   name: string;
   org: string;
   isAdmin: boolean;
+  // Cross-org "super admin". When true, the UI lifts org filters on the
+  // /admin/users page, makes the Org field editable in create/edit
+  // dialogs, and surfaces an isSuperAdmin checkbox. The backend enforces
+  // the same powers regardless of UI state (worker/admin.ts +
+  // worker/config.ts both honor the "super trumps isAdmin" rule).
+  isSuperAdmin?: boolean;
   language_rights?: LanguageRights;
 }

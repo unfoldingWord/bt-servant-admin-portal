@@ -7,6 +7,7 @@ import type { AdminUser } from "@/types/admin-users";
 import {
   AdminUsersForbiddenError,
   AdminUsersRequestError,
+  ORG_FILTER_ALL_SENTINEL,
 } from "@/lib/admin-users-api";
 import { useAuthStore } from "@/lib/auth-store";
 import { useAdminUsers, useDeleteAdminUser } from "@/hooks/use-admin-users";
@@ -22,6 +23,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { AdminUserCreateDialog } from "@/components/admin-user-create-dialog";
 import { AdminUserEditDialog } from "@/components/admin-user-edit-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -29,6 +37,7 @@ import { PageHeader } from "@/components/page-header";
 export function AdminUsersPage() {
   const callerEmail = useAuthStore((s) => s.user?.email ?? "");
   const callerOrg = useAuthStore((s) => s.user?.org ?? "");
+  const callerIsSuperAdmin = useAuthStore((s) => s.user?.isSuperAdmin ?? false);
 
   const usersQuery = useAdminUsers();
   const languagesQuery = useLanguages();
@@ -40,6 +49,7 @@ export function AdminUsersPage() {
     null
   );
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [orgFilter, setOrgFilter] = useState<string>(ORG_FILTER_ALL_SENTINEL);
 
   const editingUser = useMemo(
     () => usersQuery.data?.find((u) => u.email === editingEmail) ?? null,
@@ -49,6 +59,23 @@ export function AdminUsersPage() {
     () => usersQuery.data?.find((u) => u.email === confirmDeleteEmail) ?? null,
     [usersQuery.data, confirmDeleteEmail]
   );
+
+  // Distinct orgs from the returned user list. Org admins receive an
+  // org-filtered list (trivially length 1) but we hide the filter for
+  // them anyway; for super admins this enumerates every org with at
+  // least one user.
+  const distinctOrgs = useMemo(() => {
+    if (!usersQuery.data) return [];
+    return Array.from(new Set(usersQuery.data.map((u) => u.org))).sort();
+  }, [usersQuery.data]);
+
+  const visibleUsers = useMemo(() => {
+    if (!usersQuery.data) return [];
+    if (!callerIsSuperAdmin || orgFilter === ORG_FILTER_ALL_SENTINEL) {
+      return usersQuery.data;
+    }
+    return usersQuery.data.filter((u) => u.org === orgFilter);
+  }, [usersQuery.data, callerIsSuperAdmin, orgFilter]);
 
   const handleConfirmDelete = () => {
     if (!confirmDeleteUser) return;
@@ -73,11 +100,32 @@ export function AdminUsersPage() {
     <div className="flex h-full flex-col overflow-hidden">
       <PageHeader
         title="Users"
-        subtitle={`Manage users in the ${callerOrg} organization. Assign org admin and language-shepherd permissions here.`}
+        subtitle={
+          callerIsSuperAdmin
+            ? "Manage users across all organizations. Assign org admin, super admin, and language-shepherd permissions here."
+            : `Manage users in the ${callerOrg} organization. Assign org admin and language-shepherd permissions here.`
+        }
       />
 
       <div className="bg-card border-b">
         <div className="flex flex-wrap items-center gap-3 p-4 sm:p-6">
+          {callerIsSuperAdmin && distinctOrgs.length > 0 && (
+            <Select value={orgFilter} onValueChange={setOrgFilter}>
+              <SelectTrigger className="w-[220px]">
+                <SelectValue placeholder="Filter by org" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ORG_FILTER_ALL_SENTINEL}>
+                  All organizations
+                </SelectItem>
+                {distinctOrgs.map((org) => (
+                  <SelectItem key={org} value={org}>
+                    {org}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <div className="flex-1" />
           <Button size="sm" onClick={() => setCreateOpen(true)}>
             <Plus className="mr-1.5 size-3.5" />
@@ -107,12 +155,28 @@ export function AdminUsersPage() {
               No users yet. Click &ldquo;New user&rdquo; to add the first one.
             </p>
           </div>
+        ) : visibleUsers.length === 0 ? (
+          <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+            <p className="text-sm">
+              No users in <span className="font-mono">{orgFilter}</span>.{" "}
+              <button
+                type="button"
+                onClick={() => setOrgFilter(ORG_FILTER_ALL_SENTINEL)}
+                className="text-foreground underline-offset-2 hover:underline"
+              >
+                Clear filter
+              </button>
+            </p>
+          </div>
         ) : (
           <table className="w-full text-sm">
             <thead className="bg-muted/40 text-muted-foreground sticky top-0 text-xs tracking-wide uppercase">
               <tr>
                 <th className="px-6 py-3 text-left font-medium">Name</th>
                 <th className="px-6 py-3 text-left font-medium">Email</th>
+                {callerIsSuperAdmin && (
+                  <th className="px-6 py-3 text-left font-medium">Org</th>
+                )}
                 <th className="px-6 py-3 text-left font-medium">Role</th>
                 <th className="px-6 py-3 text-left font-medium">
                   Language access
@@ -121,11 +185,12 @@ export function AdminUsersPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {usersQuery.data.map((u) => (
+              {visibleUsers.map((u) => (
                 <UserRow
                   key={u.email}
                   user={u}
                   isSelf={u.email === callerEmail}
+                  callerIsSuperAdmin={callerIsSuperAdmin}
                   onEdit={() => setEditingEmail(u.email)}
                   onDelete={() => {
                     setDeleteError(null);
@@ -142,6 +207,7 @@ export function AdminUsersPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         callerOrg={callerOrg}
+        callerIsSuperAdmin={callerIsSuperAdmin}
         availableLanguages={languagesQuery.data?.languages}
       />
 
@@ -152,6 +218,7 @@ export function AdminUsersPage() {
           if (!open) setEditingEmail(null);
         }}
         callerEmail={callerEmail}
+        callerIsSuperAdmin={callerIsSuperAdmin}
         availableLanguages={languagesQuery.data?.languages}
       />
 
@@ -215,11 +282,18 @@ export function AdminUsersPage() {
 interface UserRowProps {
   user: AdminUser;
   isSelf: boolean;
+  callerIsSuperAdmin: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }
 
-function UserRow({ user, isSelf, onEdit, onDelete }: UserRowProps) {
+function UserRow({
+  user,
+  isSelf,
+  callerIsSuperAdmin,
+  onEdit,
+  onDelete,
+}: UserRowProps) {
   return (
     <tr className="hover:bg-muted/30 transition-colors">
       <td className="px-6 py-3">
@@ -229,12 +303,31 @@ function UserRow({ user, isSelf, onEdit, onDelete }: UserRowProps) {
       <td className="text-muted-foreground px-6 py-3 font-mono text-xs">
         {user.email}
       </td>
+      {callerIsSuperAdmin && (
+        <td className="text-muted-foreground px-6 py-3 font-mono text-xs">
+          {user.org}
+        </td>
+      )}
       <td className="px-6 py-3">
-        {user.isAdmin ? (
-          <Badge>Admin</Badge>
-        ) : (
-          <Badge variant="outline">Member</Badge>
-        )}
+        <div className="flex flex-wrap gap-1">
+          {callerIsSuperAdmin && user.isSuperAdmin && (
+            // Gated on the viewer (callerIsSuperAdmin), not just the row.
+            // The worker's safeUser returns isSuperAdmin to every admin
+            // caller — including org admins viewing their own org-filtered
+            // list — so an unsuper viewer seeing a same-org colleague who
+            // happens to also hold super would leak the cross-org role.
+            // A worker-side redaction is a more durable fix (track as a
+            // follow-up) but the UI gate closes the leak today.
+            <Badge className="bg-primary/15 text-primary hover:bg-primary/20 border-primary/30 border">
+              Super
+            </Badge>
+          )}
+          {user.isAdmin ? (
+            <Badge>Admin</Badge>
+          ) : (
+            <Badge variant="outline">Member</Badge>
+          )}
+        </div>
       </td>
       <td className="px-6 py-3">
         <LanguageRightsBadge value={user.language_rights} />
