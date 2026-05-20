@@ -1,0 +1,23 @@
+# Repo gitleaks config. Extends the bundled default ruleset and adds a
+# narrow allowlist for false positives in test fixtures.
+#
+# Background: the bundled generic-api-key rule flags any high-entropy quoted
+# string near "password" / "secret" / "key" / "token". Synthetic test
+# fixtures like "mallory-test-password" satisfy the worker's 8-char password
+# policy in create-user tests and trip the entropy threshold even though
+# they are clearly not real credentials. Code review remains the load-
+# bearing check against a real secret accidentally landing in tests/*;
+# .dev.vars / .env* / .npmrc are gitignored separately so the actual
+# credentials never reach git.
+#
+# Both CI (gitleaks-action) and the pre-commit hook (.husky/pre-commit) read
+# this config when present.
+
+title = "BT Servant Admin Portal"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixture strings"
+paths = ['''tests/.*\.test\.ts$''']
