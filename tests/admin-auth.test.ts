@@ -928,7 +928,7 @@ describe("admin auth — session super-admin (super-by-session scope)", () => {
       sessionId: session,
       body: {
         email: "haneen@haneen.org",
-        password: "haneen-pw-123",
+        password: "haneen-test-password",
         name: "Haneen",
         org: "haneen",
         isAdmin: true,
@@ -1170,7 +1170,7 @@ describe("admin auth — org admin cannot touch isSuperAdmin", () => {
       sessionId: session,
       body: {
         email: "mallory@acme.com",
-        password: "mallory-pw-123",
+        password: "mallory-test-password",
         name: "Mallory",
         org: "acme",
         isSuperAdmin: true,
