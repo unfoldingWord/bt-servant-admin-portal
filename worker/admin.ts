@@ -41,35 +41,55 @@ function parseLanguageRights(
 }
 
 // ---------------------------------------------------------------------------
-// Auth — dual-mode
+// Auth — tri-mode
 // ---------------------------------------------------------------------------
 //
-// Two authentication paths are accepted:
+// Three authentication paths are accepted:
 //
-//   1. **X-Admin-Secret** — a Cloudflare Worker secret. Cross-org "super"
-//      admin. Used by CLI/curl for bootstrap and recovery (creating the very
-//      first user, fixing a broken admin, etc.). Skips same-origin checks
-//      because the caller has no implicit credentials to abuse.
+//   1. **X-Admin-Secret** — a Cloudflare Worker secret. Cross-org super admin.
+//      Used by CLI/curl for bootstrap and recovery (creating the very first
+//      user, fixing a broken admin, etc.). Skips same-origin checks because
+//      the caller has no implicit credentials to abuse. Has no self — no
+//      self-mutation guards apply.
 //
-//   2. **Session cookie + isAdmin === true** — the browser path. Org-scoped:
+//   2. **Session cookie + isSuperAdmin === true** — browser super admin.
+//      Cross-org powers (lift all org filters), can grant/revoke isSuperAdmin
+//      on others. Same-origin required. Self-mutation guards apply: cannot
+//      self-demote isSuperAdmin (would lock out), cannot self-delete. Can
+//      self-demote isAdmin — they keep super powers regardless.
+//
+//   3. **Session cookie + isAdmin === true** — browser org admin. Org-scoped:
 //      the caller can only manage users within their own session.org.
-//      Same-origin (`X-Requested-With: XMLHttpRequest`) is required to
-//      prevent CSRF abuse of the implicit cookie.
+//      Same-origin required. Self-mutation guards apply: cannot self-demote
+//      isAdmin (would lock out), cannot self-delete.
 //
-// Self-mutation guards (cookie path only): an org admin cannot delete or
-// demote themselves. The X-Admin-Secret path stays as the recovery escape.
+// isSuperAdmin implies admit-to-admin even if isAdmin is false on the record.
 
 type AdminScope =
   | { kind: "super" }
   | {
-      kind: "org";
-      org: string;
+      kind: "super-by-session";
       selfEmail: string;
       // Caller's session id, so a self-password-reset can preserve the
       // current browser tab while still invalidating every other session
-      // for that email.
+      // for that email. Mirrors the "org" variant.
+      selfSessionId: string | null;
+    }
+  | {
+      kind: "org";
+      org: string;
+      selfEmail: string;
       selfSessionId: string | null;
     };
+
+// True for any scope with cross-org powers (X-Admin-Secret or
+// super-by-session). Used to short-circuit org-filter checks throughout
+// the handlers and to gate isSuperAdmin mutations in the body.
+function isCrossOrgScope(
+  scope: AdminScope
+): scope is Exclude<AdminScope, { kind: "org" }> {
+  return scope.kind === "super" || scope.kind === "super-by-session";
+}
 
 async function requireAdminAuth(
   request: Request,
@@ -81,13 +101,27 @@ async function requireAdminAuth(
     return { kind: "super" };
   }
 
-  // Path 2: session cookie + isAdmin (browser). Same-origin required.
+  // Paths 2 + 3: session cookie. Same-origin required.
   if (request.headers.get("X-Requested-With") !== "XMLHttpRequest") {
     return errorResponse("Forbidden", 403);
   }
 
   const session = await validateSession(request, env);
-  if (!session || !session.isAdmin) {
+  if (!session) {
+    return errorResponse("Forbidden", 403);
+  }
+
+  // isSuperAdmin trumps isAdmin — super admins pass admin auth even if
+  // their isAdmin happens to be false.
+  if (session.isSuperAdmin) {
+    return {
+      kind: "super-by-session",
+      selfEmail: session.email,
+      selfSessionId: getSessionId(request),
+    };
+  }
+
+  if (!session.isAdmin) {
     return errorResponse("Forbidden", 403);
   }
 
@@ -126,6 +160,7 @@ function safeUser(user: StoredUser) {
     name: user.name,
     org: user.org,
     isAdmin: user.isAdmin ?? false,
+    isSuperAdmin: user.isSuperAdmin ?? false,
     language_rights: user.language_rights,
   };
 }
@@ -149,6 +184,7 @@ async function createUser(
     name?: string;
     org?: string;
     isAdmin?: boolean;
+    isSuperAdmin?: boolean;
     language_rights?: unknown;
   };
   try {
@@ -172,6 +208,13 @@ async function createUser(
       `Cannot create user outside your org (${scope.org})`,
       403
     );
+  }
+
+  // Only cross-org scopes may grant isSuperAdmin. Reject loud (don't drop
+  // silently) so UI bugs surface and so an org admin trying to escalate
+  // gets a clear failure rather than thinking it worked.
+  if (body.isSuperAdmin !== undefined && !isCrossOrgScope(scope)) {
+    return errorResponse("Cannot grant isSuperAdmin from your scope", 403);
   }
 
   const passwordError = validatePasswordPolicy(password);
@@ -199,6 +242,7 @@ async function createUser(
     passwordHash,
     salt,
     isAdmin: body.isAdmin ?? false,
+    isSuperAdmin: body.isSuperAdmin ?? false,
     language_rights: rightsResult.value,
   };
 
@@ -267,12 +311,20 @@ async function updateUser(
     org?: string;
     password?: string;
     isAdmin?: boolean;
+    isSuperAdmin?: boolean;
     language_rights?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return errorResponse("Invalid JSON", 400);
+  }
+
+  // Only cross-org scopes may grant or revoke isSuperAdmin. Reject loud
+  // (don't drop silently) so UI bugs surface and so an org admin trying to
+  // self-escalate or strip another's super gets a clear failure.
+  if (body.isSuperAdmin !== undefined && !isCrossOrgScope(scope)) {
+    return errorResponse("Cannot modify isSuperAdmin from your scope", 403);
   }
 
   // Org-scoped admins cannot move users to another org. Allow no-op
@@ -285,14 +337,27 @@ async function updateUser(
     return errorResponse("Cannot move user to another org", 403);
   }
 
-  // Self-demote guard (cookie path only). The X-Admin-Secret CLI is the
-  // recovery path if a self-demote is genuinely needed.
+  // Self-demote isAdmin guard (org scope only). Super-by-session can
+  // self-demote isAdmin without locking out — they retain super powers
+  // either way. X-Admin-Secret has no self.
   if (
     scope.kind === "org" &&
     scope.selfEmail === email &&
     body.isAdmin === false
   ) {
     return errorResponse("Cannot demote yourself", 400);
+  }
+
+  // Self-demote isSuperAdmin guard (super-by-session only). Without this,
+  // a super-admin could PUT isSuperAdmin: false on themselves and drop to
+  // an org admin in their own org — losing cross-org powers. X-Admin-Secret
+  // remains the recovery escape.
+  if (
+    scope.kind === "super-by-session" &&
+    scope.selfEmail === email &&
+    body.isSuperAdmin === false
+  ) {
+    return errorResponse("Cannot demote yourself from super admin", 400);
   }
 
   if (body.name !== undefined) {
@@ -311,6 +376,9 @@ async function updateUser(
   }
   if (body.isAdmin !== undefined) {
     user.isAdmin = body.isAdmin;
+  }
+  if (body.isSuperAdmin !== undefined) {
+    user.isSuperAdmin = body.isSuperAdmin;
   }
   // `!== undefined` (not truthy) so `{ password: "" }` falls into the
   // policy check and rejects with "at least 8 characters" rather than
@@ -341,7 +409,8 @@ async function updateUser(
   // has no caller session to preserve.
   if (passwordChanged) {
     const exceptSessionId =
-      scope.kind === "org" && scope.selfEmail === email
+      (scope.kind === "org" || scope.kind === "super-by-session") &&
+      scope.selfEmail === email
         ? scope.selfSessionId
         : null;
     await invalidateUserSessions(env, email, exceptSessionId);
@@ -360,9 +429,13 @@ async function deleteUser(
     return errorResponse("Method not allowed", 405);
   }
 
-  // Self-delete guard (cookie path only). The X-Admin-Secret CLI is the
-  // recovery path if a self-delete is genuinely needed.
-  if (scope.kind === "org" && scope.selfEmail === email) {
+  // Self-delete guard (cookie path only — org or super-by-session). The
+  // X-Admin-Secret CLI is the recovery path if a self-delete is genuinely
+  // needed.
+  if (
+    (scope.kind === "org" || scope.kind === "super-by-session") &&
+    scope.selfEmail === email
+  ) {
     return errorResponse("Cannot delete yourself", 400);
   }
 

@@ -130,6 +130,7 @@ export async function validateSession(
     name: user.name,
     org: user.org,
     isAdmin: user.isAdmin ?? false,
+    isSuperAdmin: user.isSuperAdmin ?? false,
     language_rights: user.language_rights,
   };
 }
@@ -184,6 +185,7 @@ export async function handleLogin(
     name: user.name,
     org: user.org,
     isAdmin: user.isAdmin ?? false,
+    isSuperAdmin: user.isSuperAdmin ?? false,
     createdAt: new Date().toISOString(),
     language_rights: user.language_rights,
   };
@@ -199,6 +201,7 @@ export async function handleLogin(
       name: user.name,
       org: user.org,
       isAdmin: user.isAdmin ?? false,
+      isSuperAdmin: user.isSuperAdmin ?? false,
       language_rights: sessionData.language_rights,
     },
   });
@@ -241,6 +244,7 @@ export async function handleMe(request: Request, env: Env): Promise<Response> {
       name: session.name,
       org: session.org,
       isAdmin: session.isAdmin ?? false,
+      isSuperAdmin: session.isSuperAdmin ?? false,
       language_rights: session.language_rights,
     },
   });
