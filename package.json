@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "prepare": "husky",
     "deploy": "wrangler deploy",
-    "deploy:staging": "wrangler deploy --env staging"
+    "deploy:staging": "wrangler deploy --env staging",
+    "create-org-admin": "node scripts/create-org-admin.mjs"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs}": [
