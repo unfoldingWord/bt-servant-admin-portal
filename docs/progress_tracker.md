@@ -5,7 +5,7 @@
 ## Current Status
 
 **Phase**: Active development on Epic #72 (Admin Portal Redesign for Response Tuning); super-admin feature shipped end-to-end to staging.
-**Last Updated**: 2026-05-20
+**Last Updated**: 2026-05-21
 **Demo target**: June 9 — `#spoken @arabic` working end-to-end with the new editor
 **Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` — staging is 4 commits ahead with the new-org CLI + super-admin feature, awaiting promotion)
 
@@ -82,6 +82,53 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-05-21 — No-code day: Elsy super-admin scope diagnosis + understand-anything trial
+
+**Context entering the session:** SOD opened clean. PR #145 (2026-05-20 EOD tracker entry) still sitting open and green; no movement on prod promotion of the super-admin feature. Two thin work items surfaced: a Discord question from Elsy about staging behavior, and a tooling install.
+
+**Completed:**
+
+- **Elsy super-admin "doesn't mirror" question — diagnosed as architecture, not bug.** Elsy reported that user/org changes made via the new super-admin UI on `staging.btservant.ai/admin/users` don't appear on `staging-app.btservant.ai/chat`. Investigation walked the seven-repo BT Servant family on GitHub and verified at `unfoldingWord/bt-servant-web-client`:
+  - The chat app is a separate Next.js 16 + NextAuth 5 surface (`src/auth.config.ts` on `main`): Google OAuth + a credentials provider whose `authorize()` accepts any email and returns a user object with no password check, no lookup against the portal's `AUTH_KV`, no role gating.
+  - Zero references to `isSuperAdmin` or `AUTH_KV` across the web-client codebase.
+  - First-pass reply framed this as "two separate systems for everything" — Elsy correctly pushed back with a counterexample: mode edits in the portal **do** propagate to the chat app. Refined model: **configs vs. identity.** Modes/languages/prompt configs route through `bt-servant-worker` (shared backend, `staging-api.btservant.ai`); both surfaces read from `ORG_CONFIG` KV. User/role records live in the portal's own `AUTH_KV`, separate from the worker, separate from the web-client's NextAuth.
+  - "Hard-wired for uW" theory falsified: web-client defaults to `DEFAULT_ORG = unfoldingWord` via env, but staging has `NEXT_PUBLIC_ENABLE_ORG_SWITCHER = true` — modes made in other orgs would also show if the chat app switches context.
+  - Reply drafted for Elsy with Ian teed up on the roadmap-level question: should the portal's user/role store also be the chat app's identity backend? Pending Seth send.
+  - **Not filed as an issue** — this is a roadmap discussion that needs Tim + Ian, not a portal-side bugfix. Per the admin-portal-only scope rule, won't file cross-repo without alignment.
+
+- **`/understand` knowledge graph trial (understand-anything plugin).** Installed `Lum1104/Understand-Anything` marketplace plugin, ran end-to-end on this codebase via pnpm 10 (pnpm 11 blocks native build scripts by default; tree-sitter binaries need them, so downgraded via corepack). Eight-batch parallel file-analyzer wave produced 353 nodes / 692 edges / 10 layers / 12-step guided tour over 140 files. One genuine miss caught by the assemble-reviewer (`getSessionId` in `worker/auth.ts`, 5 lines, below the significance filter but actually called from `worker/admin.ts`). Tested-by linker tagged 10 production nodes correctly (matches the 10 `.test.ts` files exactly). Dashboard up at `http://uw-sandbox.orb.local:5173/` (via `--host 0.0.0.0` after first launch only bound to container loopback).
+  - **Decision:** keep `.understand-anything/` out of git (~500KB generated artifact that would churn on every refresh). Added to `.gitignore` as part of this EOD commit.
+  - **Not enabling `--auto-update`** without an explicit ask — would install a commit hook; that's a higher-friction change that deserves its own conversation.
+
+**In Progress:**
+
+- **Elsy reply draft** — written, awaiting Seth review/send. Half-acknowledges that the unified-identity question is interesting and tees Ian up to answer whether it's on the roadmap. Length and tone calibrations offered (currently medium-length, owns the first-pass correction directly).
+
+**Blockers / Carryover from 2026-05-20:**
+
+- **bt-servant-worker#215** — still gates portal #125 Phase 2. No movement.
+- **bt-servant-worker#191** — still gates Epic #72's fifth Goal (dynamic language-file loading). No movement.
+- **#77** — still paused on Ian's editor-library decision (CodeMirror 6 tentative).
+- **#117** — chat-stream user_id ownership; awaiting design call.
+- **Super-admin feature** — still soaking on staging (4 commits ahead of prod since 2026-05-20). Promotion gated on Elsy's comfort.
+- **#143 (worker-side `isSuperAdmin` redaction)** and **README docs PR** (CF dashboard KV-edit bootstrap path) — still on the queue from yesterday, not picked up today.
+
+**Patterns / decisions captured today:**
+
+- **Two-axis propagation model for the BT Servant stack.** Cross-app behavior splits cleanly along **(a) shared backend → propagates** vs **(b) per-app auth backend → does not.** Configs, modes, languages, prompts all hit `bt-servant-worker` and are therefore consistent between admin portal + chat web-client. Users, sessions, roles each live in their app's local store (portal → `AUTH_KV`; web-client → NextAuth JWT). The implication for product: anything we ship that _governs end-user behavior in the chat app_ needs to land in the worker's data model, not the portal's user model. The super-admin feature shipped where #138 asked it to (portal access), and Elsy's expectation (chat-app gating) is a different feature class.
+- **First-pass framing is allowed to be wrong, but should be owned directly when falsified.** Elsy's counterexample about mode propagation falsified the "two separate systems for everything" framing in <10 minutes. The refined reply opens with "you're right, and I was too broad" rather than soft-pedaling. Cheap honesty buys more trust than careful hedging, and the corrected model (configs vs. identity) is more useful than the original.
+- **pnpm 11 blocks postinstall builds by default.** Tree-sitter native binaries (`*.node` addons) need build scripts. Workaround for plugins/tools that ship tree-sitter: use pnpm 10 via `corepack prepare pnpm@10.15.0 --activate`. Long-term fix is `onlyBuiltDependencies` in `package.json` or a project-level `.npmrc` with explicit allowlist. Captured in case other tooling installs hit the same wall.
+- **OrbStack containers expose ports via `<container>.orb.local` automatically — but only if the server binds to `0.0.0.0`, not container loopback.** Vite defaults to `127.0.0.1` when given `--host 127.0.0.1`; the dashboard skill passed exactly that, so the first dashboard launch was invisible from the macOS host. Rebind to `--host 0.0.0.0` and OrbStack's auto-DNS makes it reachable at `http://uw-sandbox.orb.local:<port>/`. Worth knowing for any future bg-job server we want to inspect from outside the sandbox.
+- **Knowledge-graph trade-off: useful for cross-cutting questions, neutral for everyday coding.** The graph answers things grep can't (layer membership, tested-by coverage, cycle/orphan detection) and gives a fresh agent a mental model in seconds. It's not a function-level source of truth (one short helper was missed) and it goes stale the moment you merge. For this project specifically, the marginal value over the existing CLAUDE.md is modest — would shine more on a larger/less-documented codebase. Not committed; agents can regenerate locally on demand.
+
+**Next Steps:**
+
+- **Send Elsy reply** (Seth's call) — once sent, Ian's response on the unified-identity question determines whether to file a roadmap-level cross-repo issue or document the portal-vs-chat scope distinction somewhere durable.
+- **#143 worker-side `isSuperAdmin` redaction** — still the smallest, highest-signal next code task (~30-min PR, defense-in-depth on yesterday's #142 P2 fix).
+- **README docs PR** — CF dashboard KV-edit alternative to `op run -- curl`. Tiny.
+- **Prod promotion of super-admin feature** — once Elsy confirms comfort.
+- **#144 org slug case-normalization** — still needs design call on migration plan before scoping.
 
 ### 2026-05-20 — Super-admin feature end-to-end (3 PRs, helping Elsy onboard Haneen)
 
