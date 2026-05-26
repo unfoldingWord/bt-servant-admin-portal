@@ -83,6 +83,48 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ## Session Log
 
+### 2026-05-21 (late afternoon) — Tim/Elsy/Seth/Klappy Zoom + design reconciliation
+
+**Context:** Seth joined a previously-scheduled Tim/Elsy demo walkthrough. Conversation pivoted into the shared-library / cross-org tuning design — the same territory Seth was sketching against earlier in the day with the "supermode" question. Chris Klapp also weighed in.
+
+**Locked in this session:**
+
+- **Two-altitude shared-library architecture** confirmed by Tim. System level holds curator-tuned modes and languages; org level adapts. Multiple system-level variants per language can coexist (Hindi base + Hindi-DCV at the same altitude).
+- **Per-language curator role** confirmed — trusted individual or working group per language, write-access granted out-of-band (Zoom call) rather than self-service. Read-only cross-org browse is a primary feature.
+- **Inline alternatives via comment syntax** (Bluebird Network ask) — `%%`/`++…++` per [[project_ulysses_comment_syntax]] is exactly the mechanism. Re-cast portal #77 from "editor nicety" to "core feature for shared-library alternatives."
+- **Org-prefixed slugs** when modes cross orgs (`#YWAM-OBT`, `#spoken-OBT`). New convention to introduce.
+- **Identity bridge admin-portal ↔ chat-app — greenlit by Tim.** Seth's prior write-up (in #serving-our-customers, thumbs-up'd by Ian) has Tim's verbal go-ahead: "I would just signal intent." Obsoletes most of the Elsy Discord reply draft from earlier today.
+- **Word Collective visibility for super-admins** — Tim surprised Elsy can't see Word Collective. Underlying cause is the `worker/config.ts:94` `session.org` binding identified yesterday. Promotable from follow-up to actual priority.
+
+**Already filed by Elsy this morning (validated by Tim in meeting):**
+
+|          |                                           |                                                                                                                                                               |
+| -------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **#149** | EPIC — Mode Library & Cross-Org Templates | + sub-issues #150 (org metadata), #151 (copy-on-import + provenance), #152 (uW-curated namespace + curator workflow)                                          |
+| **#153** | EPIC — Governance & Versioning            | + #156 (revision states draft/pending_review/published) + worker-side versioning, optimistic concurrency, verb-based permissions, audit log, diff/timeline UI |
+| **#161** | EPIC — Operational Reliability            | Carry forward, not directly discussed                                                                                                                         |
+
+Task breakdowns were AI-drafted by Elsy (Tim noted this on call). Need critical-review pass before treating as authoritative — Tim approved substance, not breakdown details.
+
+**Open design question — sent to team, awaiting reply:**
+
+- **Inheritance mechanism: pure-fork (Tim's in-meeting framing) vs. cascade-with-section-granularity (Seth's preference).** Pure fork severs orgs from future curator work as forks accumulate, eroding Tim's "everyone benefits" promise. Cascade preserves that promise by inheriting blank sections from upstream while letting orgs override per section. Tagged Ian, Klappy, Tim, Elsy, Bincy. Several OOO. Holding detailed task breakdowns under #149/#153 until this lands — the breakdowns differ materially. See [[project_meta_tuning_design]] memory for full context.
+
+**Patterns / decisions captured:**
+
+- **Pure fork vs. cascade trade-off is real and worth resolving before code.** Pure fork is simpler to explain and avoids upstream surprises but accumulates drift; cascade preserves curator value across the lifetime of all orgs but adds per-section complexity. Refactoring fork→cascade later is non-trivial; getting it right at v1 matters.
+- **AI-drafted epics need explicit critical review.** Tim approved Elsy's epics on substance but didn't audit the task breakdown. Going to code without a review pass risks shipping the AI's structure rather than the intended one.
+
+**Updated Next Steps (supersedes earlier in the day):**
+
+1. **Wait for team on cascade vs. fork** before detail-scoping #149/#152.
+2. **Start identity-bridge work** (Seth's prior write-up) — greenlit by Tim in the meeting; no further confirmation needed.
+3. **Close `worker/config.ts:94` cross-org config gap** — known limitation Tim is now aware of; was previously yesterday's follow-up #143-adjacent work. Promote.
+4. **File the cascade-independent candidate issues** (org-prefixed slugs, editor syntax highlighting, Baruch language pre-fill) — coming as part of this EOD wrap.
+5. **Critical-review pass on #149 + #153 sub-issues** — flag cascade-vs-fork sensitivity per task.
+6. **Pioneers demo prep — BSOK org + Calvin user** with copies of Understand/Translate/Check modes for the June meeting. Date specifics to confirm with Elsy/Bincy.
+7. **Elsy Discord reply** — slim to "we covered this in the 1pm Zoom, Seth has greenlight on the identity-bridge work" or let the thread close itself.
+
 ### 2026-05-21 — No-code day: Elsy super-admin scope diagnosis + understand-anything trial
 
 **Context entering the session:** SOD opened clean. PR #145 (2026-05-20 EOD tracker entry) still sitting open and green; no movement on prod promotion of the super-admin feature. Two thin work items surfaced: a Discord question from Elsy about staging behavior, and a tooling install.
