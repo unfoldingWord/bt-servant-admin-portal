@@ -85,13 +85,54 @@ function isAdminMutation(method: string, session: SessionData): boolean {
   return (method === "PUT" || method === "DELETE") && !hasAdminPowers(session);
 }
 
+// Cross-org override via ?org=<slug>. Super-admin only; reject loud rather
+// than silently falling back to session.org so a UI bug or hostile probe
+// surfaces visibly instead of masquerading as a same-org request.
+//
+// `crossOrg` reflects whether the resolved target differs from the
+// caller's home org — not merely whether the param was present. A super
+// admin sending `?org=<their own org>` is semantically a same-org
+// request, so language_rights remain enforced. Without this discriminator
+// a restricted-shepherd super admin could bypass their own org's
+// language_rights by adding a self-referential `?org=` (Frank, PR #185
+// review).
+function resolveOrg(
+  request: Request,
+  session: SessionData
+): { crossOrg: boolean; org: string } | { error: Response } {
+  const orgParam = new URL(request.url).searchParams.get("org");
+  if (orgParam === null) {
+    return { crossOrg: false, org: session.org };
+  }
+
+  const trimmed = orgParam.trim();
+  if (!trimmed || trimmed.includes("/")) {
+    return { error: errorResponse("Invalid org parameter", 400) };
+  }
+
+  if (session.isSuperAdmin !== true) {
+    return {
+      error: errorResponse(
+        "Cross-org config access requires isSuperAdmin",
+        403
+      ),
+    };
+  }
+
+  return { crossOrg: trimmed !== session.org, org: trimmed };
+}
+
 export async function handleConfig(
   request: Request,
   env: Env,
   session: SessionData,
   pathname: string
 ): Promise<Response> {
-  const org = encodeURIComponent(session.org);
+  const resolved = resolveOrg(request, session);
+  if ("error" in resolved) {
+    return resolved.error;
+  }
+  const org = encodeURIComponent(resolved.org);
 
   // /api/config/prompt-overrides → GET (any session) / PUT/DELETE (admin)
   if (pathname === "/api/config/prompt-overrides") {
@@ -125,7 +166,10 @@ export async function handleConfig(
   const languageMatch = pathname.match(/^\/api\/config\/languages\/(.+)$/);
   if (languageMatch?.[1]) {
     const languageName = decodeURIComponent(languageMatch[1]);
-    if (!hasLanguageRights(session.language_rights, languageName)) {
+    if (
+      !resolved.crossOrg &&
+      !hasLanguageRights(session.language_rights, languageName)
+    ) {
       return errorResponse("Forbidden", 403);
     }
     return proxyToEngine(
