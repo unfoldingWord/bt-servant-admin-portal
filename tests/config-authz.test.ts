@@ -444,6 +444,56 @@ describe("config authz — cross-org via ?org= (#166)", () => {
     );
   });
 
+  it("super-admin with ?org=<own org> + restricted language_rights → 403 (no self-referential bypass)", async () => {
+    // Frank's PR #185 review caught this: an earlier draft set
+    // `crossOrg: true` for any present ?org=, so a restricted super
+    // admin could bypass their own org's language_rights by adding a
+    // self-referential ?org=acme. `crossOrg` must reflect the resolved
+    // target vs. session.org, not merely the param's presence.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery("PUT", "/api/config/languages/english", "org=acme", {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: "# English\n" }),
+      }),
+      env,
+      makeSession({
+        org: "acme",
+        isSuperAdmin: true,
+        language_rights: ["spanish"],
+      }),
+      "/api/config/languages/english"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("super-admin with ?org=<own org> + matching language_rights → 200 (treated as same-org)", async () => {
+    // Parity check for the self-referential ?org= case: when rights
+    // *do* permit the language, the same-org gate passes and the
+    // request proxies normally (no spurious 403, no spurious /orgs/
+    // path).
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery("PUT", "/api/config/languages/spanish", "org=acme", {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: "# Spanish\n" }),
+      }),
+      env,
+      makeSession({
+        org: "acme",
+        isSuperAdmin: true,
+        language_rights: ["spanish"],
+      }),
+      "/api/config/languages/spanish"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/acme/languages/spanish"
+    );
+  });
+
   it("no ?org= + non-super with restricted language_rights → still 403 (same-org gate intact)", async () => {
     const fetchSpy = spyFetch();
     const res = await handleConfig(

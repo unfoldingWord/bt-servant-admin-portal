@@ -87,12 +87,15 @@ function isAdminMutation(method: string, session: SessionData): boolean {
 
 // Cross-org override via ?org=<slug>. Super-admin only; reject loud rather
 // than silently falling back to session.org so a UI bug or hostile probe
-// surfaces visibly instead of masquerading as a same-org request. Returns
-// `{ crossOrg: false, org }` when the param is absent (the everyday path
-// for org admins — unchanged behavior). `crossOrg: true` signals that
-// language_rights checks should be skipped: language_rights are scoped to
-// the user's home org and don't translate to a different org's namespace,
-// and super-admin already trumps shepherd permissions by design.
+// surfaces visibly instead of masquerading as a same-org request.
+//
+// `crossOrg` reflects whether the resolved target differs from the
+// caller's home org — not merely whether the param was present. A super
+// admin sending `?org=<their own org>` is semantically a same-org
+// request, so language_rights remain enforced. Without this discriminator
+// a restricted-shepherd super admin could bypass their own org's
+// language_rights by adding a self-referential `?org=` (Frank, PR #185
+// review).
 function resolveOrg(
   request: Request,
   session: SessionData
@@ -116,7 +119,7 @@ function resolveOrg(
     };
   }
 
-  return { crossOrg: true, org: trimmed };
+  return { crossOrg: trimmed !== session.org, org: trimmed };
 }
 
 export async function handleConfig(
