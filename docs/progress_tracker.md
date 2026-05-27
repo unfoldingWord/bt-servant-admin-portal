@@ -4,10 +4,10 @@
 
 ## Current Status
 
-**Phase**: Active development on Epic #72 (Admin Portal Redesign for Response Tuning)
-**Last Updated**: 2026-05-13
+**Phase**: Active development on Epic #72 (Admin Portal Redesign for Response Tuning); super-admin feature shipped end-to-end to staging.
+**Last Updated**: 2026-05-20
 **Demo target**: June 9 — `#spoken @arabic` working end-to-end with the new editor
-**Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` — 33 commits since 2026-04-24, Epic #72 batch + CI tech-debt + dark mode + chat panes)
+**Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` — staging is 4 commits ahead with the new-org CLI + super-admin feature, awaiting promotion)
 
 ## Milestones
 
@@ -28,6 +28,8 @@
 | Node 24 actions bump (#91)                | 100%     | Shipped 2026-05-13                                       |
 | Dark mode polish (#133 + 6 subs)          | 100%     | Shipped 2026-05-13                                       |
 | Chat panes cleanup (#31, #48, #50)        | 100%     | Shipped 2026-05-13                                       |
+| New-org CLI stopgap (#139)                | 100%     | Shipped 2026-05-20                                       |
+| Super-admin role + UI (#138)              | 100%     | Shipped 2026-05-20 (PR A backend + PR B frontend)        |
 | Epic #72 — Admin Portal Redesign          | ~95%     | In Progress (only #77 left)                              |
 
 ### Per-PR ephemeral CF Workers — Shipped
@@ -80,6 +82,81 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-05-20 — Super-admin feature end-to-end (3 PRs, helping Elsy onboard Haneen)
+
+**Context entering the session:** SOD opened clean (5 days since last session, no new prod work). Then Ian/Elsy raised the question on Discord: how does one create a new org for the admin portal? Elsy needs to onboard Haneen for the demo and was blocked on engineering.
+
+**Completed:**
+
+- **#139 + PR #140 — `npm run create-org-admin` CLI stopgap.** Audit of the current code showed there's no UI for cross-org user creation: org-scoped admins are restricted to their own org (`worker/admin.ts:170`); `AdminUserCreateDialog` hardcodes `org: callerOrg`. The only cross-org path is the X-Admin-Secret CLI curl. Filed #138 (proper super-admin UI) + #139 (stopgap script) and shipped #139 first to unblock tonight's onboarding. Script in `scripts/create-org-admin.mjs` (plain Node 22 `.mjs`, no transpile, no new dep), wrapped via `npm run create-org-admin`. Reads `ADMIN_SECRET` from env (works with `op run --`), defaults to staging, refuses prod without `--confirm-prod`, `--dry-run` prints the constructed POST without sending. Auto-generates 16-char base64url passwords. README gains "Bootstrapping a new org" section. Merged at `4f7d5cb`. **Frank P1 round:** `--confirm-prod` only checked `--env prod`, but `--url` could target the known prod URL while `--env` defaulted to staging. Fix: classify the _resolved_ URL (`classifyResolvedUrl()` helper) and require `--confirm-prod` for known-prod URLs AND for any unknown `--url` override (treat-as-prod by default). Frank re-review clean.
+
+- **#138 + PR #141 — `isSuperAdmin` role + super-by-session backend.** Two-PR split (A: backend, B: frontend) per design alignment with Seth. PR A:
+  - `StoredUser.isSuperAdmin?: boolean` + `SessionData.isSuperAdmin?: boolean` (optional + undefined-as-falsy → zero KV migration).
+  - `validateSession` re-hydrates the field on every request via the existing live-rehydration path; `handleLogin` + `handleMe` include it in responses.
+  - New `AdminScope` variant `{ kind: "super-by-session"; selfEmail; selfSessionId }` alongside existing `super` and `org`. `requireAdminAuth` returns it when `session.isSuperAdmin === true`.
+  - **"Super trumps isAdmin" rule:** a session with `isSuperAdmin: true` passes admin auth even if `isAdmin: false`. Without this, a super-admin who self-demoted isAdmin (allowed; they retain cross-org via super) would silently lock out on next request.
+  - Cross-org filters in `createUser`/`listUsers`/`updateUser`/`deleteUser` short-circuit via `isCrossOrgScope(scope)`.
+  - **Loud 403 over silent drop:** org admins attempting to grant or revoke isSuperAdmin get a `403 Cannot modify isSuperAdmin from your scope` rather than the field being silently dropped. Symmetric on grant and revoke. Defense in depth.
+  - Self-mutation guards: super-by-session can self-demote isAdmin (super remains) but cannot self-demote isSuperAdmin (would lock out) and cannot self-delete. X-Admin-Secret CLI remains the recovery escape.
+  - `safeUser` exposes `isSuperAdmin` so PR B's UI can render badges without a second round-trip.
+  - 16 new tests (176 → 192 total): cross-org powers, super-trumps admit, self-mutation guards, org-admin escalation defense, X-Admin-Secret regression.
+  - Merged at `d958b18`. **Frank P1+P2 round:** (P1) `.gitleaks.toml` path-allowlist was too broad — disabled every rule under `tests/*.test.ts`, not just generic-api-key false positives; (P2) `worker/config.ts:74` mutation auth checked only `session.isAdmin`, so a super-admin who self-demoted isAdmin (now allowed!) would get 403 on prompt-overrides / modes / languages writes despite the worker letting them into `/api/admin/users`. Fixes: extracted `hasAdminPowers(session) = isAdmin || isSuperAdmin` helper in `worker/config.ts`; narrowed gitleaks to `condition = "AND"` + `paths` + regex-shape on the matched secret (real credentials with AKIA / ghp* / sk* / slashes still flagged). 5 new config-authz tests pin the parity. Frank re-review clean.
+
+- **#138 + PR #142 — Super-admin UI on `/admin/users` (frontend).** Closes #138.
+  - `lib/permissions.ts` gains `hasAdminPowers(user)` — mirror of the worker helper; "super trumps" rule encoded in one place per side.
+  - `RequireAdmin` + `ActivityBar` (Modes + Users entries) switch from `s.user?.isAdmin` to `hasAdminPowers(s.user)` so super-admins without isAdmin still see the sidebar entries and pass the route gate.
+  - `AdminUserCreateDialog` + `AdminUserEditDialog` accept `callerIsSuperAdmin` prop. When set: editable Org field (create: free-text, pre-filled with `callerOrg`; edit: move-org with current value); Super-admin checkbox. Edit-dialog Super-admin checkbox disabled when `isSelf && already-super` (mirrors worker's 400 on self-demote-super). Submit handlers omit isSuperAdmin from the body for non-super callers (worker would 403 on `false`).
+  - `AdminUsersPage` for super-admins: subtitle changes; Org column added; org filter dropdown (shadcn Select with sentinel "all" value); empty-state when filter yields zero rows; Super badge in role cell (initially mis-gated — see Frank fix below).
+  - 7 new tests on `hasAdminPowers` truth table (188 total at PR open).
+  - README updated: "Bootstrapping a new org" mentions the UI path now exists; new "Bootstrapping a super admin" section with the one-time PUT curl.
+  - Merged at `ee7931d`. **Frank P2+P3 round:** (P2) Super badge was gated on `user.isSuperAdmin` alone, not also on `callerIsSuperAdmin`. Worker's `safeUser` returns isSuperAdmin to every admin caller including org admins viewing their own org-filtered list, so an org admin viewing a same-org colleague who also held super would see the cross-org role. (P3) The `__all__` org-filter sentinel could collide with a real org slug (orgs are free-text). Fixes: one-line gate on the badge plus a corrected comment; renamed sentinel to `ORG_FILTER_ALL_SENTINEL = "@@bt-servant:all-orgs@@"` centralized in `src/lib/admin-users-api.ts`; new `isReservedOrgSlug` helper + dialog guards reject creating/moving to the sentinel value. 4 new tests on the helper. Frank re-review clean.
+
+- **Bootstrap end-to-end on staging.** `op` CLI isn't installed in `uw-sandbox`, so the README's `op run -- curl` recipe wasn't directly usable. Worked around two ways: (1) ad-hoc `ADMIN_SECRET='...' curl ...` (inline); (2) **KV-edit via the CF dashboard** — find `user:<email>` in `AUTH_KV` (staging KV ID `76b77b269f7c48b481f3448955950b57`), add `"isSuperAdmin": true` to the JSON value, save. Live re-hydration in `validateSession` (per PR A) means it takes effect on the next request — no logout/login needed. Then created Haneen's org from the UI: clicked "New user", typed a brand-new slug in the Org field, submitted. Verified the org appears in the filter dropdown. Whole feature confirmed working in the same session it shipped.
+
+- **#143 filed — Worker-side `isSuperAdmin` redaction (follow-up).** Frank P2 closed the visible leak (badge gated by viewer) but the field is still on the wire for org-admin callers. Proper fix: parameterize `safeUser()` by viewer scope, omit `isSuperAdmin` from responses when caller is org-scoped. ~30-min PR, three call-site updates, three tests. Cross-linked to #138/#141/#142.
+
+- **#144 filed — Org slug case-normalization (foot-gun).** Surfaced post-shipping when Seth asked whether org names are case-sensitive. They are — strict `===` everywhere, while emails are normalized to lowercase at `admin.ts:160`. So `Haneen` vs `haneen` are distinct orgs with separate users / modes / languages. Issue body proposes mirroring the email pattern (`org?.trim().toLowerCase()`) **but flags the migration concern**: without rewriting existing KV records AND coordinating with bt-servant-worker's per-org engine namespaces, lazy normalization would create org-cohesion drift (new users in `acme`, existing users still in `Acme`). Recommendation in the issue: don't ship until migration plan is scoped; lower-effort partial would be UI-side lowercasing-as-you-type.
+
+**Day rollup:**
+
+| Merged | Commit    | Closes |
+| ------ | --------- | ------ |
+| #140   | `4f7d5cb` | #139   |
+| #141   | `d958b18` | —      |
+| #142   | `ee7931d` | #138   |
+
+**3 PRs merged, 2 issues auto-closed (#138, #139), 4 issues filed today (#138, #139, #143, #144), super-admin feature shipped end-to-end to staging and confirmed working via real bootstrap + new-org creation.**
+
+**In Progress:**
+
+- None code-wise. Staging is 4 commits ahead of last prod deploy (`25ea9c1` → `ee7931d`). Super-admin feature soaking on staging.
+
+**Blockers:**
+
+- **bt-servant-worker#215** — still gates portal #125 Phase 2. Ian's queue; no movement since 2026-05-11.
+- **bt-servant-worker#191** — still gates Epic #72's fifth Goal (dynamic language-file loading). Ian's queue; no movement since 2026-05-06.
+- **#77** — still paused on Ian's editor-library decision (CodeMirror 6 tentative).
+- **#117** — chat-stream user_id ownership; awaiting design call.
+
+**Patterns / decisions captured today:**
+
+- **"Super trumps isAdmin" applied uniformly.** Initially shipped only in `worker/admin.ts requireAdminAuth`; Frank's PR #141 P2 caught the missing parity in `worker/config.ts` (prompt-overrides / modes / languages mutation auth). Now encoded as `hasAdminPowers(session)` in both worker/config.ts and src/lib/permissions.ts. Lesson: when introducing a new role with "trumps" semantics, audit every existing auth gate, not just the obvious one.
+- **Loud 403 over silent drop.** When a body field is restricted by scope (`isSuperAdmin` only honorable by super scopes), reject with explicit 403 rather than silently ignoring. Silent drop masks UI bugs and lets attackers probe for missing checks.
+- **Org-as-emergent-entity.** "Creating an org" = creating the first user with a new org slug. No separate orgs registry, no create-org API, no two-step UX. The free-text Org field in the dialog implicitly covers both "add user to existing org" and "create new org" paths. Elegant — but the trade-off (no validation) surfaced #144's case-sensitivity foot-gun.
+- **KV-edit as alternative bootstrap.** `op`-less environments can edit `user:<email>` in `AUTH_KV` directly via the CF dashboard. Live re-hydration in `validateSession` means no logout. Worth documenting alongside the curl-based bootstrap (small README PR not done today).
+- **Gitleaks PR-history vs. tip-only scope.** The scanner sees every commit added by a PR. Renaming a flagged string in a follow-up commit doesn't clear earlier-commit findings — gitleaks reads the file from the commit being scanned, not from HEAD. Durable fix is a `.gitleaks.toml` allowlist (centralized); ad-hoc renames only help if the original commit can be force-pushed away (CLAUDE.md gates that).
+- **Gitleaks per-rule scope quirks.** Tried `targetRules` to scope an allowlist to a specific rule in 8.24.3 — config loaded but the per-rule scoping didn't filter. Pivoted to `condition = "AND"` with `paths` + regex-shape constraint on the matched secret. Outcome is narrower than path-only allowlist (per Frank's P1) without depending on `targetRules` working.
+- **Sentinel-pattern for Radix Select "no filter".** Radix Select disallows empty-string values, so the "All orgs" entry needs a literal stand-in. Used `"@@bt-servant:all-orgs@@"` (distinctive bracketing + namespace), centralized in `src/lib/admin-users-api.ts` with an `isReservedOrgSlug` helper for create/edit dialog guards. Pattern reusable for any future "no filter" Select.
+- **Frank-collaboration pattern this session:** three PRs, three review cycles, all clean on re-review after one round of fixes. P-level severities consistently P1/P2 (real bugs); response cycle averaged ~15 min from finding to push. Treating Frank's "I don't have evidence X works" caveats as separate-from-findings is the right framing — they're acknowledgement of test-coverage gaps, not blockers.
+
+**Next Steps:**
+
+- **#143 — Worker-side `isSuperAdmin` redaction.** ~30-min PR. Defense-in-depth follow-up to today's PR #142 P2 fix. Field-omit in `safeUser` for non-super scopes. Three call-site updates + three tests.
+- **README docs PR.** Mention CF dashboard KV-edit as alternative to `op run -- curl` for super-admin bootstrap. Tiny.
+- **Prod promotion.** Super-admin feature soaking on staging since today; promote when Elsy is comfortable. Would also need a fresh KV-edit (or curl) on prod to bootstrap a super admin there — staging's bootstrap doesn't carry over.
+- **#144** — needs design call on the migration before scoping. Don't ship lowercase-at-boundary without a plan for existing mixed-case data.
+- Yesterday's deferred items still available if a smaller next-task is wanted: User Memory enhancements (#56/#57/#53), deep links (#28), shell perf nit (#52).
 
 ### 2026-05-07 — Project kickoff + per-PR deploys + #75 markdown editor
 
