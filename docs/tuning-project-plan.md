@@ -46,13 +46,13 @@ The June 9 demo is a **narrow vertical slice** through all of this: prove `#spok
 
 **Portal (existing):**
 
-| #    | Title                                     | Status                                          |
-| ---- | ----------------------------------------- | ----------------------------------------------- |
-| #72  | Admin Portal Redesign for Response Tuning | ~95% done; only #77 left                        |
-| #149 | Mode Library & Cross-Org Templates        | Sub-issues filed; cascade-decision-gated        |
-| #153 | Governance & Versioning                   | Sub-issues filed; revision-state design pending |
-| #170 | Language Cascade Override Architecture    | Design locked 2026-05-21; sub-issues #172–#176  |
-| #171 | Identity Bridge — Admin Portal ↔ Chat App | Greenlit by Tim; protocol design pending        |
+| #    | Title                                     | Status                                                                                                                          |
+| ---- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| #72  | Admin Portal Redesign for Response Tuning | DoD-blocked on #77 (editor library) + worker#191 (runtime language-file injection); other Goals shipped 2026-05-07 → 2026-05-11 |
+| #149 | Mode Library & Cross-Org Templates        | Sub-issues filed; cascade-decision-gated                                                                                        |
+| #153 | Governance & Versioning                   | Sub-issues filed; revision-state design pending                                                                                 |
+| #170 | Language Cascade Override Architecture    | Design locked 2026-05-21; sub-issues #172–#176                                                                                  |
+| #171 | Identity Bridge — Admin Portal ↔ Chat App | Greenlit by Tim; protocol design pending                                                                                        |
 
 **Sibling-repo (filed 2026-05-27):**
 
@@ -111,7 +111,7 @@ The critical path has **two streams running in parallel**: (1) worker#191 runtim
 | 9   | 2026-06-05 | Content polish — Elsy/Tim coordinating on spoken + arabic content quality.                                                                                                                                                         | Content polish (same stream — content work doesn't separate by repo).                 | —                                                                  |
 | 10  | 2026-06-06 | Demo dry run on staging. Capture any edge cases.                                                                                                                                                                                   | Same.                                                                                 | —                                                                  |
 | 11  | 2026-06-07 | Fixes from dry-run findings.                                                                                                                                                                                                       | Same.                                                                                 | —                                                                  |
-| 12  | 2026-06-08 | Final smoke test. **If the demo requires prod**, coordinate manual production workflow dispatch with Ian/Jaap-Jan\*\* (no direct local deploys per project rules; "Promote Production" Actions workflow is the only path).         | Same.                                                                                 | —                                                                  |
+| 12  | 2026-06-08 | Final smoke test. **If the demo requires prod**, coordinate manual production workflow dispatch with Ian/Jaap-Jan (no direct local deploys per project rules; "Promote Production" Actions workflow is the only path).             | Same.                                                                                 | —                                                                  |
 | 13  | 2026-06-09 | **Demo day.**                                                                                                                                                                                                                      |                                                                                       | —                                                                  |
 
 ### Explicitly NOT in this 13-day window
@@ -324,25 +324,13 @@ Already filed; bodies will get a "Cross-repo umbrella" section pointing at the n
 - `#170` Language Cascade Override Architecture
 - `#171` Identity Bridge — Admin Portal ↔ Chat App
 
-### Sibling-repo EPICs — to file alongside this plan
+### Sibling-repo EPICs (filed 2026-05-27)
 
-**bt-servant-worker — EPIC: Tuning Architecture (worker side)**
-
-Issues to link: #94, #115, #137, #143, #191, #215, #236, #237.
-
-Body sketch: _"Worker-side companion to admin-portal's tuning EPICs (#149, #153, #170, #171). Covers trigger parsing (shipped), prompt resolution pipeline, language-file loading, mode availability, revision history, audit logging, and the in-flight #215 Path B rollout. Cross-link to admin-portal `docs/tuning-project-plan.md` for the strategic picture."_
-
-**bt-servant-web-client — EPIC: Identity Bridge consumers**
-
-Issues to link: #36, #37, #38.
-
-Body sketch: _"Chat-app side of the portal-as-IdP integration (admin-portal#171). NextAuth bridge, identity envelope consumption, welcome-flow with recommended modes. Blocked on admin-portal#177 protocol-choice landing."_
-
-**baruch — EPIC: Language Tuning Integration**
-
-Issues to link: #6, #10, #17, #18.
-
-Body sketch: _"Baruch's role in the BT Servant tuning project: language-pre-fill assistant for portal new-language flow (#18), prompt-slot exposure parity (#17), org-scoping for Baruch's own config (#10), set_prompt_overrides body shape fix (#6). Cross-link to admin-portal#168 and admin-portal `docs/tuning-project-plan.md`."_
+| Repo                  | EPIC                                                                                                            | Scope                                                                                                                                                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| bt-servant-worker     | [#239 — EPIC: Tuning Architecture — worker side](https://github.com/unfoldingWord/bt-servant-worker/issues/239) | Worker-side companion to portal #149, #153, #170, #171. Covers prompt resolution pipeline, language-file loading, mode availability, revision history, audit logging, in-flight #215 Path B rollout. Links worker #94, #115, #137, #143, #191, #215, #236, #237. |
+| bt-servant-web-client | [#39 — EPIC: Identity Bridge consumers](https://github.com/unfoldingWord/bt-servant-web-client/issues/39)       | Chat-app side of portal-as-IdP integration (portal #171). NextAuth bridge, identity envelope consumption, welcome flow. Blocked on portal#177 protocol-choice landing. Links web-client #36, #37, #38.                                                           |
+| baruch                | [#19 — EPIC: Language Tuning Integration](https://github.com/unfoldingWord/baruch/issues/19)                    | Language-pre-fill assistant (#18 ↔ portal#168), slot-exposure parity (#17), org-scoping for Baruch's own config (#10), `set_prompt_overrides` body fix (#6).                                                                                                     |
 
 ## Operating Model
 
@@ -488,3 +476,4 @@ This makes the dependency graph readable from any starting issue.
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
 | 2026-05-27 (rev 1) | Plan opened. 5 portal EPICs + 3 sibling-repo EPICs (to file). 51 in-scope issues. June 9 demo critical path defined. Decisions D-001 through D-004 logged.                                                                                                                                                                                                                                                                                                                                          | Claude |
 | 2026-05-27 (rev 2) | Frank P1/P2 revision. **worker#191 moved to Track A.1** as the demo's actual DoD-blocker per portal#72 fifth Goal (D-005). Sibling EPIC statuses updated to "filed" with URLs (worker#239, web-client#39, baruch#19). Bottlenecks split into June-9 vs post-demo. Prod-promotion wording tightened to require manual workflow dispatch. D-006 logged on plan URL stability (PR #190 merge needed for `/blob/main/` resolution). Day-by-day plan restructured into two parallel streams (A.1 + A.2). | Claude |
+| 2026-05-27 (rev 3) | Frank cleanup-pass P2/P3. Replaced stale "Sibling-repo EPICs — to file alongside this plan" section with a filed-status table mirroring the top-of-doc EPIC table. Portal #72 row in EPIC table now reads "DoD-blocked on #77 + worker#191" instead of "only #77 left." Fixed Day 12 escaped-bold typo (`Ian/Jaap-Jan\*\*` → `Ian/Jaap-Jan`).                                                                                                                                                       | Claude |
