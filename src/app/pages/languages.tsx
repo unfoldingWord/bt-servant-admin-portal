@@ -36,6 +36,7 @@ import { Button } from "@/components/ui/button";
 import { LanguageSelector } from "@/components/language-selector";
 import { MarkdownEditor } from "@/components/markdown-editor";
 import { MarkdownToc } from "@/components/markdown-toc";
+import { OrgContextSelector } from "@/components/org-context-selector";
 import { PageHeader } from "@/components/page-header";
 
 const AUTO_SAVE_DEBOUNCE_MS = 800;
@@ -43,18 +44,28 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 export function LanguagesPage() {
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
   const languageRights = useAuthStore((s) => s.user?.language_rights);
-  const hasAccess = hasAnyLanguageRights(languageRights);
   const selectedLanguage = useUiStore((s) => s.selectedLanguage);
   const setSelectedLanguage = useUiStore((s) => s.setSelectedLanguage);
   const showDrafts = useUiStore((s) => s.showDrafts);
   const setShowDrafts = useUiStore((s) => s.setShowDrafts);
+  const contextOrg = useUiStore((s) => s.contextOrg);
+
+  // Cross-org reuses the worker's PR A carve-out: super-admins bypass
+  // `hasLanguageRights` when editing a different org's languages, because
+  // shepherd rights are scoped to the user's home org and don't translate
+  // to a foreign namespace. Treat the effective rights as full-access in
+  // that case so the same filter/gate logic continues to work without a
+  // separate cross-org code path.
+  const isCrossOrg = contextOrg !== null;
+  const effectiveRights = isCrossOrg ? "*" : languageRights;
+  const hasAccess = hasAnyLanguageRights(effectiveRights);
 
   // Queries / mutations
-  const languagesQuery = useLanguages();
-  const languageQuery = useLanguage(selectedLanguage);
-  const saveLanguage = useSaveLanguage();
-  const deleteLanguage = useDeleteLanguage();
-  const scaffoldQuery = useLanguageScaffold();
+  const languagesQuery = useLanguages(contextOrg);
+  const languageQuery = useLanguage(selectedLanguage, contextOrg);
+  const saveLanguage = useSaveLanguage(contextOrg);
+  const deleteLanguage = useDeleteLanguage(contextOrg);
+  const scaffoldQuery = useLanguageScaffold(contextOrg);
 
   // Filter the language list to only those the user has rights to. Engine
   // #207 will eventually filter server-side too, but until then this is the
@@ -65,10 +76,10 @@ export function LanguagesPage() {
       ...languagesQuery.data,
       languages: filterAuthorizedLanguages(
         languagesQuery.data.languages,
-        languageRights
+        effectiveRights
       ),
     };
-  }, [languagesQuery.data, languageRights]);
+  }, [languagesQuery.data, effectiveRights]);
 
   // Local document draft (auto-save target).
   //
@@ -228,11 +239,16 @@ export function LanguagesPage() {
   // If the persisted selection is no longer authorized (e.g. an admin
   // revoked rights mid-session, or rights changed since last login), drop
   // it so we don't render an editor for a language the user can't read.
+  // Skip the gate under cross-org context: `setContextOrg` already cleared
+  // `selectedLanguage` to null when the user switched orgs, and any new
+  // selection in cross-org mode is gated server-side via the worker's
+  // super-admin carve-out (PR A) rather than by `language_rights`.
   useEffect(() => {
     if (selectedLanguage === null) return;
+    if (isCrossOrg) return;
     if (hasLanguageRights(languageRights, selectedLanguage)) return;
     setSelectedLanguage(null);
-  }, [languageRights, selectedLanguage, setSelectedLanguage]);
+  }, [isCrossOrg, languageRights, selectedLanguage, setSelectedLanguage]);
 
   const confirmSwitch = useCallback(() => {
     setSelectedLanguage(pendingSwitch);
@@ -360,6 +376,7 @@ export function LanguagesPage() {
 
       <div className="bg-card border-b">
         <div className="flex flex-wrap items-center gap-3 p-4 sm:p-6">
+          <OrgContextSelector />
           <div className="min-w-0 flex-1">
             <LanguageSelector
               languagesData={authorizedLanguagesData}

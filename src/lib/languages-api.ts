@@ -1,3 +1,4 @@
+import { buildConfigUrl } from "@/lib/config-url";
 import type { Language, OrgLanguages } from "@/types/language";
 
 const SAME_ORIGIN_HEADERS = {
@@ -18,9 +19,10 @@ export class LanguageForbiddenError extends Error {
 }
 
 export async function listLanguages(
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<OrgLanguages> {
-  const res = await fetch("/api/config/languages", {
+  const res = await fetch(buildConfigUrl("/api/config/languages", org), {
     headers: SAME_ORIGIN_HEADERS,
     signal,
   });
@@ -35,12 +37,16 @@ export async function listLanguages(
 
 export async function getLanguage(
   name: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<Language> {
-  const res = await fetch(`/api/config/languages/${encodeURIComponent(name)}`, {
-    headers: SAME_ORIGIN_HEADERS,
-    signal,
-  });
+  const res = await fetch(
+    buildConfigUrl(`/api/config/languages/${encodeURIComponent(name)}`, org),
+    {
+      headers: SAME_ORIGIN_HEADERS,
+      signal,
+    }
+  );
 
   if (res.status === 403) {
     throw new LanguageForbiddenError(name, "read");
@@ -67,14 +73,18 @@ export async function putLanguage(
     document: string;
     published?: boolean;
   },
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<Language> {
-  const res = await fetch(`/api/config/languages/${encodeURIComponent(name)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
-    body: JSON.stringify(body),
-    signal,
-  });
+  const res = await fetch(
+    buildConfigUrl(`/api/config/languages/${encodeURIComponent(name)}`, org),
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
+      body: JSON.stringify(body),
+      signal,
+    }
+  );
 
   if (res.status === 403) {
     throw new LanguageForbiddenError(name, "write");
@@ -96,13 +106,17 @@ export async function putLanguage(
 
 export async function deleteLanguage(
   name: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<void> {
-  const res = await fetch(`/api/config/languages/${encodeURIComponent(name)}`, {
-    method: "DELETE",
-    headers: SAME_ORIGIN_HEADERS,
-    signal,
-  });
+  const res = await fetch(
+    buildConfigUrl(`/api/config/languages/${encodeURIComponent(name)}`, org),
+    {
+      method: "DELETE",
+      headers: SAME_ORIGIN_HEADERS,
+      signal,
+    }
+  );
 
   if (res.status === 403) {
     throw new LanguageForbiddenError(name, "delete");

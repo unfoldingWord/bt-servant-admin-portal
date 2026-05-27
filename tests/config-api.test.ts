@@ -424,3 +424,120 @@ describe("clearUserMode", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cross-org override threading (#166 PR B)
+// ---------------------------------------------------------------------------
+//
+// The portal-side switch ships in two pieces — worker (PR A, merged) and UI
+// (this PR). These tests pin the wire format that the worker's `resolveOrg`
+// expects: `?org=<encoded>` only when the caller supplies a non-empty slug;
+// otherwise the URL is identical to the legacy same-org call so the existing
+// org-admin path is byte-for-byte unchanged.
+
+describe("config-api cross-org threading", () => {
+  function urlOf(spy: { mock: { calls: unknown[][] } }, call = 0): string {
+    return String(spy.mock.calls[call]![0]);
+  }
+
+  it("listModes(undefined, undefined) → no ?org=", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ modes: [] })));
+    await listModes();
+    expect(urlOf(spy)).toBe("/api/config/modes");
+  });
+
+  it("listModes(_, 'word-collective') → ?org=word-collective", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ modes: [] })));
+    await listModes(undefined, "word-collective");
+    expect(urlOf(spy)).toBe("/api/config/modes?org=word-collective");
+  });
+
+  it("getMode encodes both the path segment and the org param", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ mode: { name: "kids-mode", document: "" } })
+        )
+      );
+    await getMode("kids-mode", undefined, "word-collective");
+    expect(urlOf(spy)).toBe("/api/config/modes/kids-mode?org=word-collective");
+  });
+
+  it("putMode threads org through (mutations must use the same ?org=)", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ mode: { name: "spoken", document: "x" } })
+        )
+      );
+    await putMode("spoken", { document: "x" }, undefined, "word-collective");
+    expect(urlOf(spy)).toBe("/api/config/modes/spoken?org=word-collective");
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe("PUT");
+  });
+
+  it("deleteMode threads org through", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    await deleteMode("legacy", undefined, "word-collective");
+    expect(urlOf(spy)).toBe("/api/config/modes/legacy?org=word-collective");
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe("DELETE");
+  });
+
+  it("getOrgOverrides threads org through", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({})));
+    await getOrgOverrides(undefined, "word-collective");
+    expect(urlOf(spy)).toBe("/api/config/prompt-overrides?org=word-collective");
+  });
+
+  it("putOrgOverrides threads org through", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({})));
+    await putOrgOverrides({ identity: "x" }, undefined, "word-collective");
+    expect(urlOf(spy)).toBe("/api/config/prompt-overrides?org=word-collective");
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe("PUT");
+  });
+
+  it("getUserMemory threads org through", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ memory: {} })));
+    await getUserMemory(SAMPLE_UUID, undefined, "word-collective");
+    expect(urlOf(spy)).toBe(
+      `/api/config/user-memory/${SAMPLE_UUID}?org=word-collective`
+    );
+  });
+
+  it("setUserMode threads org through", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    await setUserMode(SAMPLE_UUID, "spoken", undefined, "word-collective");
+    expect(urlOf(spy)).toBe(
+      `/api/config/user-mode/${SAMPLE_UUID}?org=word-collective`
+    );
+  });
+
+  it("listModes with null org acts identically to omitted org", async () => {
+    // The UI passes `contextOrg ?? null` through hooks; `null` must hash to
+    // the same URL as `undefined` so the same-org cache and the unset cache
+    // don't double-fetch.
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ modes: [] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ modes: [] })));
+    await listModes(undefined, null);
+    await listModes();
+    expect(urlOf(spy, 0)).toBe("/api/config/modes");
+    expect(urlOf(spy, 1)).toBe("/api/config/modes");
+  });
+});

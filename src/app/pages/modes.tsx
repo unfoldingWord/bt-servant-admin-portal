@@ -7,6 +7,7 @@ import { useBlocker } from "react-router";
 import { useAuthStore } from "@/lib/auth-store";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { useUiStore } from "@/lib/ui-store";
+import { OrgContextSelector } from "@/components/org-context-selector";
 import { useDebounced } from "@/hooks/use-debounced";
 import { useActiveHeadingLine } from "@/hooks/use-active-heading-line";
 import {
@@ -40,11 +41,12 @@ export function ModesPage() {
   const setSelectedMode = useUiStore((s) => s.setSelectedMode);
   const showDrafts = useUiStore((s) => s.showDrafts);
   const setShowDrafts = useUiStore((s) => s.setShowDrafts);
+  const contextOrg = useUiStore((s) => s.contextOrg);
 
-  const modesQuery = useModes();
-  const modeQuery = useMode(selectedMode);
-  const saveMode = useSaveMode();
-  const deleteMode = useDeleteMode();
+  const modesQuery = useModes(contextOrg);
+  const modeQuery = useMode(selectedMode, contextOrg);
+  const saveMode = useSaveMode(contextOrg);
+  const deleteMode = useDeleteMode(contextOrg);
 
   // Local document draft (auto-save target).
   //
@@ -269,6 +271,7 @@ export function ModesPage() {
 
       <div className="bg-card border-b">
         <div className="flex flex-wrap items-center gap-3 p-4 sm:p-6">
+          <OrgContextSelector />
           <div className="min-w-0 flex-1">
             <ModeSelector
               modesData={modesQuery.data}

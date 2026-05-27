@@ -68,4 +68,30 @@ describe("getLanguageScaffold", () => {
     await getLanguageScaffold(controller.signal);
     expect(spy.mock.calls[0]![1]).toMatchObject({ signal: controller.signal });
   });
+
+  // -------------------------------------------------------------------------
+  // Cross-org override (#166 PR B)
+  // -------------------------------------------------------------------------
+
+  it("no org → /api/config/language-scaffold (no ?org=)", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ scaffold: { document: "" } }))
+      );
+    await getLanguageScaffold();
+    expect(String(spy.mock.calls[0]![0])).toBe("/api/config/language-scaffold");
+  });
+
+  it("with org → /api/config/language-scaffold?org=<encoded>", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ scaffold: { document: "" } }))
+      );
+    await getLanguageScaffold(undefined, "word-collective");
+    expect(String(spy.mock.calls[0]![0])).toBe(
+      "/api/config/language-scaffold?org=word-collective"
+    );
+  });
 });
