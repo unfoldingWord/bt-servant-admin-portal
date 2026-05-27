@@ -12,8 +12,8 @@
 | **Strategic deliverable**           | BT Servant Q2 2026 — Modes & Tuning (per Notion roadmap)                     |
 | **Repos in scope**                  | bt-servant-admin-portal · bt-servant-worker · bt-servant-web-client · baruch |
 | **Open tuning issues (2026-05-27)** | ~51 across 4 repos                                                           |
-| **EPIC count (formal + implicit)**  | 5 portal + 3 sibling-repo umbrellas to file                                  |
-| **Last revised**                    | 2026-05-27                                                                   |
+| **EPIC count**                      | 5 portal + 3 sibling-repo umbrellas (all filed 2026-05-27)                   |
+| **Last revised**                    | 2026-05-27 (revision 2 — Frank P1/P2 findings)                               |
 
 ## Strategic Context
 
@@ -54,15 +54,15 @@ The June 9 demo is a **narrow vertical slice** through all of this: prove `#spok
 | #170 | Language Cascade Override Architecture    | Design locked 2026-05-21; sub-issues #172–#176  |
 | #171 | Identity Bridge — Admin Portal ↔ Chat App | Greenlit by Tim; protocol design pending        |
 
-**Sibling-repo (to file):**
+**Sibling-repo (filed 2026-05-27):**
 
-| Repo                  | Proposed EPIC title                     | Issues to link                                |
-| --------------------- | --------------------------------------- | --------------------------------------------- |
-| bt-servant-worker     | EPIC: Tuning Architecture — worker side | #94, #115, #137, #143, #191, #215, #236, #237 |
-| bt-servant-web-client | EPIC: Identity Bridge consumers         | #36, #37, #38                                 |
-| baruch                | EPIC: Language Tuning Integration       | #6, #10, #17, #18                             |
+| Repo                  | EPIC                                                                                                            | Issues linked                                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| bt-servant-worker     | [#239 — EPIC: Tuning Architecture — worker side](https://github.com/unfoldingWord/bt-servant-worker/issues/239) | #94, #115, #137, #143, #191, #215, #236, #237 |
+| bt-servant-web-client | [#39 — EPIC: Identity Bridge consumers](https://github.com/unfoldingWord/bt-servant-web-client/issues/39)       | #36, #37, #38                                 |
+| baruch                | [#19 — EPIC: Language Tuning Integration](https://github.com/unfoldingWord/baruch/issues/19)                    | #6, #10, #17, #18                             |
 
-These are filed alongside this plan so cross-repo dependency tracking has explicit anchors.
+These were filed alongside this plan so cross-repo dependency tracking has explicit anchors. Each portal EPIC now carries a "Cross-repo siblings" header pointing at the relevant sibling EPIC(s).
 
 ## June 9 Demo — Critical Path
 
@@ -82,34 +82,37 @@ When demoed on **2026-06-09**, the following must work end-to-end:
 
 ### Critical-path requirements
 
-| Item                                | Status (2026-05-27)                     | Owner           |
-| ----------------------------------- | --------------------------------------- | --------------- |
-| Markdown editor with TOC + autosave | ✅ Shipped 2026-05-07 (#75, #76, #82)   | —               |
-| Languages CRUD + scaffold           | ✅ Shipped 2026-05-08–11 (#74, #79)     | —               |
-| Trigger parsing `#mode @lang`       | ✅ Shipped 2026-05-11 (worker#211/#212) | —               |
-| Test-chat affordance                | ✅ Shipped 2026-05-11 (#81)             | —               |
-| Super-admin cross-org config edits  | ✅ Shipped 2026-05-27 (#166)            | —               |
-| **Syntax highlighting (#167)**      | ⚠ depends on #77 — decision below       | TBD             |
-| **Spoken mode content for uW**      | ⚠ unverified — Day-1 task               | Seth + Elsy/Tim |
-| **Arabic language content for uW**  | ⚠ unverified — Day-1 task               | Seth + Elsy/Tim |
+| Item                                                    | Status (2026-05-27)                                                                                                                                                                                                                                                                                                                                                                             | Owner                  |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Markdown editor with TOC + autosave                     | ✅ Shipped 2026-05-07 (#75, #76, #82)                                                                                                                                                                                                                                                                                                                                                           | —                      |
+| Languages CRUD + scaffold                               | ✅ Shipped 2026-05-08–11 (#74, #79)                                                                                                                                                                                                                                                                                                                                                             | —                      |
+| Trigger parsing `#mode @lang`                           | ✅ Shipped 2026-05-11 (worker#211/#212)                                                                                                                                                                                                                                                                                                                                                         | —                      |
+| Test-chat affordance                                    | ✅ Shipped 2026-05-11 (#81)                                                                                                                                                                                                                                                                                                                                                                     | —                      |
+| Super-admin cross-org config edits                      | ✅ Shipped 2026-05-27 (#166)                                                                                                                                                                                                                                                                                                                                                                    | —                      |
+| **🔴 Worker-side language-file injection (worker#191)** | **Open — the DoD-blocker per portal#72 fifth Goal. The demo's promise (`#spoken @arabic` shaped by _both_ files) does not work without this. Quick-and-dirty design per the issue body; load whole language file every time. Coordination note from issue body: "Ian and Chris are pairing on the architecture." Implement under cross-repo authority (D-003); ping Chris (Klappy) on the PR.** | Seth (with Chris ping) |
+| **Syntax highlighting (#167)**                          | ⚠ depends on #77 — decision below                                                                                                                                                                                                                                                                                                                                                               | Seth                   |
+| **Spoken mode content for uW**                          | ⚠ unverified — Day-1 task                                                                                                                                                                                                                                                                                                                                                                       | Seth + Elsy/Tim        |
+| **Arabic language content for uW**                      | ⚠ unverified — Day-1 task                                                                                                                                                                                                                                                                                                                                                                       | Seth + Elsy/Tim        |
 
 ### Day-by-day plan
 
-| Day | Date       | Work                                                                                  | Decision gate                                                                  |
-| --- | ---------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| 1   | 2026-05-28 | Verify spoken + arabic content readiness in uW. Day-1 CodeMirror 6 scope check.       | If CM6 day-1 scoping unclear after 1 day → fall back to DIY mirror-div overlay |
-| 2   | 2026-05-29 | Begin #77 CM6 migration (or DIY fallback). Content gap-filling in parallel if needed. | —                                                                              |
-| 3   | 2026-05-30 | CM6 editor swap + `@codemirror/lang-markdown` integration                             | —                                                                              |
-| 4   | 2026-05-31 | `useActiveHeadingLine` port to CM6 transactions; dark-mode theming via CSS variables  | —                                                                              |
-| 5   | 2026-06-01 | Integration on Modes + Languages pages; tests                                         | —                                                                              |
-| 6   | 2026-06-02 | Polish, edge cases (large docs, Ulysses comments, code fences)                        | —                                                                              |
-| 7   | 2026-06-03 | Frank review round + fix cycle                                                        | —                                                                              |
-| 8   | 2026-06-04 | Ship #167 turn-key via CM6's syntax tokens. Land #187 (Export Config) if bandwidth    | —                                                                              |
-| 9   | 2026-06-05 | Content polish in coordination with Elsy/Tim                                          | —                                                                              |
-| 10  | 2026-06-06 | Demo dry run on staging. Capture any edge cases                                       | —                                                                              |
-| 11  | 2026-06-07 | Fixes from dry-run findings                                                           | —                                                                              |
-| 12  | 2026-06-08 | Final smoke test. Promote to prod if needed                                           | —                                                                              |
-| 13  | 2026-06-09 | **Demo day**                                                                          | —                                                                              |
+The critical path has **two streams running in parallel**: (1) worker#191 runtime language-file injection, and (2) #77 CodeMirror 6 editor migration. They're independent code surfaces (worker vs portal) so they can be worked concurrently without merge conflicts.
+
+| Day | Date       | Stream 1: worker#191 (the demo-promise enabler)                                                                                                                                                                                    | Stream 2: #77 → #167 (the demo-polish enabler)                                        | Decision gate                                                      |
+| --- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 1   | 2026-05-28 | Read current chat-time system-prompt assembly; verify whether Arabic language content is ALREADY injected (sanity check). Ping Chris (Klappy) on the worker#191 architecture note. Verify spoken + arabic content readiness in uW. | Day-1 CodeMirror 6 scope check.                                                       | If CM6 day-1 scoping unclear → fall back to DIY mirror-div overlay |
+| 2   | 2026-05-29 | Implement worker#191 per issue body (quick-and-dirty: load whole language file every time). Tests for: active-language detect, language-file load + append, language-switch mid-conversation.                                      | Begin #77 CM6 migration (or DIY fallback). Content gap-filling in parallel if needed. | —                                                                  |
+| 3   | 2026-05-30 | worker#191 PR opens. Smoke test with dummy "5-year-old English" language file per the issue's AC. Frank review.                                                                                                                    | CM6 editor swap + `@codemirror/lang-markdown` integration                             | —                                                                  |
+| 4   | 2026-05-31 | worker#191 fix cycle (if needed) + merge. Verify on staging.                                                                                                                                                                       | `useActiveHeadingLine` port to CM6 transactions; dark-mode theming via CSS variables  | —                                                                  |
+| 5   | 2026-06-01 | End-to-end smoke: `#spoken @arabic` in test-chat → response shaped by BOTH spoken mode AND arabic language file. Capture before/after diff.                                                                                        | Integration on Modes + Languages pages; tests                                         | —                                                                  |
+| 6   | 2026-06-02 | —                                                                                                                                                                                                                                  | Polish, edge cases (large docs, Ulysses comments, code fences)                        | —                                                                  |
+| 7   | 2026-06-03 | —                                                                                                                                                                                                                                  | Frank review round + fix cycle on #77                                                 | —                                                                  |
+| 8   | 2026-06-04 | —                                                                                                                                                                                                                                  | Ship #167 turn-key via CM6's syntax tokens. Land #187 (Export Config) if bandwidth    | —                                                                  |
+| 9   | 2026-06-05 | Content polish — Elsy/Tim coordinating on spoken + arabic content quality.                                                                                                                                                         | Content polish (same stream — content work doesn't separate by repo).                 | —                                                                  |
+| 10  | 2026-06-06 | Demo dry run on staging. Capture any edge cases.                                                                                                                                                                                   | Same.                                                                                 | —                                                                  |
+| 11  | 2026-06-07 | Fixes from dry-run findings.                                                                                                                                                                                                       | Same.                                                                                 | —                                                                  |
+| 12  | 2026-06-08 | Final smoke test. **If the demo requires prod**, coordinate manual production workflow dispatch with Ian/Jaap-Jan\*\* (no direct local deploys per project rules; "Promote Production" Actions workflow is the only path).         | Same.                                                                                 | —                                                                  |
+| 13  | 2026-06-09 | **Demo day.**                                                                                                                                                                                                                      |                                                                                       | —                                                                  |
 
 ### Explicitly NOT in this 13-day window
 
@@ -173,34 +176,71 @@ These are tracked in the broader plan below but explicitly held until after June
 
 **Why:** Single canonical reference makes it possible for parallel agents working on different tracks to share context without re-deriving the strategic picture.
 
+### D-005 · worker#191 classified on Track A.1, not Track B (2026-05-27, revision 2)
+
+**Decision:** worker#191 (dynamic language-file loading into system prompt) is on **Track A.1 — June 9 critical path**, not Track B (Language Cascade Architecture).
+
+**Why:** Frank P1 review of plan revision 1 surfaced that the original classification was wrong. The June 9 demo's stated DoD per portal#72 is _"a user typing `#spoken @arabic` gets responses shaped by **both** the Spoken mode file AND the Arabic language file."_ Without worker#191, `#spoken @arabic` parses (worker#211/#212, shipped) and spoken mode applies, but the arabic-language tuning document **does not flow into the system prompt**. The portal#72 body explicitly calls worker#191 "the remaining DoD-blocker for the fifth Goal."
+
+worker#191's issue body is explicit: _"This is the quick-and-dirty approach for June 9 — we load the whole language file every time."_ It's scoped for the demo. It belongs on the demo's critical path, not behind the cascade-design gate.
+
+**Why not block on Ian/Chris pair-programming note?** The issue body says _"Ian and Chris are pairing on the architecture for this — coordinate before implementing."_ Ian is on vacation. Two options: (a) wait for Ian + Chris together (kills June 9), (b) implement under D-003 cross-repo authority, ping Chris (Klappy) on the PR for coordination input + Frank-style review. (b) is consistent with Ian's vacation message ("knock out all of the created issues") and respects the coordination ask without blocking on it.
+
+**Why not the cascade-resolution v2 path (worker#236)?** worker#236 is the post-design-decision cascade-chain resolution mechanism for Track B. It supersedes #191's quick-and-dirty approach when the storage decision lands (admin-portal#172). For June 9 we want the v1 mechanism (#191), not v2.
+
+### D-006 · Plan URL stability: **point at `/blob/main/`; merge PR #190 promptly** (2026-05-27, revision 2)
+
+**Decision:** Cross-link comments and EPIC umbrella headers point at the canonical `/blob/main/docs/tuning-project-plan.md` URL. **The PR #190 docs PR must merge promptly** so that URL resolves (otherwise the 51 cross-link comments and 5 EPIC umbrella headers have a transient 404 window).
+
+**Why:** Frank P2 review of plan revision 1 surfaced that the `/blob/main/...` URL 404s while PR #190 is still open. The cross-link comments noted this with _"Plan currently in admin-portal#190; merges shortly — URL will resolve once merged"_, but the EPIC umbrella headers did NOT carry that disclaimer. Two ways to resolve: (a) merge PR #190 ASAP (cleaner), (b) update all links to point at PR #190 until merge (more work, transient).
+
+**Choice:** (a) — merge PR #190 as soon as Frank approves revision 2 and Seth gives the merge nod.
+
+**Open mitigation:** If merge is delayed >24h post-Frank-approval, switch to (b) by editing the 5 EPIC umbrella headers to add the "merges shortly" disclaimer. Cross-link comments already have it.
+
 ## Parallel Tracks
 
 Six mostly-independent work tracks. Each track has internal dependencies that serialize within the track; between tracks, parallelization is the default.
 
-### Track A — June 9 Editor Critical Path
+### Track A — June 9 Critical Path
+
+Two parallel streams gating the demo for different reasons:
+
+**Stream A.1 — worker#191 runtime language-file injection (demo PROMISE enabler)**
+
+| Issues                                      | Status                                                                                                                                                                                        | Dependencies                                                    |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| worker#191 dynamic language-file loading    | **Open. The DoD-blocker per portal#72 fifth Goal.** Quick-and-dirty design per issue body; load whole language file every time on each request. Acceptance criteria already drafted in issue. | Coordination: ping Chris (Klappy) per issue body before merging |
+| portal#72 fifth Goal closes once #191 lands | Marked 🔴 in portal#72 body                                                                                                                                                                   | worker#191                                                      |
+
+**Why this is on Track A and not Track B (per Frank's P1).** Without worker#191, `#spoken @arabic` parses correctly (worker#211/#212, shipped) and spoken-mode applies, but **the arabic language tuning document does not flow into the system prompt.** The demo's stated promise ("response shaped by _both_ files") is fake-thin without #191. This is feature-completeness, not polish.
+
+**Stream A.2 — Editor polish (#77 → #167) (demo POLISH enabler)**
 
 | Issues                    | Status               | Dependencies          |
 | ------------------------- | -------------------- | --------------------- |
-| #77 editor library        | Decided: CM6 (D-001) | Worker#201 ✅ shipped |
+| #77 editor library        | Decided: CM6 (D-001) | worker#201 ✅ shipped |
 | #167 syntax highlighting  | Unblocked by #77     | CM6 + #77             |
 | #187 Export Config button | Independent, small   | None                  |
+
+**Parallel-safety:** Streams A.1 and A.2 touch different repos (worker vs portal). No merge conflicts; both can run concurrently start of day 1.
 
 **Cadence:** Daily check-in during May 28 – June 9 window. Frank review per PR.
 
 ### Track B — Language Cascade Architecture (#170 family)
 
-| Issues                                   | Status                                            | Dependencies |
-| ---------------------------------------- | ------------------------------------------------- | ------------ |
-| #170                                     | EPIC                                              | —            |
-| #172 storage + chained-override schema   | Design pending Ian (per memory)                   | —            |
-| #173 override authoring UI               | Blocked by #172                                   | —            |
-| #174 diff view + selective re-inherit UI | Blocked by #172                                   | —            |
-| #175 worker-side resolution tracking     | Mirrors worker#236                                | —            |
-| #176 curator-update notification UX      | Blocked by #172                                   | —            |
-| worker#236 chain resolution              | Blocked by #172 (admin-portal)                    | —            |
-| worker#191 dynamic language-file loading | Possibly related to #236; needs cross-link review | —            |
+| Issues                                   | Status                                                                                                                                                          | Dependencies |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| #170                                     | EPIC                                                                                                                                                            | —            |
+| #172 storage + chained-override schema   | Design pending Ian (per memory)                                                                                                                                 | —            |
+| #173 override authoring UI               | Blocked by #172                                                                                                                                                 | —            |
+| #174 diff view + selective re-inherit UI | Blocked by #172                                                                                                                                                 | —            |
+| #175 worker-side resolution tracking     | Mirrors worker#236                                                                                                                                              | —            |
+| #176 curator-update notification UX      | Blocked by #172                                                                                                                                                 | —            |
+| worker#236 chain resolution              | Blocked by #172 (admin-portal)                                                                                                                                  | —            |
+| ~~worker#191~~                           | **Moved to Track A.1 (June 9 critical path) per Frank's P1 finding.** Belongs here only post-demo if cascade-resolution v2 supersedes the quick-and-dirty load. | —            |
 
-**Status:** Held until Tim's modes-cascade reply lands. **Do not start implementation until #172 storage decision is committed.**
+**Status:** Held until Tim's modes-cascade reply lands. **Do not start implementation until #172 storage decision is committed.** worker#191 was previously listed here as a Track-B item; it is now correctly classified under Track A.1 because the June 9 demo's DoD requires it.
 
 **Anticipated work:** Once unblocked, 6–8 weeks serial, 4–5 weeks with parallel UI + worker.
 
@@ -404,14 +444,24 @@ This makes the dependency graph readable from any starting issue.
 | Q-007 | worker#94 vs portal#154 — separate layers or overlap?                                | Frame as reconciliation question on cross-link comment  | Cross-link batch      |
 | Q-008 | worker#191 vs worker#236 — same layer or different?                                  | Verify by reading issue bodies before labeling v1/v2    | Cross-link batch      |
 
-## Bottlenecks (in priority order)
+## Bottlenecks
 
-1. **Tim's modes-cascade reply** — gates Track B detail-scoping
-2. **Ian's identity-bridge protocol documentation** — gates Track D
-3. **Christou/Elsy bandwidth for #153 governance calls** — gates Track E sub-issues
-4. **Tim/Christou/Elsy on #215 Path B** — gates Track G start (Zulip draft prepared 2026-05-27, awaiting send)
-5. **Frank's review bandwidth** — at 6+ parallel tracks, this caps PR-throughput before any other constraint
-6. **Content readiness of spoken mode + arabic language in uW** — demo-blocking, must verify Day 1
+**Split into June-9-critical vs post-demo** (per Frank's P2 finding — without this split, optimization effort goes to the wrong queue).
+
+### Demo-critical (June 9 path, in priority order)
+
+1. **worker#191 runtime language-file injection** — Stream A.1. The DoD-blocker per portal#72 fifth Goal. Without it, the demo's promise is fake-thin (mode works; language tuning doesn't actually flow into the prompt). Quick-and-dirty per the issue body; should be tractable in days 1–4.
+2. **Content readiness of spoken mode + arabic language in uW** — coordination, not engineering. Verify Day 1; if thin, escalate to Elsy/Tim immediately.
+3. **CodeMirror 6 scope check** — Day-1 gate. If CM6 day-1 scoping is unclear, fall back to DIY mirror-div (per D-001 mitigation).
+4. **Frank's review bandwidth across two parallel streams** — both A.1 (worker#191) and A.2 (#77/#167) need PR review; stagger PR-opens to avoid review queue.
+
+### Post-demo (architecture work, in priority order)
+
+5. **Tim's modes-cascade reply** — gates Track B detail-scoping
+6. **Ian's identity-bridge protocol documentation** — gates Track D
+7. **Christou/Elsy bandwidth for #153 governance calls** — gates Track E sub-issues
+8. **Tim/Christou/Elsy on #215 Path B** — gates Track G start (Zulip draft prepared 2026-05-27, awaiting send)
+9. **Frank's review bandwidth at full parallel-track velocity (6+ concurrent tracks)** — caps post-demo PR throughput
 
 ## Resources
 
@@ -429,9 +479,12 @@ This makes the dependency graph readable from any starting issue.
   - D-002 (#215 Path B) — this doc
   - D-003 (Cross-repo authority) — this doc
   - D-004 (Plan governance) — this doc
+  - D-005 (worker#191 on Track A.1) — this doc
+  - D-006 (Plan URL stability) — this doc
 
 ## Change Log
 
-| Date       | Change                                                                                                                                                     | Author |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| 2026-05-27 | Plan opened. 5 portal EPICs + 3 sibling-repo EPICs (to file). 51 in-scope issues. June 9 demo critical path defined. Decisions D-001 through D-004 logged. | Claude |
+| Date               | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Author |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| 2026-05-27 (rev 1) | Plan opened. 5 portal EPICs + 3 sibling-repo EPICs (to file). 51 in-scope issues. June 9 demo critical path defined. Decisions D-001 through D-004 logged.                                                                                                                                                                                                                                                                                                                                          | Claude |
+| 2026-05-27 (rev 2) | Frank P1/P2 revision. **worker#191 moved to Track A.1** as the demo's actual DoD-blocker per portal#72 fifth Goal (D-005). Sibling EPIC statuses updated to "filed" with URLs (worker#239, web-client#39, baruch#19). Bottlenecks split into June-9 vs post-demo. Prod-promotion wording tightened to require manual workflow dispatch. D-006 logged on plan URL stability (PR #190 merge needed for `/blob/main/` resolution). Day-by-day plan restructured into two parallel streams (A.1 + A.2). | Claude |
