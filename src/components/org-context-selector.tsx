@@ -18,6 +18,22 @@ import {
 // collision-proof against any real org slug.
 export const HOME_ORG_SENTINEL = "@@bt-servant:home-org@@";
 
+interface OrgContextSelectorProps {
+  // Optional intercept hook. When provided, the selector hands the chosen
+  // value to the parent instead of mutating the store directly. Pages
+  // with an unsaved-draft state (Modes, Languages) wire this to a
+  // dirty-guard handler so a context switch goes through the same
+  // confirmation flow as the per-page selectors. Pages without a draft
+  // (Prompt Overrides — each slot saves immediately) leave the prop
+  // undefined and accept the default direct-set behavior.
+  //
+  // Without this hook the selector would silently call setContextOrg →
+  // store clears selectedMode/selectedLanguage → page's useEffect resets
+  // the draft to "". A super-admin half a sentence into an edit would
+  // lose it with no confirmation (Frank P1, PR #186 review).
+  onRequestChange?: (next: string | null) => void;
+}
+
 // Cross-org context picker for super admins. Renders the home org as the
 // default selection plus every other org that has at least one user. List
 // derived from `useAdminUsers` because (a) it's already cross-org for super
@@ -30,7 +46,9 @@ export const HOME_ORG_SENTINEL = "@@bt-servant:home-org@@";
 // across navigation between Modes / Languages / Prompt-Overrides so a
 // super-admin investigating one org sees consistent context across the
 // three pages.
-export function OrgContextSelector() {
+export function OrgContextSelector({
+  onRequestChange,
+}: OrgContextSelectorProps = {}) {
   const callerOrg = useAuthStore((s) => s.user?.org ?? "");
   const callerIsSuperAdmin = useAuthStore((s) => s.user?.isSuperAdmin ?? false);
   const contextOrg = useUiStore((s) => s.contextOrg);
@@ -52,11 +70,13 @@ export function OrgContextSelector() {
   const selectValue = contextOrg ?? HOME_ORG_SENTINEL;
 
   const handleChange = (value: string) => {
-    if (value === HOME_ORG_SENTINEL || value === callerOrg) {
-      setContextOrg(null);
+    const next =
+      value === HOME_ORG_SENTINEL || value === callerOrg ? null : value;
+    if (onRequestChange) {
+      onRequestChange(next);
       return;
     }
-    setContextOrg(value);
+    setContextOrg(next);
   };
 
   return (
