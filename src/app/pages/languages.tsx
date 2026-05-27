@@ -14,7 +14,6 @@ import {
 } from "@/lib/permissions";
 import { useUiStore } from "@/lib/ui-store";
 import { useDebounced } from "@/hooks/use-debounced";
-import { useActiveHeadingLine } from "@/hooks/use-active-heading-line";
 import {
   useDeleteLanguage,
   useLanguage,
@@ -35,7 +34,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { LanguageSelector } from "@/components/language-selector";
-import { MarkdownEditor } from "@/components/markdown-editor";
+import {
+  MarkdownEditor,
+  type MarkdownEditorHandle,
+} from "@/components/markdown-editor";
 import { MarkdownToc } from "@/components/markdown-toc";
 import { OrgContextSelector } from "@/components/org-context-selector";
 import { PageHeader } from "@/components/page-header";
@@ -112,8 +114,8 @@ export function LanguagesPage() {
   // clears `error` while a retry is `pending`.
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const activeLine = useActiveHeadingLine(textareaRef, draft, headings);
+  const [activeLine, setActiveLine] = useState(-1);
+  const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
 
   const serverLabel = languageQuery.data?.label;
@@ -341,21 +343,9 @@ export function LanguagesPage() {
     [deleteLanguage, selectedLanguage, setSelectedLanguage]
   );
 
-  const handleJumpToLine = useCallback(
-    (line: number) => {
-      const ta = textareaRef.current;
-      if (!ta) return;
-      const lines = draft.split("\n");
-      let pos = 0;
-      for (let i = 0; i < line; i++) pos += (lines[i]?.length ?? 0) + 1;
-      ta.focus();
-      ta.setSelectionRange(pos, pos);
-      // Scroll the line roughly into view by setting scrollTop based on line height
-      const lineHeight = parseFloat(getComputedStyle(ta).lineHeight || "20");
-      ta.scrollTop = Math.max(0, line * lineHeight - 80);
-    },
-    [draft]
-  );
+  const handleJumpToLine = useCallback((line: number) => {
+    editorRef.current?.jumpToLine(line);
+  }, []);
 
   const isLoading =
     languagesQuery.isLoading ||
@@ -506,10 +496,11 @@ export function LanguagesPage() {
             />
             <div className="min-w-0 flex-1 overflow-y-auto">
               <MarkdownEditor
+                ref={editorRef}
                 value={draft}
                 onChange={setDraft}
                 onHeadingsChange={setHeadings}
-                textareaRef={textareaRef}
+                onActiveLineChange={setActiveLine}
               />
             </div>
           </>
