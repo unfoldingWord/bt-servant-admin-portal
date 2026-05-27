@@ -5,6 +5,7 @@ import { Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
+import { decideContextChange } from "@/lib/context-org-guard";
 import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
   filterAuthorizedLanguages,
@@ -36,6 +37,7 @@ import { Button } from "@/components/ui/button";
 import { LanguageSelector } from "@/components/language-selector";
 import { MarkdownEditor } from "@/components/markdown-editor";
 import { MarkdownToc } from "@/components/markdown-toc";
+import { OrgContextSelector } from "@/components/org-context-selector";
 import { PageHeader } from "@/components/page-header";
 
 const AUTO_SAVE_DEBOUNCE_MS = 800;
@@ -43,18 +45,29 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 export function LanguagesPage() {
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
   const languageRights = useAuthStore((s) => s.user?.language_rights);
-  const hasAccess = hasAnyLanguageRights(languageRights);
   const selectedLanguage = useUiStore((s) => s.selectedLanguage);
   const setSelectedLanguage = useUiStore((s) => s.setSelectedLanguage);
   const showDrafts = useUiStore((s) => s.showDrafts);
   const setShowDrafts = useUiStore((s) => s.setShowDrafts);
+  const contextOrg = useUiStore((s) => s.contextOrg);
+  const setContextOrg = useUiStore((s) => s.setContextOrg);
+
+  // Cross-org reuses the worker's PR A carve-out: super-admins bypass
+  // `hasLanguageRights` when editing a different org's languages, because
+  // shepherd rights are scoped to the user's home org and don't translate
+  // to a foreign namespace. Treat the effective rights as full-access in
+  // that case so the same filter/gate logic continues to work without a
+  // separate cross-org code path.
+  const isCrossOrg = contextOrg !== null;
+  const effectiveRights = isCrossOrg ? "*" : languageRights;
+  const hasAccess = hasAnyLanguageRights(effectiveRights);
 
   // Queries / mutations
-  const languagesQuery = useLanguages();
-  const languageQuery = useLanguage(selectedLanguage);
-  const saveLanguage = useSaveLanguage();
-  const deleteLanguage = useDeleteLanguage();
-  const scaffoldQuery = useLanguageScaffold();
+  const languagesQuery = useLanguages(contextOrg);
+  const languageQuery = useLanguage(selectedLanguage, contextOrg);
+  const saveLanguage = useSaveLanguage(contextOrg);
+  const deleteLanguage = useDeleteLanguage(contextOrg);
+  const scaffoldQuery = useLanguageScaffold(contextOrg);
 
   // Filter the language list to only those the user has rights to. Engine
   // #207 will eventually filter server-side too, but until then this is the
@@ -65,10 +78,10 @@ export function LanguagesPage() {
       ...languagesQuery.data,
       languages: filterAuthorizedLanguages(
         languagesQuery.data.languages,
-        languageRights
+        effectiveRights
       ),
     };
-  }, [languagesQuery.data, languageRights]);
+  }, [languagesQuery.data, effectiveRights]);
 
   // Local document draft (auto-save target).
   //
@@ -212,6 +225,14 @@ export function LanguagesPage() {
   // Pending language switch within the same page — guards against losing
   // edits when picking a different language from the dropdown.
   const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
+  // Parallel to `pendingSwitch` but at the org-context layer. Outer null
+  // means "no pending switch"; outer `{ value: X }` means "user picked X
+  // but we're holding it behind a confirmation." `value` itself can be
+  // null (= switch back to home org), which is why we wrap rather than
+  // use a bare `string | null` (Frank P1, PR #186 review).
+  const [pendingContextOrg, setPendingContextOrg] = useState<{
+    value: string | null;
+  } | null>(null);
 
   const handleSelectLanguage = useCallback(
     (next: string | null) => {
@@ -225,14 +246,38 @@ export function LanguagesPage() {
     [isDirty, isSaving, selectedLanguage, setSelectedLanguage]
   );
 
+  const handleRequestContextChange = useCallback(
+    (next: string | null) => {
+      const outcome = decideContextChange(contextOrg, next, isDirty, isSaving);
+      if (outcome === "no-op") return;
+      if (outcome === "confirm") {
+        setPendingContextOrg({ value: next });
+        return;
+      }
+      setContextOrg(next);
+    },
+    [contextOrg, isDirty, isSaving, setContextOrg]
+  );
+
+  const confirmContextSwitch = useCallback(() => {
+    if (!pendingContextOrg) return;
+    setContextOrg(pendingContextOrg.value);
+    setPendingContextOrg(null);
+  }, [pendingContextOrg, setContextOrg]);
+
   // If the persisted selection is no longer authorized (e.g. an admin
   // revoked rights mid-session, or rights changed since last login), drop
   // it so we don't render an editor for a language the user can't read.
+  // Skip the gate under cross-org context: `setContextOrg` already cleared
+  // `selectedLanguage` to null when the user switched orgs, and any new
+  // selection in cross-org mode is gated server-side via the worker's
+  // super-admin carve-out (PR A) rather than by `language_rights`.
   useEffect(() => {
     if (selectedLanguage === null) return;
+    if (isCrossOrg) return;
     if (hasLanguageRights(languageRights, selectedLanguage)) return;
     setSelectedLanguage(null);
-  }, [languageRights, selectedLanguage, setSelectedLanguage]);
+  }, [isCrossOrg, languageRights, selectedLanguage, setSelectedLanguage]);
 
   const confirmSwitch = useCallback(() => {
     setSelectedLanguage(pendingSwitch);
@@ -360,6 +405,7 @@ export function LanguagesPage() {
 
       <div className="bg-card border-b">
         <div className="flex flex-wrap items-center gap-3 p-4 sm:p-6">
+          <OrgContextSelector onRequestChange={handleRequestContextChange} />
           <div className="min-w-0 flex-1">
             <LanguageSelector
               languagesData={authorizedLanguagesData}
@@ -520,6 +566,37 @@ export function LanguagesPage() {
               Stay
             </AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={confirmSwitch}>
+              Discard and switch
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingContextOrg !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingContextOrg(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch org context?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have unsaved edits to{" "}
+              <span className="text-foreground font-medium">
+                &ldquo;{selectedLanguage}&rdquo;
+              </span>
+              . Switching org context will discard them.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingContextOrg(null)}>
+              Stay
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={confirmContextSwitch}
+            >
               Discard and switch
             </AlertDialogAction>
           </AlertDialogFooter>

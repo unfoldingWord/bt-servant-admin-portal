@@ -227,3 +227,91 @@ describe("deleteLanguage", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cross-org override threading (#166 PR B)
+// ---------------------------------------------------------------------------
+
+describe("languages-api cross-org threading", () => {
+  function urlOf(spy: { mock: { calls: unknown[][] } }, call = 0): string {
+    return String(spy.mock.calls[call]![0]);
+  }
+
+  it("listLanguages() with no org → no ?org=", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ languages: [] })));
+    await listLanguages();
+    expect(urlOf(spy)).toBe("/api/config/languages");
+  });
+
+  it("listLanguages with org → ?org=word-collective", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ languages: [] })));
+    await listLanguages(undefined, "word-collective");
+    expect(urlOf(spy)).toBe("/api/config/languages?org=word-collective");
+  });
+
+  it("getLanguage threads org through and still encodes the name", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ language: { name: "arabic", document: "" } })
+        )
+      );
+    await getLanguage("arabic", undefined, "word-collective");
+    expect(urlOf(spy)).toBe("/api/config/languages/arabic?org=word-collective");
+  });
+
+  it("putLanguage threads org through (mutation must use same ?org=)", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ language: { name: "arabic", document: "x" } })
+        )
+      );
+    await putLanguage(
+      "arabic",
+      { document: "x" },
+      undefined,
+      "word-collective"
+    );
+    expect(urlOf(spy)).toBe("/api/config/languages/arabic?org=word-collective");
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe("PUT");
+  });
+
+  it("deleteLanguage threads org through", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    await deleteLanguage("arabic", undefined, "word-collective");
+    expect(urlOf(spy)).toBe("/api/config/languages/arabic?org=word-collective");
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe("DELETE");
+  });
+
+  it("LanguageForbiddenError still surfaces under cross-org (server-side gate intact)", async () => {
+    // PR A's worker carve-out lets super admins bypass `hasLanguageRights`
+    // ONLY when ?org= is set AND the target differs from session.org. A
+    // 403 from upstream still needs to land as LanguageForbiddenError so
+    // the UI renders the inline permission message instead of the
+    // generic save-failed error — the cross-org code path must not eat
+    // the error-class plumbing.
+    mockFetchOnce(403, { error: "Forbidden" });
+    try {
+      await putLanguage(
+        "arabic",
+        { document: "x" },
+        undefined,
+        "word-collective"
+      );
+      throw new Error("expected rejection");
+    } catch (e) {
+      expect(e).toBeInstanceOf(LanguageForbiddenError);
+      const err = e as LanguageForbiddenError;
+      expect(err.operation).toBe("write");
+    }
+  });
+});

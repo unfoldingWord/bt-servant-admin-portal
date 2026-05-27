@@ -1,3 +1,4 @@
+import { buildConfigUrl } from "@/lib/config-url";
 import type { MemoryResponse } from "@/types/memory";
 import type {
   OrgModes,
@@ -31,9 +32,10 @@ function unwrapOverridesResponse(
 }
 
 export async function getOrgOverrides(
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<PromptOverrides> {
-  const res = await fetch("/api/config/prompt-overrides", {
+  const res = await fetch(buildConfigUrl("/api/config/prompt-overrides", org), {
     headers: SAME_ORIGIN_HEADERS,
     signal,
   });
@@ -48,9 +50,10 @@ export async function getOrgOverrides(
 
 export async function putOrgOverrides(
   overrides: PromptOverrides,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<PromptOverrides> {
-  const res = await fetch("/api/config/prompt-overrides", {
+  const res = await fetch(buildConfigUrl("/api/config/prompt-overrides", org), {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
     body: JSON.stringify(overrides),
@@ -65,8 +68,11 @@ export async function putOrgOverrides(
   return unwrapOverridesResponse((await res.json()) as Record<string, unknown>);
 }
 
-export async function deleteOrgOverrides(signal?: AbortSignal): Promise<void> {
-  const res = await fetch("/api/config/prompt-overrides", {
+export async function deleteOrgOverrides(
+  signal?: AbortSignal,
+  org?: string | null
+): Promise<void> {
+  const res = await fetch(buildConfigUrl("/api/config/prompt-overrides", org), {
     method: "DELETE",
     headers: SAME_ORIGIN_HEADERS,
     signal,
@@ -82,8 +88,11 @@ export async function deleteOrgOverrides(signal?: AbortSignal): Promise<void> {
 // Modes
 // ---------------------------------------------------------------------------
 
-export async function listModes(signal?: AbortSignal): Promise<OrgModes> {
-  const res = await fetch("/api/config/modes", {
+export async function listModes(
+  signal?: AbortSignal,
+  org?: string | null
+): Promise<OrgModes> {
+  const res = await fetch(buildConfigUrl("/api/config/modes", org), {
     headers: SAME_ORIGIN_HEADERS,
     signal,
   });
@@ -109,12 +118,16 @@ function unwrapModeResponse(data: Record<string, unknown>): PromptMode {
 
 export async function getMode(
   name: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<PromptMode> {
-  const res = await fetch(`/api/config/modes/${encodeURIComponent(name)}`, {
-    headers: SAME_ORIGIN_HEADERS,
-    signal,
-  });
+  const res = await fetch(
+    buildConfigUrl(`/api/config/modes/${encodeURIComponent(name)}`, org),
+    {
+      headers: SAME_ORIGIN_HEADERS,
+      signal,
+    }
+  );
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -132,14 +145,18 @@ export async function putMode(
     document: string;
     published?: boolean;
   },
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<PromptMode> {
-  const res = await fetch(`/api/config/modes/${encodeURIComponent(name)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
-    body: JSON.stringify(body),
-    signal,
-  });
+  const res = await fetch(
+    buildConfigUrl(`/api/config/modes/${encodeURIComponent(name)}`, org),
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
+      body: JSON.stringify(body),
+      signal,
+    }
+  );
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -154,13 +171,17 @@ export async function putMode(
 
 export async function deleteMode(
   name: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<void> {
-  const res = await fetch(`/api/config/modes/${encodeURIComponent(name)}`, {
-    method: "DELETE",
-    headers: SAME_ORIGIN_HEADERS,
-    signal,
-  });
+  const res = await fetch(
+    buildConfigUrl(`/api/config/modes/${encodeURIComponent(name)}`, org),
+    {
+      method: "DELETE",
+      headers: SAME_ORIGIN_HEADERS,
+      signal,
+    }
+  );
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -174,9 +195,13 @@ export async function deleteMode(
 
 export async function getUserMemory(
   userId: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<MemoryResponse> {
-  const url = `/api/config/user-memory/${encodeURIComponent(userId)}`;
+  const url = buildConfigUrl(
+    `/api/config/user-memory/${encodeURIComponent(userId)}`,
+    org
+  );
   const res = await fetch(url, {
     headers: SAME_ORIGIN_HEADERS,
     signal,
@@ -192,9 +217,13 @@ export async function getUserMemory(
 
 export async function deleteUserMemory(
   userId: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<void> {
-  const url = `/api/config/user-memory/${encodeURIComponent(userId)}`;
+  const url = buildConfigUrl(
+    `/api/config/user-memory/${encodeURIComponent(userId)}`,
+    org
+  );
   const res = await fetch(url, {
     method: "DELETE",
     headers: SAME_ORIGIN_HEADERS,
@@ -214,9 +243,13 @@ export async function deleteUserMemory(
 export async function setUserMode(
   userId: string,
   mode: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<void> {
-  const url = `/api/config/user-mode/${encodeURIComponent(userId)}`;
+  const url = buildConfigUrl(
+    `/api/config/user-mode/${encodeURIComponent(userId)}`,
+    org
+  );
   const res = await fetch(url, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
@@ -232,9 +265,13 @@ export async function setUserMode(
 
 export async function clearUserMode(
   userId: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  org?: string | null
 ): Promise<void> {
-  const url = `/api/config/user-mode/${encodeURIComponent(userId)}`;
+  const url = buildConfigUrl(
+    `/api/config/user-mode/${encodeURIComponent(userId)}`,
+    org
+  );
   const res = await fetch(url, {
     method: "DELETE",
     headers: SAME_ORIGIN_HEADERS,

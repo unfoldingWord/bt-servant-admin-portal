@@ -5,8 +5,10 @@ import { Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
+import { decideContextChange } from "@/lib/context-org-guard";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { useUiStore } from "@/lib/ui-store";
+import { OrgContextSelector } from "@/components/org-context-selector";
 import { useDebounced } from "@/hooks/use-debounced";
 import { useActiveHeadingLine } from "@/hooks/use-active-heading-line";
 import {
@@ -40,11 +42,13 @@ export function ModesPage() {
   const setSelectedMode = useUiStore((s) => s.setSelectedMode);
   const showDrafts = useUiStore((s) => s.showDrafts);
   const setShowDrafts = useUiStore((s) => s.setShowDrafts);
+  const contextOrg = useUiStore((s) => s.contextOrg);
+  const setContextOrg = useUiStore((s) => s.setContextOrg);
 
-  const modesQuery = useModes();
-  const modeQuery = useMode(selectedMode);
-  const saveMode = useSaveMode();
-  const deleteMode = useDeleteMode();
+  const modesQuery = useModes(contextOrg);
+  const modeQuery = useMode(selectedMode, contextOrg);
+  const saveMode = useSaveMode(contextOrg);
+  const deleteMode = useDeleteMode(contextOrg);
 
   // Local document draft (auto-save target).
   //
@@ -154,6 +158,14 @@ export function ModesPage() {
   );
 
   const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
+  // Parallel to `pendingSwitch` but at the org-context layer. Outer null
+  // means "no pending switch"; outer `{ value: X }` means "user picked X
+  // but we're holding it behind a confirmation." `value` itself can be
+  // null (= switch back to home org), which is why we wrap rather than
+  // use a bare `string | null` (Frank P1, PR #186 review).
+  const [pendingContextOrg, setPendingContextOrg] = useState<{
+    value: string | null;
+  } | null>(null);
 
   const handleSelectMode = useCallback(
     (next: string | null) => {
@@ -171,6 +183,25 @@ export function ModesPage() {
     setSelectedMode(pendingSwitch);
     setPendingSwitch(null);
   }, [pendingSwitch, setSelectedMode]);
+
+  const handleRequestContextChange = useCallback(
+    (next: string | null) => {
+      const outcome = decideContextChange(contextOrg, next, isDirty, isSaving);
+      if (outcome === "no-op") return;
+      if (outcome === "confirm") {
+        setPendingContextOrg({ value: next });
+        return;
+      }
+      setContextOrg(next);
+    },
+    [contextOrg, isDirty, isSaving, setContextOrg]
+  );
+
+  const confirmContextSwitch = useCallback(() => {
+    if (!pendingContextOrg) return;
+    setContextOrg(pendingContextOrg.value);
+    setPendingContextOrg(null);
+  }, [pendingContextOrg, setContextOrg]);
 
   // Drop a stale `selectedMode` if it's no longer present in the list (admin
   // deleted it, or the value persisted across a user switch on the same tab).
@@ -269,6 +300,7 @@ export function ModesPage() {
 
       <div className="bg-card border-b">
         <div className="flex flex-wrap items-center gap-3 p-4 sm:p-6">
+          <OrgContextSelector onRequestChange={handleRequestContextChange} />
           <div className="min-w-0 flex-1">
             <ModeSelector
               modesData={modesQuery.data}
@@ -409,6 +441,37 @@ export function ModesPage() {
               Stay
             </AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={confirmSwitch}>
+              Discard and switch
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingContextOrg !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingContextOrg(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch org context?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have unsaved edits to{" "}
+              <span className="text-foreground font-medium">
+                &ldquo;{selectedMode}&rdquo;
+              </span>
+              . Switching org context will discard them.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingContextOrg(null)}>
+              Stay
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={confirmContextSwitch}
+            >
               Discard and switch
             </AlertDialogAction>
           </AlertDialogFooter>

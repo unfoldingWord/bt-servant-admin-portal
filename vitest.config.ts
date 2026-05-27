@@ -1,4 +1,5 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import path from "path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -19,6 +20,16 @@ export default defineConfig({
       },
     }),
   ],
+  resolve: {
+    // Mirror the main vite.config.ts alias so tests-under-pool resolve
+    // value imports through the `@/` prefix. Type-only `@/...` imports
+    // are erased before runtime so they didn't surface this gap until
+    // the first sibling-lib value import landed (#166 PR B,
+    // `src/lib/config-api.ts` → `src/lib/config-url.ts`).
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   test: {
     include: ["tests/**/*.test.ts"],
   },

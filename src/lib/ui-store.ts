@@ -16,6 +16,16 @@ interface UiState {
   setSelectedMode: (mode: string | null) => void;
   selectedLanguage: string | null;
   setSelectedLanguage: (language: string | null) => void;
+  // Super-admin cross-org override for /api/config/* fetches. `null` is the
+  // everyday same-org path: hooks omit the `?org=` param and the worker
+  // resolves the caller's session.org. When set to a non-null slug, the
+  // Modes / Languages / Prompt-Overrides pages operate on that org instead
+  // (worker gates on isSuperAdmin per #166 PR A). `setContextOrg` clears
+  // selectedMode + selectedLanguage so org-A state doesn't bleed into
+  // org-B fetches — otherwise the per-mode draft would briefly display
+  // stale content from the previous context.
+  contextOrg: string | null;
+  setContextOrg: (org: string | null) => void;
   chatMode: string | null;
   chatModeSeeded: boolean;
   setChatMode: (mode: string | null) => void;
@@ -38,6 +48,7 @@ type InitialUiState = Pick<
   | "testChatOpen"
   | "selectedMode"
   | "selectedLanguage"
+  | "contextOrg"
   | "chatMode"
   | "chatModeSeeded"
   | "testChatUserId"
@@ -70,6 +81,7 @@ const initialState: InitialUiState = {
   testChatOpen: false,
   selectedMode: null,
   selectedLanguage: null,
+  contextOrg: null,
   chatMode: null,
   chatModeSeeded: false,
   // Placeholder — reset() always generates a fresh UUID; this value is only
@@ -100,6 +112,18 @@ export const useUiStore = create<UiState>()((set) => ({
     })),
   setSelectedMode: (selectedMode) => set({ selectedMode }),
   setSelectedLanguage: (selectedLanguage) => set({ selectedLanguage }),
+  // Changing context clears selectedMode/selectedLanguage. Without this, a
+  // user who selected `spoken` while in their home org would see the
+  // freshly-fetched cross-org `spoken` (if any) display under the same
+  // selection — the editor would briefly show org-A document content while
+  // the cross-org query was in flight, then snap to org-B content. Better
+  // to land on the empty-selection state and let the user re-pick.
+  setContextOrg: (contextOrg) =>
+    set((state) =>
+      state.contextOrg === contextOrg
+        ? state
+        : { contextOrg, selectedMode: null, selectedLanguage: null }
+    ),
   setChatMode: (chatMode) => set({ chatMode }),
   setTestChatPanelWidth: (width) => {
     const clamped = Math.max(

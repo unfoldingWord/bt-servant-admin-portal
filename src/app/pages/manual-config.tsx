@@ -3,6 +3,8 @@ import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
 import { useAuthStore } from "@/lib/auth-store";
+import { useUiStore } from "@/lib/ui-store";
+import { OrgContextSelector } from "@/components/org-context-selector";
 import { PageHeader } from "@/components/page-header";
 import {
   useOrgOverrides,
@@ -15,10 +17,11 @@ import { UserMemoryDialog } from "@/components/user-memory-dialog";
 
 export function ManualConfigPage() {
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
+  const contextOrg = useUiStore((s) => s.contextOrg);
   const [memoryDialogOpen, setMemoryDialogOpen] = useState(false);
 
-  const orgOverrides = useOrgOverrides();
-  const updateOrg = useUpdateOrgOverrides();
+  const orgOverrides = useOrgOverrides(contextOrg);
+  const updateOrg = useUpdateOrgOverrides(contextOrg);
 
   const currentOverrides = useMemo(
     () => orgOverrides.data ?? {},
@@ -38,6 +41,10 @@ export function ManualConfigPage() {
         title="Prompt Overrides"
         subtitle="Org-wide defaults applied to every conversation unless a Mode overrides them."
       />
+
+      <div className="bg-card flex flex-wrap items-center gap-3 border-b p-4 sm:p-6">
+        <OrgContextSelector />
+      </div>
 
       <div className="config-grid-bg min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="space-y-4 sm:space-y-6">
