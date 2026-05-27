@@ -101,7 +101,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
   - PR #185 opened; Frank round 1 caught a **P2 self-referential bypass**: `crossOrg: true` was set whenever the param was present, so a restricted-shepherd super admin could bypass their own org's `language_rights` by adding `?org=<their_own_org>`. Fix in `cbe6a7d`: `crossOrg: trimmed !== session.org` — only true when the resolved target genuinely differs from the caller's home org. +2 regression tests pin both branches (own-org + restricted rights → 403, own-org + matching rights → 200 same-org proxy). Frank re-review clean.
   - Merged at `6c3b720`.
 
-- **#166 PR B — UI side.** 18 files, threads cross-org context through the three named pages and the API/hook layers:
+- **#166 PR B — UI side.** 20 files across the initial commit + the P1 fix commit (initial: 18; fix added 5 with 3 overlapping), threads cross-org context through the three named pages and the API/hook layers:
   - `src/lib/config-url.ts` (new) — `buildConfigUrl(path, org)` helper. Empty/whitespace dropped silently; trim parity with the worker's `resolveOrg`.
   - All 11 API helpers (`config-api.ts`, `languages-api.ts`, `language-scaffold-api.ts`) gained a trailing optional `org?: string | null` param. Per-user endpoints (`user-mode`, `user-memory`) threaded for parity though no UI consumes them yet.
   - Hooks (`use-prompt-config`, `use-languages`, `use-language-scaffold`) accept the param and include it in TanStack Query keys so org-A and org-B caches don't collide. `null` and `undefined` normalize to the same key.
@@ -124,7 +124,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 | #185   | `6c3b720` | —      |
 | #186   | `0103dcc` | #166   |
 
-**4 PRs merged in one day, 1 issue auto-closed (#166), super-admin cross-org config feature shipped end-to-end to staging in a single session (worker + UI), 59 new tests (192 → 251), 2 Frank review rounds — both caught real bugs (P2 self-referential bypass, P1 unsaved-edit bypass) — both fixed in <30 min cycles.**
+**4 PRs merged in one day, 1 issue auto-closed (#166), super-admin cross-org config feature shipped end-to-end to staging in a single session (worker + UI), 58 new tests (193 → 251; #185 +17, #186 +41), 2 Frank review rounds — both caught real bugs (P2 self-referential bypass, P1 unsaved-edit bypass) — both fixed in <30 min cycles.**
 
 **In Progress:**
 
