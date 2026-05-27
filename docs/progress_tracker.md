@@ -86,6 +86,25 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ### 2026-05-27 — #166 cross-org config end-to-end (2 PRs in one day, one Frank round each)
 
+**Post-EOD update — Ian unblocks cross-repo work (Zulip, late afternoon):**
+
+Ian replied to the long-running cross-repo coordination question while on vacation: _"I also think this is a great opportunity for you and your bots to venture into the other repos. I don't want to be a blocker for anything above. Feel free to knock out all of the created issues regardless of the repo."_ Seth: _"glad to have your blessing!"_
+
+**Operational implications:**
+
+- **Supersedes the admin-portal-only scope** that's been in force since 2026-05-11 ([[feedback_scope_admin_portal_only]] now flagged SUPERSEDED; new [[project_cross_repo_authorization]] memory captures the current rule and the open questions).
+- **8+ blocked items become actionable directly,** not just file-and-wait:
+  - bt-servant-worker#143 (`isSuperAdmin` redaction follow-up) — small, well-scoped.
+  - bt-servant-worker#191 (gates Epic #72's fifth Goal — dynamic language-file loading).
+  - bt-servant-worker#215 (gates portal #125 Phase 2) — verify portal#125 state first since it's already CLOSED.
+  - The cross-repo companions filed 2026-05-21: #177 identity bridge family, #172 cascade storage, #236 chain resolution, web-client #36/#37/#38, baruch#18.
+- **Today's 8-comment cross-link batch gets re-shaped.** Comments that were advisory ("recommend move," "file portal companion") can now be action-oriented: file the PR or open the companion, then comment with the link. Lower friction; faster resolution.
+- **Open questions flagged for clarification before exercising the new authority:**
+  - Merge authority on sibling-repo PRs — does the "ask before merge" rule from admin-portal carry over, or is autonomy implied? Default: ask, until I learn each repo's norms.
+  - Frank / Codex coverage — is the bot configured to review PRs on worker / web-client / baruch? Check before opening the first sibling-repo PR.
+
+Tomorrow's priority list above (#143, README docs PR, cross-link batch) now sits inside the new authority — same items, but the sibling-repo subset is no longer gated on Ian.
+
 **Context entering the session:** Six-day dormancy since 2026-05-21 EOD. SOD opened with two stale tracker PRs (#145, #165) sitting green and unmerged, super-admin feature still soaking on staging, and Ian "out this week" per the 2026-05-21 notes. Recommended tuning-priority next task was #166 (super-admin cross-org config) per the issue body's explicit "prerequisite for #149/#153 meta-tuning" framing.
 
 **Completed:**
