@@ -4,10 +4,10 @@
 
 ## Current Status
 
-**Phase**: Active development on Epic #72 (Admin Portal Redesign for Response Tuning); super-admin feature shipped end-to-end to staging.
-**Last Updated**: 2026-05-21
+**Phase**: Active development on Epic #72 (Admin Portal Redesign for Response Tuning); super-admin feature + cross-org config plumbing both shipped end-to-end to staging.
+**Last Updated**: 2026-05-27
 **Demo target**: June 9 — `#spoken @arabic` working end-to-end with the new editor
-**Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` — staging is 4 commits ahead with the new-org CLI + super-admin feature, awaiting promotion)
+**Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` — staging is 8 commits ahead with the new-org CLI, super-admin feature, and #166 cross-org config; awaiting promotion)
 
 ## Milestones
 
@@ -30,6 +30,7 @@
 | Chat panes cleanup (#31, #48, #50)        | 100%     | Shipped 2026-05-13                                       |
 | New-org CLI stopgap (#139)                | 100%     | Shipped 2026-05-20                                       |
 | Super-admin role + UI (#138)              | 100%     | Shipped 2026-05-20 (PR A backend + PR B frontend)        |
+| Cross-org config edits (#166)             | 100%     | Shipped 2026-05-27 (PR A worker + PR B UI)               |
 | Epic #72 — Admin Portal Redesign          | ~95%     | In Progress (only #77 left)                              |
 
 ### Per-PR ephemeral CF Workers — Shipped
@@ -82,6 +83,84 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-05-27 — #166 cross-org config end-to-end (2 PRs in one day, one Frank round each)
+
+**Context entering the session:** Six-day dormancy since 2026-05-21 EOD. SOD opened with two stale tracker PRs (#145, #165) sitting green and unmerged, super-admin feature still soaking on staging, and Ian "out this week" per the 2026-05-21 notes. Recommended tuning-priority next task was #166 (super-admin cross-org config) per the issue body's explicit "prerequisite for #149/#153 meta-tuning" framing.
+
+**Completed:**
+
+- **Merged #145 + #165 (stale tracker PRs).** #165 conflicted with main after #145 went in (both touch `docs/progress_tracker.md`); rebase-onto-origin-main + drop-the-duplicate `8852cce` cleanly replayed the three 2026-05-21 commits onto main. Force-push (with lease) + `--auto` merge. Both landed: `84b625a`, `fdd31f9`.
+
+- **#166 PR A — worker side (`worker/config.ts`).** Filed at issue body's three named touchpoints. New `resolveOrg(request, session)` helper accepts `?org=<slug>` on every `/api/config/*` endpoint:
+  - Super-admin only; non-super callers get a loud `403 Cross-org config access requires isSuperAdmin` rather than a silent fallback (loud-over-silent-drop, same principle as #138/#141).
+  - Shape validation rejects empty / whitespace-only / path-traversal (`/`) values with 400 even for super admins (worker is the only enforcement point under the trusted-portal model).
+  - Absent param → byte-for-byte identical to legacy same-org path. Same-org regression test pins this.
+  - Language-rights carve-out: `hasLanguageRights` skipped when cross-org, because rights are scoped to the caller's home org and don't translate to a foreign namespace; super-admin already trumps shepherd permissions by design.
+  - 15 new tests under "Cross-org via ?org= (#166)" in `tests/config-authz.test.ts`.
+  - PR #185 opened; Frank round 1 caught a **P2 self-referential bypass**: `crossOrg: true` was set whenever the param was present, so a restricted-shepherd super admin could bypass their own org's `language_rights` by adding `?org=<their_own_org>`. Fix in `cbe6a7d`: `crossOrg: trimmed !== session.org` — only true when the resolved target genuinely differs from the caller's home org. +2 regression tests pin both branches (own-org + restricted rights → 403, own-org + matching rights → 200 same-org proxy). Frank re-review clean.
+  - Merged at `6c3b720`.
+
+- **#166 PR B — UI side.** 18 files, threads cross-org context through the three named pages and the API/hook layers:
+  - `src/lib/config-url.ts` (new) — `buildConfigUrl(path, org)` helper. Empty/whitespace dropped silently; trim parity with the worker's `resolveOrg`.
+  - All 11 API helpers (`config-api.ts`, `languages-api.ts`, `language-scaffold-api.ts`) gained a trailing optional `org?: string | null` param. Per-user endpoints (`user-mode`, `user-memory`) threaded for parity though no UI consumes them yet.
+  - Hooks (`use-prompt-config`, `use-languages`, `use-language-scaffold`) accept the param and include it in TanStack Query keys so org-A and org-B caches don't collide. `null` and `undefined` normalize to the same key.
+  - `useUiStore.contextOrg` — new `string | null` slice. Default null = home org. `setContextOrg` clears `selectedMode` + `selectedLanguage` on a real change (so org-A state can't bleed into org-B fetches), no-ops on redundant ticks, cleared by `reset()` on logout.
+  - `<OrgContextSelector>` component — renders home org + every other org with ≥1 user (derived from `useAdminUsers`, gated on `callerIsSuperAdmin` so org admins don't pay a wasted fetch). Bridges Radix Select's no-empty-string rule with the store's `null = home` model via `HOME_ORG_SENTINEL`. Returns null for non-super sessions.
+  - `languages.tsx` carve-out: when `isCrossOrg`, `effectiveRights = "*"` so the page filter, the `hasAccess` gate, and the stale-selection guard don't block a super-admin with restricted same-org shepherd rights from operating on another org's languages. Mirrors the worker carve-out exactly.
+  - `vitest.config.ts`: mirrored the `@` → `./src` alias from `vite.config.ts`. Test pool didn't need it before because the only `@/` imports in src/lib were type-only (erased before runtime); first sibling-lib *value* import (config-api → config-url) surfaced the gap.
+  - 31 new tests across `tests/config-url.test.ts` (new), `tests/config-api.test.ts` (+10), `tests/languages-api.test.ts` (+6 including a `LanguageForbiddenError` regression check pinning that 403 under cross-org still surfaces as the typed error), `tests/language-scaffold-api.test.ts` (+2), and `tests/ui-store.test.ts` (new, polyfills `localStorage` since the workers test pool doesn't ship one).
+  - PR #186 opened; Frank round 1 caught a **P1 dirty-edit bypass**: the OrgContextSelector called `setContextOrg` directly on change, the store cleared `selectedMode`/`selectedLanguage` unconditionally, so a super-admin mid-edit could lose their draft with no confirmation — the existing `useBlocker` (routes) and `pendingSwitch` (per-page selectors) guards never fired on the new selector. Fix in `afac7ff`: selector gained an optional `onRequestChange?: (next: string | null) => void` prop; Modes + Languages wire a handler that routes through a new pure helper `decideContextChange(current, next, isDirty, isSaving)` returning `"no-op" | "apply" | "confirm"`. On confirm the page opens an AlertDialog mirroring the existing `pendingSwitch` UX. Prompt Overrides has no draft state → leaves the prop undefined, selector falls through to direct-set. `pendingContextOrg` wrapped as `{ value: T | null } | null` to distinguish "no pending" (outer null) from "pending switch to home org" (`{ value: null }`). +10 tests in `tests/context-org-guard.test.ts` pin the helper contract — every direction (home↔other, other→other), the dirty AND saving overlap, and the no-op-on-current-value rule (so a redundant Radix Select tick can't prompt). Frank re-review clean (no blockers).
+  - Merged at `0103dcc`.
+
+- **Cross-link plan review (advisory).** User shared a draft plan for posting 8 cross-link comments across portal + worker repos. Eyeballed against verified portal-side state: confirmed portal#28, #149, #154, #170, #184 all open; confirmed portal#125 **CLOSED 2026-05-13** (separate finding was correct — worker #215 has stale info). Suggested four rewordings before posting: (1) frame #94/#154 as a reconciliation question, not a "subsumes" claim, to leave Ian space to agree or push back; (2) verify #191↔#236 relationship before "v1/v2" labeling — the progress tracker shows #236 was filed as a companion to portal#172, not as a successor to #191; (3) link #143 → #184 (the sub-issue), reference EPIC #149 inline rather than as a parallel top-level link; (4) for #141/#140 "recommend move," file the portal-side companions yourself first (per [[feedback_scope_admin_portal_only]] that's Seth's lane) and convert the comment from "you should move this" into "filed portal#XXX as the actual home." Plus: portal#125/#215 finding deserves a quick portal-side check before commenting, to make the comment precise rather than speculative. User has the revised plan; not yet posted.
+
+**Day rollup:**
+
+| Merged | Commit    | Closes |
+| ------ | --------- | ------ |
+| #145   | `84b625a` | —      |
+| #165   | `fdd31f9` | —      |
+| #185   | `6c3b720` | —      |
+| #186   | `0103dcc` | #166   |
+
+**4 PRs merged in one day, 1 issue auto-closed (#166), super-admin cross-org config feature shipped end-to-end to staging in a single session (worker + UI), 59 new tests (192 → 251), 2 Frank review rounds — both caught real bugs (P2 self-referential bypass, P1 unsaved-edit bypass) — both fixed in <30 min cycles.**
+
+**In Progress:**
+
+- None code-wise. Staging is now 8 commits ahead of last prod deploy (`25ea9c1` → `0103dcc`). #138 and #166 features both soaking on staging.
+
+**Blockers / Carryover:**
+
+- **bt-servant-worker#215** — still gates portal #125 Phase 2. **Open question raised today** in the cross-link review: portal#125 is CLOSED (auto-close re-fired at some point between 2026-05-11 reopen and 2026-05-13), so #215's body assumption that portal Phase 2 is pending may be stale. Worth a portal-side state check before opening the #215 PR.
+- **bt-servant-worker#191** — still gates Epic #72's fifth Goal (dynamic language-file loading). Possibly relates to portal#170's cascade architecture; uncertain whether #191 is a v1 to #236's v2 or a different layer entirely (file loading vs override resolution). Cross-link review surfaced this; needs body inspection before posting.
+- **#77** — still paused on Ian's editor-library decision (CodeMirror 6 tentative).
+- **#117** — chat-stream user_id ownership; awaiting design call.
+- **#143 (worker-side `isSuperAdmin` redaction)** — still on the queue. Small (~30-min PR, defense-in-depth follow-up to PR #142 P2).
+- **README docs PR** — CF dashboard KV-edit bootstrap path. Tiny. Still on the queue.
+- **Super-admin + cross-org config features** — both soaking on staging. Prod promotion gated on Elsy's comfort signal.
+- **Tim's modes-cascade reply** — still outstanding per [[project_meta_tuning_design]]. Gates #149/#152 detail-scoping.
+- **Ian on identity bridge (#177) + cascade storage (#172)** — Ian was "out this week" as of 2026-05-21; status unconfirmed today. Gate 8+ downstream issues across 3 repos.
+
+**Patterns / decisions captured today:**
+
+- **Test-pool alias gap was latent until the first sibling-lib value import.** The vitest cloudflare workers pool didn't resolve `@/` for runtime imports; it had been silently working because every `@/...` in `src/lib/*.ts` was a *type-only* import (erased at compile time). Mirroring the alias from `vite.config.ts` into `vitest.config.ts` was the right fix; the alternative (switch new file to relative imports) would have introduced an inconsistency. Worth noting for any future test-pool surprises — the pool runs in its own resolver context.
+- **Two-PR worker/UI split is now a pattern.** #138 used it; #166 used it again. PR A locks the wire contract, PR B consumes it. Each PR small enough to review in one sitting; the worker-side contract gets tested separately from the UI; ordering risk is bounded (worker can't break UI because UI is a follow-on). Worth keeping for any future cross-stack feature with both layers.
+- **Self-referential override bypass is a real class of bug.** Frank's P2 on PR A was caused by treating "param present" as semantically equivalent to "cross-org." The right discriminator is "resolved target differs from session.org." Generalizes: any optional override parameter that lifts a same-org gate must check resolved-vs-current, not just presence. Same shape as the modes-cascade design discussion's storage-vs-presentation distinction — easy to conflate.
+- **Dirty-edit bypass when adding a new orthogonal selector.** Frank's P1 on PR B: the existing `pendingSwitch` (mode/language selector) and `useBlocker` (route change) guards covered every dirty-edit path in the codebase before #166. The new OrgContextSelector introduced a *third* path that none of the existing guards saw. Lesson: when adding a selector that mutates state the dirty-flow depends on, audit every existing dirty-guard and either extend it or add a parallel one. The extracted `decideContextChange` pure helper makes the contract testable in the absence of RTL.
+- **Tracker-PR conflict resolution via rebase-onto-origin-main + drop-duplicate.** #165's branch carried its own copy of #145's content as the base commit (`8852cce`), so once #145 merged, the duplicate had to be skipped. `git rebase --onto origin/main 8852cce` cleanly replayed the three new commits without merge conflicts. Worth remembering for stacked docs PRs that share a base.
+- **Frank review cycles stayed tight today.** P2 on PR A: finding → fix → push → re-review → approval inside ~20 minutes. P1 on PR B: ~30 minutes. The pattern from #138's day still holds — clear evidence + verification path in Frank's findings makes the fix obvious; reply with code references + regression-test names; no back-and-forth needed.
+- **Cross-link advisory work is high-leverage, low-blast-radius.** Reviewing the user's 8-comment plan caught one stale assumption (portal#125 closed) and four phrasing/sequencing improvements before the team-visible comments went out. ~10 minutes of work saved a potential round of "wait, actually..." follow-ups across two repos.
+
+**Next Steps:**
+
+1. **Verify portal#125 / worker #215 state** — check whether the Prompt Overrides page is actually deleted from the portal; if it is, worker #215 may be moot or post-shippable; if it isn't, #125 has a third life-cycle moment to account for. Then post the revised #215 comment with precise wording.
+2. **Cross-link comments on worker repo (8 issues)** — apply the four rewordings from today's advisory review, then post in one batch.
+3. **#143 worker-side `isSuperAdmin` redaction** — still the smallest, highest-signal next code task (~30-min PR).
+4. **README docs PR** — CF dashboard KV-edit bootstrap path. Tiny.
+5. **Prod promotion of #138 + #166** — once Elsy confirms comfort.
+6. **Pioneers demo prep** — BSOK org + Calvin user with starter modes (still pending Elsy/Bincy date confirmation).
+7. **Ian return (if back next week)** — lock #177 (identity bridge protocol) and #172 (cascade storage backend). Unblocks 8+ downstream issues.
 
 ### 2026-05-21 (evening) — Cascade-vs-fork design lock + epic-shaped issue filing batch
 
