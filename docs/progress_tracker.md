@@ -5,7 +5,7 @@
 ## Current Status
 
 **Phase**: Active development on Epic #72 (Admin Portal Redesign for Response Tuning); super-admin feature shipped end-to-end to staging.
-**Last Updated**: 2026-05-20
+**Last Updated**: 2026-05-21
 **Demo target**: June 9 — `#spoken @arabic` working end-to-end with the new editor
 **Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` — staging is 4 commits ahead with the new-org CLI + super-admin feature, awaiting promotion)
 
@@ -82,6 +82,173 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-05-21 (evening) — Cascade-vs-fork design lock + epic-shaped issue filing batch
+
+**Context:** Continuation of the late-afternoon Zulip conversation with Tim. Started with the inheritance-mechanism question open; ended with the design locked and 19 portal issues + 6 cross-repo companions filed.
+
+**Design conversation outcome — cascade-via-overrides locked:**
+
+Tim initially defended pure-fork v1 ("It is relatively easy to show a diff between original and forked copy... merge any aspect of the diff into the current fork"). Seth pushed back on the migration concern: cascade → fork later is trivial (materialize inherited sections); fork → cascade later requires per-org reconciliation. Drafted a convergent path — **storage-cascade + UI-fork-with-diff** — and Tim then pivoted on his own to overrides ("one config per language... permit any org to create their own custom overrides instead of forking the entire thing... supersedes the official language config where they conflict and augments it where they do not conflict"). Same model, different framing.
+
+Two remaining variables locked after Tim's follow-up:
+
+- **Override granularity:** both supported — lexical (word-level, primary use) and section-level (markdown heading boundaries, "good selling point" per Tim).
+- **System-level variants:** chained overrides with `parent:` pointers, not parallel documents. DCV is an override layer pointing at the Hindi base. Generic stacking — other variants follow the same pattern.
+
+**Filed in admin-portal (13 net new):**
+
+Two new epics:
+
+|          |                                                  |                         |
+| -------- | ------------------------------------------------ | ----------------------- |
+| **#170** | [EPIC] Language Cascade Override Architecture    | Locked design captured  |
+| **#171** | [EPIC] Identity Bridge — Admin Portal ↔ Chat App | Tim's verbal greenlight |
+
+Five sub-issues for #170 (#172–#176): storage model + chained-override schema, override authoring UI (lexical + section), diff view + selective re-inherit UI, worker-side resolution at chat time (cross-repo tracking), curator-update notification UX.
+
+Four sub-issues for #171 (#177–#180): identity unification design (Option A/B/C), session/auth bridging, role + org propagation, welcome flow with cross-org recommended modes.
+
+Two missing #153 sub-issues filled (#181, #182): verb-based permissions (edit vs publish per resource — blocks #156); audit log for non-content events.
+
+Two standalone (#183, #184): per-language and per-mode curator role definition; read-only cross-org browse of published modes and languages.
+
+**Filed in sibling repos (6 cross-repo companions):**
+
+|                          |                                                 |                                   |
+| ------------------------ | ----------------------------------------------- | --------------------------------- |
+| bt-servant-worker#236    | Language-override chain resolution at chat time | Blocked by admin-portal#172       |
+| bt-servant-worker#237    | Append-only audit log storage + query API       | Not structurally blocked          |
+| bt-servant-web-client#36 | NextAuth bridge to portal identity              | Blocked by admin-portal#177       |
+| bt-servant-web-client#37 | Consume portal identity envelope (role + org)   | Blocked by admin-portal#177, #178 |
+| bt-servant-web-client#38 | Welcome flow with recommended modes             | Blocked by admin-portal#177, #180 |
+| baruch#18                | Language-tuning pre-fill assistant              | Not structurally blocked          |
+
+Each companion includes an explicit "Blocked by" section. Bidirectional links: comments posted on the portal-side issues pointing at the companions.
+
+**Epic-body updates (4):** #149 (added languages-vs-modes mechanism distinction + open question on whether modes also cascade); #153 (added #181 + #182 to task list, flagged "Draft test mode" as scope-TBD); #170 + #171 (replaced placeholder TBDs with actual sub-issue numbers).
+
+**Earlier in the day (rolled forward to evening):** Four issues filed earlier this afternoon also remain open and on the queue:
+
+- #166 super-admin cross-org config-edit gap (`worker/config.ts:94`) — surfaced in Tim's Zoom; promotable
+- #167 markdown editor syntax highlighting (Tim's first ask in the demo)
+- #168 Baruch language pre-fill (with the new baruch#18 companion)
+- #169 [Design] org-prefixed mode slug convention for cross-org modes
+
+**Blockers (gating new work):**
+
+| Prerequisite                                                                                 | Gated on                                                                                                            |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **#177** identity bridge design (Option A/B/C)                                               | Ian (out this week). Seth's #serving-our-customers write-up has Ian's thumbs-up; protocol choice not yet documented |
+| **#172** storage backend decision (sentinel slug in `ORG_CONFIG` vs. new `SYSTEM_CONFIG` KV) | Ian                                                                                                                 |
+| **Tim's modes-cascade answer**                                                               | Tim. Affects whether #149 gets re-scoped to mirror #170                                                             |
+| **bt-servant-worker#215**                                                                    | Ian. Still gates portal #125 Phase 2 (carryover from prior days)                                                    |
+| **bt-servant-worker#191**                                                                    | Ian. Still gates Epic #72's fifth Goal                                                                              |
+
+**Patterns / decisions captured today:**
+
+- **First-pass design framings get falsified fast when both sides engage honestly.** Tim initially advocated pure-fork; Seth pushed back; Tim pivoted to overrides on his own within 30 minutes of dialogue. The convergent model (cascade-via-overrides) is better than either starting position. Worth noting how quickly a "team disagreement" can resolve when both parties are actually thinking, not anchoring.
+- **Storage shape ≠ UI presentation.** Tim wanted simple presentation (one document the user owns); Seth wanted cascade storage (no migration trap). Both achievable — storage is per-section overrides with `parent:` pointers; UI is one merged document with a diff view. Worth remembering for future similar design tensions.
+- **Cross-repo companion issues with explicit "Blocked by" sections** make the dependency graph readable from either side. Pattern worth keeping. Each companion has bidirectional back-link.
+- **Tim is the product/design authority but doesn't claim infallibility.** His pivot from fork to overrides on his own (in response to a constructive challenge) is the same posture as Seth's "first-pass framing is allowed to be wrong, but should be owned directly when falsified" earlier today. Healthy team dynamic.
+
+**Next Steps:**
+
+1. **When Ian's back (next week):** lock #177 (identity bridge protocol choice) and #172 (storage backend decision). These unblock 8+ downstream issues across 3 repos.
+2. **When Tim's response on modes-cascade arrives:** decide whether to re-scope #149 to mirror #170 or keep modes as copy-on-import.
+3. **#143 worker-side `isSuperAdmin` redaction** — still on the queue from 2026-05-20; small, well-scoped, defense-in-depth follow-up.
+4. **README docs PR** — CF dashboard KV-edit bootstrap path. Tiny.
+5. **Pioneers demo prep** — BSOK org + Calvin user with starter modes. Config task, no issue needed. Date specifics pending Elsy/Bincy confirmation.
+6. **PRs #145 and #165 (today's two stacked tracker PRs)** — both clean and unmerged. Worth a nudge.
+
+### 2026-05-21 (late afternoon) — Tim/Elsy/Seth/Klappy Zoom + design reconciliation
+
+**Context:** Seth joined a previously-scheduled Tim/Elsy demo walkthrough. Conversation pivoted into the shared-library / cross-org tuning design — the same territory Seth was sketching against earlier in the day with the "supermode" question. Chris Klapp also weighed in.
+
+**Locked in this session:**
+
+- **Two-altitude shared-library architecture** confirmed by Tim. System level holds curator-tuned modes and languages; org level adapts. Multiple system-level variants per language can coexist (Hindi base + Hindi-DCV at the same altitude).
+- **Per-language curator role** confirmed — trusted individual or working group per language, write-access granted out-of-band (Zoom call) rather than self-service. Read-only cross-org browse is a primary feature.
+- **Inline alternatives via comment syntax** (Bluebird Network ask) — `%%`/`++…++` per [[project_ulysses_comment_syntax]] is exactly the mechanism. Re-cast portal #77 from "editor nicety" to "core feature for shared-library alternatives."
+- **Org-prefixed slugs** when modes cross orgs (`#YWAM-OBT`, `#spoken-OBT`). New convention to introduce.
+- **Identity bridge admin-portal ↔ chat-app — greenlit by Tim.** Seth's prior write-up (in #serving-our-customers, thumbs-up'd by Ian) has Tim's verbal go-ahead: "I would just signal intent." Obsoletes most of the Elsy Discord reply draft from earlier today.
+- **Word Collective visibility for super-admins** — Tim surprised Elsy can't see Word Collective. Underlying cause is the `worker/config.ts:94` `session.org` binding identified yesterday. Promotable from follow-up to actual priority.
+
+**Already filed by Elsy this morning (validated by Tim in meeting):**
+
+|          |                                           |                                                                                                                                                               |
+| -------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **#149** | EPIC — Mode Library & Cross-Org Templates | + sub-issues #150 (org metadata), #151 (copy-on-import + provenance), #152 (uW-curated namespace + curator workflow)                                          |
+| **#153** | EPIC — Governance & Versioning            | + #156 (revision states draft/pending_review/published) + worker-side versioning, optimistic concurrency, verb-based permissions, audit log, diff/timeline UI |
+| **#161** | EPIC — Operational Reliability            | Carry forward, not directly discussed                                                                                                                         |
+
+Task breakdowns were AI-drafted by Elsy (Tim noted this on call). Need critical-review pass before treating as authoritative — Tim approved substance, not breakdown details.
+
+**Open design question — sent to team, awaiting reply:**
+
+- **Inheritance mechanism: pure-fork (Tim's in-meeting framing) vs. cascade-with-section-granularity (Seth's preference).** Pure fork severs orgs from future curator work as forks accumulate, eroding Tim's "everyone benefits" promise. Cascade preserves that promise by inheriting blank sections from upstream while letting orgs override per section. Tagged Ian, Klappy, Tim, Elsy, Bincy. Several OOO. Holding detailed task breakdowns under #149/#153 until this lands — the breakdowns differ materially. See [[project_meta_tuning_design]] memory for full context.
+
+**Patterns / decisions captured:**
+
+- **Pure fork vs. cascade trade-off is real and worth resolving before code.** Pure fork is simpler to explain and avoids upstream surprises but accumulates drift; cascade preserves curator value across the lifetime of all orgs but adds per-section complexity. Refactoring fork→cascade later is non-trivial; getting it right at v1 matters.
+- **AI-drafted epics need explicit critical review.** Tim approved Elsy's epics on substance but didn't audit the task breakdown. Going to code without a review pass risks shipping the AI's structure rather than the intended one.
+
+**Updated Next Steps (supersedes earlier in the day):**
+
+1. **Wait for team on cascade vs. fork** before detail-scoping #149/#152.
+2. **Start identity-bridge work** (Seth's prior write-up) — greenlit by Tim in the meeting; no further confirmation needed.
+3. **Close `worker/config.ts:94` cross-org config gap** — known limitation Tim is now aware of; was previously yesterday's follow-up #143-adjacent work. Promote.
+4. **File the cascade-independent candidate issues** (org-prefixed slugs, editor syntax highlighting, Baruch language pre-fill) — coming as part of this EOD wrap.
+5. **Critical-review pass on #149 + #153 sub-issues** — flag cascade-vs-fork sensitivity per task.
+6. **Pioneers demo prep — BSOK org + Calvin user** with copies of Understand/Translate/Check modes for the June meeting. Date specifics to confirm with Elsy/Bincy.
+7. **Elsy Discord reply** — slim to "we covered this in the 1pm Zoom, Seth has greenlight on the identity-bridge work" or let the thread close itself.
+
+### 2026-05-21 — No-code day: Elsy super-admin scope diagnosis + understand-anything trial
+
+**Context entering the session:** SOD opened clean. PR #145 (2026-05-20 EOD tracker entry) still sitting open and green; no movement on prod promotion of the super-admin feature. Two thin work items surfaced: a Discord question from Elsy about staging behavior, and a tooling install.
+
+**Completed:**
+
+- **Elsy super-admin "doesn't mirror" question — diagnosed as architecture, not bug.** Elsy reported that user/org changes made via the new super-admin UI on `staging.btservant.ai/admin/users` don't appear on `staging-app.btservant.ai/chat`. Investigation walked the seven-repo BT Servant family on GitHub and verified at `unfoldingWord/bt-servant-web-client`:
+  - The chat app is a separate Next.js 16 + NextAuth 5 surface (`src/auth.config.ts` on `main`): Google OAuth + a credentials provider whose `authorize()` accepts any email and returns a user object with no password check, no lookup against the portal's `AUTH_KV`, no role gating.
+  - Zero references to `isSuperAdmin` or `AUTH_KV` across the web-client codebase.
+  - First-pass reply framed this as "two separate systems for everything" — Elsy correctly pushed back with a counterexample: mode edits in the portal **do** propagate to the chat app. Refined model: **configs vs. identity.** Modes/languages/prompt configs route through `bt-servant-worker` (shared backend, `staging-api.btservant.ai`); both surfaces read from `ORG_CONFIG` KV. User/role records live in the portal's own `AUTH_KV`, separate from the worker, separate from the web-client's NextAuth.
+  - "Hard-wired for uW" theory falsified: web-client defaults to `DEFAULT_ORG = unfoldingWord` via env, but staging has `NEXT_PUBLIC_ENABLE_ORG_SWITCHER = true` — modes made in other orgs would also show if the chat app switches context.
+  - Reply drafted for Elsy with Ian teed up on the roadmap-level question: should the portal's user/role store also be the chat app's identity backend? Pending Seth send.
+  - **Not filed as an issue** — this is a roadmap discussion that needs Tim + Ian, not a portal-side bugfix. Per the admin-portal-only scope rule, won't file cross-repo without alignment.
+
+- **`/understand` knowledge graph trial (understand-anything plugin).** Installed `Lum1104/Understand-Anything` marketplace plugin, ran end-to-end on this codebase via pnpm 10 (pnpm 11 blocks native build scripts by default; tree-sitter binaries need them, so downgraded via corepack). Eight-batch parallel file-analyzer wave produced 353 nodes / 692 edges / 10 layers / 12-step guided tour over 140 files. One genuine miss caught by the assemble-reviewer (`getSessionId` in `worker/auth.ts`, 5 lines, below the significance filter but actually called from `worker/admin.ts`). Tested-by linker tagged 10 production nodes correctly (matches the 10 `.test.ts` files exactly). Dashboard up at `http://uw-sandbox.orb.local:5173/` (via `--host 0.0.0.0` after first launch only bound to container loopback).
+  - **Decision:** keep `.understand-anything/` out of git (~500KB generated artifact that would churn on every refresh). Added to `.gitignore` as part of this EOD commit.
+  - **Not enabling `--auto-update`** without an explicit ask — would install a commit hook; that's a higher-friction change that deserves its own conversation.
+
+**In Progress:**
+
+- **Elsy reply draft** — written, awaiting Seth review/send. Half-acknowledges that the unified-identity question is interesting and tees Ian up to answer whether it's on the roadmap. Length and tone calibrations offered (currently medium-length, owns the first-pass correction directly).
+
+**Blockers / Carryover from 2026-05-20:**
+
+- **bt-servant-worker#215** — still gates portal #125 Phase 2. No movement.
+- **bt-servant-worker#191** — still gates Epic #72's fifth Goal (dynamic language-file loading). No movement.
+- **#77** — still paused on Ian's editor-library decision (CodeMirror 6 tentative).
+- **#117** — chat-stream user_id ownership; awaiting design call.
+- **Super-admin feature** — still soaking on staging (4 commits ahead of prod since 2026-05-20). Promotion gated on Elsy's comfort.
+- **#143 (worker-side `isSuperAdmin` redaction)** and **README docs PR** (CF dashboard KV-edit bootstrap path) — still on the queue from yesterday, not picked up today.
+
+**Patterns / decisions captured today:**
+
+- **Two-axis propagation model for the BT Servant stack.** Cross-app behavior splits cleanly along **(a) shared backend → propagates** vs **(b) per-app auth backend → does not.** Configs, modes, languages, prompts all hit `bt-servant-worker` and are therefore consistent between admin portal + chat web-client. Users, sessions, roles each live in their app's local store (portal → `AUTH_KV`; web-client → NextAuth JWT). The implication for product: anything we ship that _governs end-user behavior in the chat app_ needs to land in the worker's data model, not the portal's user model. The super-admin feature shipped where #138 asked it to (portal access), and Elsy's expectation (chat-app gating) is a different feature class.
+- **First-pass framing is allowed to be wrong, but should be owned directly when falsified.** Elsy's counterexample about mode propagation falsified the "two separate systems for everything" framing in <10 minutes. The refined reply opens with "you're right, and I was too broad" rather than soft-pedaling. Cheap honesty buys more trust than careful hedging, and the corrected model (configs vs. identity) is more useful than the original.
+- **pnpm 11 blocks postinstall builds by default.** Tree-sitter native binaries (`*.node` addons) need build scripts. Workaround for plugins/tools that ship tree-sitter: use pnpm 10 via `corepack prepare pnpm@10.15.0 --activate`. Long-term fix is `onlyBuiltDependencies` in `package.json` or a project-level `.npmrc` with explicit allowlist. Captured in case other tooling installs hit the same wall.
+- **OrbStack containers expose ports via `<container>.orb.local` automatically — but only if the server binds to `0.0.0.0`, not container loopback.** Vite defaults to `127.0.0.1` when given `--host 127.0.0.1`; the dashboard skill passed exactly that, so the first dashboard launch was invisible from the macOS host. Rebind to `--host 0.0.0.0` and OrbStack's auto-DNS makes it reachable at `http://uw-sandbox.orb.local:<port>/`. Worth knowing for any future bg-job server we want to inspect from outside the sandbox.
+- **Knowledge-graph trade-off: useful for cross-cutting questions, neutral for everyday coding.** The graph answers things grep can't (layer membership, tested-by coverage, cycle/orphan detection) and gives a fresh agent a mental model in seconds. It's not a function-level source of truth (one short helper was missed) and it goes stale the moment you merge. For this project specifically, the marginal value over the existing CLAUDE.md is modest — would shine more on a larger/less-documented codebase. Not committed; agents can regenerate locally on demand.
+
+**Next Steps:**
+
+- **Send Elsy reply** (Seth's call) — once sent, Ian's response on the unified-identity question determines whether to file a roadmap-level cross-repo issue or document the portal-vs-chat scope distinction somewhere durable.
+- **#143 worker-side `isSuperAdmin` redaction** — still the smallest, highest-signal next code task (~30-min PR, defense-in-depth on yesterday's #142 P2 fix).
+- **README docs PR** — CF dashboard KV-edit alternative to `op run -- curl`. Tiny.
+- **Prod promotion of super-admin feature** — once Elsy confirms comfort.
+- **#144 org slug case-normalization** — still needs design call on migration plan before scoping.
 
 ### 2026-05-20 — Super-admin feature end-to-end (3 PRs, helping Elsy onboard Haneen)
 

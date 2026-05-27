@@ -27,3 +27,6 @@ npm-debug.log*
 # claude code
 .claude/
 .mcp.json
+
+# understand-anything knowledge graph (generated; regenerate locally via /understand)
+.understand-anything/
