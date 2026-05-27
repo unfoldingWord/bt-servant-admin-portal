@@ -83,6 +83,84 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ## Session Log
 
+### 2026-05-21 (evening) — Cascade-vs-fork design lock + epic-shaped issue filing batch
+
+**Context:** Continuation of the late-afternoon Zulip conversation with Tim. Started with the inheritance-mechanism question open; ended with the design locked and 19 portal issues + 6 cross-repo companions filed.
+
+**Design conversation outcome — cascade-via-overrides locked:**
+
+Tim initially defended pure-fork v1 ("It is relatively easy to show a diff between original and forked copy... merge any aspect of the diff into the current fork"). Seth pushed back on the migration concern: cascade → fork later is trivial (materialize inherited sections); fork → cascade later requires per-org reconciliation. Drafted a convergent path — **storage-cascade + UI-fork-with-diff** — and Tim then pivoted on his own to overrides ("one config per language... permit any org to create their own custom overrides instead of forking the entire thing... supersedes the official language config where they conflict and augments it where they do not conflict"). Same model, different framing.
+
+Two remaining variables locked after Tim's follow-up:
+
+- **Override granularity:** both supported — lexical (word-level, primary use) and section-level (markdown heading boundaries, "good selling point" per Tim).
+- **System-level variants:** chained overrides with `parent:` pointers, not parallel documents. DCV is an override layer pointing at the Hindi base. Generic stacking — other variants follow the same pattern.
+
+**Filed in admin-portal (13 net new):**
+
+Two new epics:
+
+|          |                                                  |                         |
+| -------- | ------------------------------------------------ | ----------------------- |
+| **#170** | [EPIC] Language Cascade Override Architecture    | Locked design captured  |
+| **#171** | [EPIC] Identity Bridge — Admin Portal ↔ Chat App | Tim's verbal greenlight |
+
+Five sub-issues for #170 (#172–#176): storage model + chained-override schema, override authoring UI (lexical + section), diff view + selective re-inherit UI, worker-side resolution at chat time (cross-repo tracking), curator-update notification UX.
+
+Four sub-issues for #171 (#177–#180): identity unification design (Option A/B/C), session/auth bridging, role + org propagation, welcome flow with cross-org recommended modes.
+
+Two missing #153 sub-issues filled (#181, #182): verb-based permissions (edit vs publish per resource — blocks #156); audit log for non-content events.
+
+Two standalone (#183, #184): per-language and per-mode curator role definition; read-only cross-org browse of published modes and languages.
+
+**Filed in sibling repos (6 cross-repo companions):**
+
+|                          |                                                 |                                   |
+| ------------------------ | ----------------------------------------------- | --------------------------------- |
+| bt-servant-worker#236    | Language-override chain resolution at chat time | Blocked by admin-portal#172       |
+| bt-servant-worker#237    | Append-only audit log storage + query API       | Not structurally blocked          |
+| bt-servant-web-client#36 | NextAuth bridge to portal identity              | Blocked by admin-portal#177       |
+| bt-servant-web-client#37 | Consume portal identity envelope (role + org)   | Blocked by admin-portal#177, #178 |
+| bt-servant-web-client#38 | Welcome flow with recommended modes             | Blocked by admin-portal#177, #180 |
+| baruch#18                | Language-tuning pre-fill assistant              | Not structurally blocked          |
+
+Each companion includes an explicit "Blocked by" section. Bidirectional links: comments posted on the portal-side issues pointing at the companions.
+
+**Epic-body updates (4):** #149 (added languages-vs-modes mechanism distinction + open question on whether modes also cascade); #153 (added #181 + #182 to task list, flagged "Draft test mode" as scope-TBD); #170 + #171 (replaced placeholder TBDs with actual sub-issue numbers).
+
+**Earlier in the day (rolled forward to evening):** Four issues filed earlier this afternoon also remain open and on the queue:
+
+- #166 super-admin cross-org config-edit gap (`worker/config.ts:94`) — surfaced in Tim's Zoom; promotable
+- #167 markdown editor syntax highlighting (Tim's first ask in the demo)
+- #168 Baruch language pre-fill (with the new baruch#18 companion)
+- #169 [Design] org-prefixed mode slug convention for cross-org modes
+
+**Blockers (gating new work):**
+
+| Prerequisite                                                                                 | Gated on                                                                                                            |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **#177** identity bridge design (Option A/B/C)                                               | Ian (out this week). Seth's #serving-our-customers write-up has Ian's thumbs-up; protocol choice not yet documented |
+| **#172** storage backend decision (sentinel slug in `ORG_CONFIG` vs. new `SYSTEM_CONFIG` KV) | Ian                                                                                                                 |
+| **Tim's modes-cascade answer**                                                               | Tim. Affects whether #149 gets re-scoped to mirror #170                                                             |
+| **bt-servant-worker#215**                                                                    | Ian. Still gates portal #125 Phase 2 (carryover from prior days)                                                    |
+| **bt-servant-worker#191**                                                                    | Ian. Still gates Epic #72's fifth Goal                                                                              |
+
+**Patterns / decisions captured today:**
+
+- **First-pass design framings get falsified fast when both sides engage honestly.** Tim initially advocated pure-fork; Seth pushed back; Tim pivoted to overrides on his own within 30 minutes of dialogue. The convergent model (cascade-via-overrides) is better than either starting position. Worth noting how quickly a "team disagreement" can resolve when both parties are actually thinking, not anchoring.
+- **Storage shape ≠ UI presentation.** Tim wanted simple presentation (one document the user owns); Seth wanted cascade storage (no migration trap). Both achievable — storage is per-section overrides with `parent:` pointers; UI is one merged document with a diff view. Worth remembering for future similar design tensions.
+- **Cross-repo companion issues with explicit "Blocked by" sections** make the dependency graph readable from either side. Pattern worth keeping. Each companion has bidirectional back-link.
+- **Tim is the product/design authority but doesn't claim infallibility.** His pivot from fork to overrides on his own (in response to a constructive challenge) is the same posture as Seth's "first-pass framing is allowed to be wrong, but should be owned directly when falsified" earlier today. Healthy team dynamic.
+
+**Next Steps:**
+
+1. **When Ian's back (next week):** lock #177 (identity bridge protocol choice) and #172 (storage backend decision). These unblock 8+ downstream issues across 3 repos.
+2. **When Tim's response on modes-cascade arrives:** decide whether to re-scope #149 to mirror #170 or keep modes as copy-on-import.
+3. **#143 worker-side `isSuperAdmin` redaction** — still on the queue from 2026-05-20; small, well-scoped, defense-in-depth follow-up.
+4. **README docs PR** — CF dashboard KV-edit bootstrap path. Tiny.
+5. **Pioneers demo prep** — BSOK org + Calvin user with starter modes. Config task, no issue needed. Date specifics pending Elsy/Bincy confirmation.
+6. **PRs #145 and #165 (today's two stacked tracker PRs)** — both clean and unmerged. Worth a nudge.
+
 ### 2026-05-21 (late afternoon) — Tim/Elsy/Seth/Klappy Zoom + design reconciliation
 
 **Context:** Seth joined a previously-scheduled Tim/Elsy demo walkthrough. Conversation pivoted into the shared-library / cross-org tuning design — the same territory Seth was sketching against earlier in the day with the "supermode" question. Chris Klapp also weighed in.
