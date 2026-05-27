@@ -13,7 +13,7 @@
 | **Repos in scope**                  | bt-servant-admin-portal · bt-servant-worker · bt-servant-web-client · baruch |
 | **Open tuning issues (2026-05-27)** | ~51 across 4 repos                                                           |
 | **EPIC count**                      | 5 portal + 3 sibling-repo umbrellas (all filed 2026-05-27)                   |
-| **Last revised**                    | 2026-05-27 (revision 2 — Frank P1/P2 findings)                               |
+| **Last revised**                    | 2026-05-27 (revision 3 — Frank cleanup-pass)                                 |
 
 ## Strategic Context
 
