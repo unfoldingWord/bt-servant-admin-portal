@@ -48,7 +48,7 @@ The June 9 demo is a **narrow vertical slice** through all of this: prove `#spok
 
 | #    | Title                                     | Status                                                                                                                          |
 | ---- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| #72  | Admin Portal Redesign for Response Tuning | DoD-blocked on #77 (editor library) + worker#191 (runtime language-file injection); other Goals shipped 2026-05-07 → 2026-05-11 |
+| #72  | Admin Portal Redesign for Response Tuning | DoD-blocked on #77 (editor library); worker#191 trigger-path injection verified shipped 2026-05-27 (D-007); other Goals shipped 2026-05-07 → 2026-05-11 |
 | #149 | Mode Library & Cross-Org Templates        | Sub-issues filed; cascade-decision-gated                                                                                        |
 | #153 | Governance & Versioning                   | Sub-issues filed; revision-state design pending                                                                                 |
 | #170 | Language Cascade Override Architecture    | Design locked 2026-05-21; sub-issues #172–#176                                                                                  |
@@ -89,21 +89,21 @@ When demoed on **2026-06-09**, the following must work end-to-end:
 | Trigger parsing `#mode @lang`                           | ✅ Shipped 2026-05-11 (worker#211/#212)                                                                                                                                                                                                                                                                                                                                                         | —                      |
 | Test-chat affordance                                    | ✅ Shipped 2026-05-11 (#81)                                                                                                                                                                                                                                                                                                                                                                     | —                      |
 | Super-admin cross-org config edits                      | ✅ Shipped 2026-05-27 (#166)                                                                                                                                                                                                                                                                                                                                                                    | —                      |
-| **🔴 Worker-side language-file injection (worker#191)** | **Open — the DoD-blocker per portal#72 fifth Goal. The demo's promise (`#spoken @arabic` shaped by _both_ files) does not work without this. Quick-and-dirty design per the issue body; load whole language file every time. Coordination note from issue body: "Ian and Chris are pairing on the architecture." Implement under cross-repo authority (D-003); ping Chris (Klappy) on the PR.** | Seth (with Chris ping) |
+| **🟢 Worker-side language-file injection (worker#191)** | **Trigger-path verified shipped 2026-05-27 (D-007). Demo PROMISE works against staging today: `#spoken @arabic` parses, mode applies, arabic language document injects as `## Language Guidance`. Remaining scope collapsed to (a) e2e confidence test ~0.5d, and (b) session-state language persistence design — gated on Chris/Ian return.** | Seth (e2e test); Chris + Ian (persistence design) |
 | **Syntax highlighting (#167)**                          | ⚠ depends on #77 — decision below                                                                                                                                                                                                                                                                                                                                                               | Seth                   |
-| **Spoken mode content for uW**                          | ⚠ unverified — Day-1 task                                                                                                                                                                                                                                                                                                                                                                       | Seth + Elsy/Tim        |
-| **Arabic language content for uW**                      | ⚠ unverified — Day-1 task                                                                                                                                                                                                                                                                                                                                                                       | Seth + Elsy/Tim        |
+| **Spoken mode content for uW**                          | ✅ Verified 2026-05-27 — ~48KB published markdown, slot-organized under the canonical H2s, real content                                                                                                                                                                                                                                                                                         | —                      |
+| **Arabic language content for uW**                      | 🟡 Verified 2026-05-27 — published but THIN (~250 chars, 3 stub headings, no DCV overrides, no examples). Hindi at the right depth as the comparator. Escalation drafted for Elsy/Tim                                                                                                                                                                                                           | Elsy/Tim (fleshing)    |
 
 ### Day-by-day plan
 
-The critical path has **two streams running in parallel**: (1) worker#191 runtime language-file injection, and (2) #77 CodeMirror 6 editor migration. They're independent code surfaces (worker vs portal) so they can be worked concurrently without merge conflicts.
+The critical path was originally **two parallel streams**: (1) worker#191 runtime language-file injection, and (2) #77 CodeMirror 6 editor migration. **As of D-007 (2026-05-27), Stream 1 collapsed to verification + e2e test** — the trigger-path injection was already shipped. Stream 2 (CM6) is now the only meaningful code-critical-path stream; Stream 1 freed bandwidth shifts to content polish and Frank review headroom.
 
 | Day | Date       | Stream 1: worker#191 (the demo-promise enabler)                                                                                                                                                                                    | Stream 2: #77 → #167 (the demo-polish enabler)                                        | Decision gate                                                      |
 | --- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| 1   | 2026-05-28 | Read current chat-time system-prompt assembly; verify whether Arabic language content is ALREADY injected (sanity check). Ping Chris (Klappy) on the worker#191 architecture note. Verify spoken + arabic content readiness in uW. | Day-1 CodeMirror 6 scope check.                                                       | If CM6 day-1 scoping unclear → fall back to DIY mirror-div overlay |
-| 2   | 2026-05-29 | Implement worker#191 per issue body (quick-and-dirty: load whole language file every time). Tests for: active-language detect, language-file load + append, language-switch mid-conversation.                                      | Begin #77 CM6 migration (or DIY fallback). Content gap-filling in parallel if needed. | —                                                                  |
-| 3   | 2026-05-30 | worker#191 PR opens. Smoke test with dummy "5-year-old English" language file per the issue's AC. Frank review.                                                                                                                    | CM6 editor swap + `@codemirror/lang-markdown` integration                             | —                                                                  |
-| 4   | 2026-05-31 | worker#191 fix cycle (if needed) + merge. Verify on staging.                                                                                                                                                                       | `useActiveHeadingLine` port to CM6 transactions; dark-mode theming via CSS variables  | —                                                                  |
+| 1   | 2026-05-28 | ✅ **Pulled forward to 2026-05-27 evening.** Verified trigger-path injection already shipped end-to-end (D-007); spoken-mode content ready; arabic content thin (escalation drafted). Issue comment posted on worker#191. | Day-1 CodeMirror 6 scope check.                                                       | If CM6 day-1 scoping unclear → fall back to DIY mirror-div overlay |
+| 2   | 2026-05-29 | E2E confidence test (~0.5d): dummy language document materially changes Claude response style. Closes worker#191 last AC.                                                                                                            | Begin #77 CM6 migration (or DIY fallback). Content gap-filling in parallel if needed. | —                                                                  |
+| 3   | 2026-05-30 | E2E test PR opens; Frank review. (Persistence design held until Chris/Ian return.)                                                                                                                                                   | CM6 editor swap + `@codemirror/lang-markdown` integration                             | —                                                                  |
+| 4   | 2026-05-31 | E2E test fix cycle (if needed) + merge. Stream 1 bandwidth shifts to content polish + Stream 2 support.                                                                                                                              | `useActiveHeadingLine` port to CM6 transactions + TOC jump imperative handle; dark-mode theming via CSS variables | —                                                                  |
 | 5   | 2026-06-01 | End-to-end smoke: `#spoken @arabic` in test-chat → response shaped by BOTH spoken mode AND arabic language file. Capture before/after diff.                                                                                        | Integration on Modes + Languages pages; tests                                         | —                                                                  |
 | 6   | 2026-06-02 | —                                                                                                                                                                                                                                  | Polish, edge cases (large docs, Ulysses comments, code fences)                        | —                                                                  |
 | 7   | 2026-06-03 | —                                                                                                                                                                                                                                  | Frank review round + fix cycle on #77                                                 | —                                                                  |
@@ -176,7 +176,7 @@ These are tracked in the broader plan below but explicitly held until after June
 
 **Why:** Single canonical reference makes it possible for parallel agents working on different tracks to share context without re-deriving the strategic picture.
 
-### D-005 · worker#191 classified on Track A.1, not Track B (2026-05-27, revision 2)
+### D-005 · worker#191 classified on Track A.1, not Track B (2026-05-27, revision 2; implementation-cost assumption superseded by D-007)
 
 **Decision:** worker#191 (dynamic language-file loading into system prompt) is on **Track A.1 — June 9 critical path**, not Track B (Language Cascade Architecture).
 
@@ -198,22 +198,50 @@ worker#191's issue body is explicit: _"This is the quick-and-dirty approach for 
 
 **Open mitigation:** If merge is delayed >24h post-Frank-approval, switch to (b) by editing the 5 EPIC umbrella headers to add the "merges shortly" disclaimer. Cross-link comments already have it.
 
+### D-007 · worker#191 trigger-path injection verified shipped — scope collapses (2026-05-27)
+
+**Decision:** worker#191 is reclassified from "open implementation work" to "verified shipped; remaining scope = e2e confidence test + session-state persistence design call." Track A.1's 5-day implementation stream collapses to ~0.5d of e2e test work plus a gated design conversation.
+
+**Why:** Day-1 trace of the worker chat-time system-prompt assembly confirmed the trigger-path injection is already wired end-to-end (worker `main` at `47626b7`):
+
+- `src/services/classifier/index.ts:299` — classifier parses `@<lang>` head tokens, sets `languageName`
+- `src/durable-objects/user-do.ts:1159-1163` — at chat time, `loaded.orgLanguages.languages.find(l => l.name === classified.languageName)` resolves the language document
+- `src/services/claude/orchestrator.ts:917-918` — `stripUlyssesComments(languageDocument)` strips comments before injection
+- `src/services/claude/system-prompt.ts:201-204` — `pushLanguageSection` injects `## Language Guidance\n\n${document}` into the system prompt
+- `tests/unit/system-prompt.test.ts:381-405` — section include/exclude both pinned
+- `src/durable-objects/user-do.ts:1047` — telemetry emits `language_document_injected`
+
+Demo PROMISE (`#spoken @arabic` produces a response shaped by both files) works against staging today, provided the user types both triggers at the head of every message.
+
+**What remains in scope:**
+
+1. **Session-state language persistence** — `@arabic` does NOT persist across turns (no `SELECTED_LANGUAGE_KEY` analogue to `SELECTED_MODE_KEY`). Whether language SHOULD persist is a UX decision: yes mirrors mode behavior; no requires re-typing every turn but keeps language choice explicit per request. **Design call, not implementation. Gated on Chris/Ian return** (issue body: "Ian and Chris are pairing on the architecture").
+2. **E2E confidence test** — automated test with a dummy override ("5-year-old English") proving Claude's response style actually changes. Closes worker#191's last acceptance criterion. ~0.5d.
+
+**Implication for the day-by-day plan:** Stream 1 frees ~4 days of engineering bandwidth (originally days 2–5 of implementation). Demo PROMISE is no longer a code risk — it is a **content** risk (arabic file is thin per Day-1 readiness check; escalation to Elsy/Tim drafted). Stream 2 (CM6) is now the only meaningful code-critical-path stream.
+
+**Relationship to D-005:** D-005 (worker#191 on Track A.1) remains correct as classification — the issue still belongs on the demo's critical path because closing it confirms the DoD. D-007 supersedes the implementation-cost assumption in D-005, not the classification.
+
+**Trace artifact:** worker#191 issue comment at https://github.com/unfoldingWord/bt-servant-worker/issues/191#issuecomment-4559421886.
+
 ## Parallel Tracks
 
 Six mostly-independent work tracks. Each track has internal dependencies that serialize within the track; between tracks, parallelization is the default.
 
 ### Track A — June 9 Critical Path
 
-Two parallel streams gating the demo for different reasons:
+Two parallel streams. **As of D-007 (2026-05-27), Stream A.1 collapsed to verification + e2e test work** — the implementation half was already shipped:
 
 **Stream A.1 — worker#191 runtime language-file injection (demo PROMISE enabler)**
 
 | Issues                                      | Status                                                                                                                                                                                        | Dependencies                                                    |
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| worker#191 dynamic language-file loading    | **Open. The DoD-blocker per portal#72 fifth Goal.** Quick-and-dirty design per issue body; load whole language file every time on each request. Acceptance criteria already drafted in issue. | Coordination: ping Chris (Klappy) per issue body before merging |
+| worker#191 dynamic language-file loading    | **Trigger-path shipped (verified 2026-05-27 — D-007).** Remaining: e2e confidence test (~0.5d) + session-state language persistence design (gated on Chris/Ian return). Issue comment posted with file:line trace. | Chris + Ian on persistence design                               |
 | portal#72 fifth Goal closes once #191 lands | Marked 🔴 in portal#72 body                                                                                                                                                                   | worker#191                                                      |
 
-**Why this is on Track A and not Track B (per Frank's P1).** Without worker#191, `#spoken @arabic` parses correctly (worker#211/#212, shipped) and spoken-mode applies, but **the arabic language tuning document does not flow into the system prompt.** The demo's stated promise ("response shaped by _both_ files") is fake-thin without #191. This is feature-completeness, not polish.
+**Why this is on Track A and not Track B (per Frank's P1).** Without worker#191's runtime injection, `#spoken @arabic` parses but the arabic document never reaches the prompt — the demo's stated promise ("response shaped by _both_ files") would be fake-thin. This is feature-completeness, not polish.
+
+**Update 2026-05-27 (D-007):** verification revealed the trigger-path injection was already shipped end-to-end (no code missing). Stream A.1 classification on Track A holds — closing #191 still confirms the DoD — but the implementation cost in D-005 was wrong. Demo PROMISE is no longer a code risk; it is now a **content** risk (arabic file is thin).
 
 **Stream A.2 — Editor polish (#77 → #167) (demo POLISH enabler)**
 
@@ -238,7 +266,7 @@ Two parallel streams gating the demo for different reasons:
 | #175 worker-side resolution tracking     | Mirrors worker#236                                                                                                                                              | —            |
 | #176 curator-update notification UX      | Blocked by #172                                                                                                                                                 | —            |
 | worker#236 chain resolution              | Blocked by #172 (admin-portal)                                                                                                                                  | —            |
-| ~~worker#191~~                           | **Moved to Track A.1 (June 9 critical path) per Frank's P1 finding.** Belongs here only post-demo if cascade-resolution v2 supersedes the quick-and-dirty load. | —            |
+| ~~worker#191~~                           | **Moved to Track A.1 (June 9 critical path) per Frank's P1 finding.** Trigger-path verified shipped 2026-05-27 (D-007); post-demo, worker#236 may supersede the v1 load with cascade-resolution v2. | —            |
 
 **Status:** Held until Tim's modes-cascade reply lands. **Do not start implementation until #172 storage decision is committed.** worker#191 was previously listed here as a Track-B item; it is now correctly classified under Track A.1 because the June 9 demo's DoD requires it.
 
@@ -430,7 +458,7 @@ This makes the dependency graph readable from any starting issue.
 | Q-005 | #157 vs #181 verb-based permissions — same issue?                                    | Treat as duplicates pending Elsy's clarification        | Day 1                 |
 | Q-006 | #158 vs #182 audit log — same issue?                                                 | Treat as duplicates pending Elsy's clarification        | Day 1                 |
 | Q-007 | worker#94 vs portal#154 — separate layers or overlap?                                | Frame as reconciliation question on cross-link comment  | Cross-link batch      |
-| Q-008 | worker#191 vs worker#236 — same layer or different?                                  | Verify by reading issue bodies before labeling v1/v2    | Cross-link batch      |
+| Q-008 | worker#191 vs worker#236 — same layer or different?                                  | **Different layers.** #191 = runtime injection (verified shipped 2026-05-27, D-007); #236 = cascade-chain resolution for Track B | Resolved 2026-05-27   |
 
 ## Bottlenecks
 
@@ -438,7 +466,7 @@ This makes the dependency graph readable from any starting issue.
 
 ### Demo-critical (June 9 path, in priority order)
 
-1. **worker#191 runtime language-file injection** — Stream A.1. The DoD-blocker per portal#72 fifth Goal. Without it, the demo's promise is fake-thin (mode works; language tuning doesn't actually flow into the prompt). Quick-and-dirty per the issue body; should be tractable in days 1–4.
+1. **~~worker#191 runtime language-file injection~~** — **Cleared 2026-05-27 (D-007).** Trigger-path injection verified shipped end-to-end. Remaining scope: e2e test (~0.5d, Seth) + session-state persistence design (gated on Chris/Ian return). No longer the top demo-critical bottleneck.
 2. **Content readiness of spoken mode + arabic language in uW** — coordination, not engineering. Verify Day 1; if thin, escalate to Elsy/Tim immediately.
 3. **CodeMirror 6 scope check** — Day-1 gate. If CM6 day-1 scoping is unclear, fall back to DIY mirror-div (per D-001 mitigation).
 4. **Frank's review bandwidth across two parallel streams** — both A.1 (worker#191) and A.2 (#77/#167) need PR review; stagger PR-opens to avoid review queue.
@@ -469,6 +497,7 @@ This makes the dependency graph readable from any starting issue.
   - D-004 (Plan governance) — this doc
   - D-005 (worker#191 on Track A.1) — this doc
   - D-006 (Plan URL stability) — this doc
+  - D-007 (worker#191 verified shipped — scope collapse) — this doc
 
 ## Change Log
 
@@ -477,3 +506,4 @@ This makes the dependency graph readable from any starting issue.
 | 2026-05-27 (rev 1) | Plan opened. 5 portal EPICs + 3 sibling-repo EPICs (to file). 51 in-scope issues. June 9 demo critical path defined. Decisions D-001 through D-004 logged.                                                                                                                                                                                                                                                                                                                                          | Claude |
 | 2026-05-27 (rev 2) | Frank P1/P2 revision. **worker#191 moved to Track A.1** as the demo's actual DoD-blocker per portal#72 fifth Goal (D-005). Sibling EPIC statuses updated to "filed" with URLs (worker#239, web-client#39, baruch#19). Bottlenecks split into June-9 vs post-demo. Prod-promotion wording tightened to require manual workflow dispatch. D-006 logged on plan URL stability (PR #190 merge needed for `/blob/main/` resolution). Day-by-day plan restructured into two parallel streams (A.1 + A.2). | Claude |
 | 2026-05-27 (rev 3) | Frank cleanup-pass P2/P3. Replaced stale "Sibling-repo EPICs — to file alongside this plan" section with a filed-status table mirroring the top-of-doc EPIC table. Portal #72 row in EPIC table now reads "DoD-blocked on #77 + worker#191" instead of "only #77 left." Fixed Day 12 escaped-bold typo (`Ian/Jaap-Jan\*\*` → `Ian/Jaap-Jan`).                                                                                                                                                       | Claude |
+| 2026-05-27 (rev 4) | **D-007 logged.** Day-1 findings revision. worker#191 trigger-path injection verified shipped end-to-end against worker `main` at `47626b7`; Track A.1 implementation scope collapses to e2e test (~0.5d) + persistence design (gated on Chris/Ian). Spoken mode content verified ready (~48KB); arabic content verified thin (~250 chars; escalation drafted for Elsy/Tim). Day-by-day Stream 1 cells updated to reflect collapsed scope; status table, Track A intro, Stream A.1 table, Track B row, Q-008, and bottleneck #1 all reclassified. D-005 header annotated as implementation-cost assumption superseded.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Claude |
