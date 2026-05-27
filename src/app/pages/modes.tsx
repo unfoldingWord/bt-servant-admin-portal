@@ -10,7 +10,6 @@ import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { useUiStore } from "@/lib/ui-store";
 import { OrgContextSelector } from "@/components/org-context-selector";
 import { useDebounced } from "@/hooks/use-debounced";
-import { useActiveHeadingLine } from "@/hooks/use-active-heading-line";
 import {
   useDeleteMode,
   useMode,
@@ -29,7 +28,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { MarkdownEditor } from "@/components/markdown-editor";
+import {
+  MarkdownEditor,
+  type MarkdownEditorHandle,
+} from "@/components/markdown-editor";
 import { MarkdownToc } from "@/components/markdown-toc";
 import { ModeSelector } from "@/components/mode-selector";
 import { PageHeader } from "@/components/page-header";
@@ -69,8 +71,8 @@ export function ModesPage() {
   // by clicking Save manually (which routes through `flushSave`).
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const activeLine = useActiveHeadingLine(textareaRef, draft, headings);
+  const [activeLine, setActiveLine] = useState(-1);
+  const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
 
   const serverLabel = modeQuery.data?.label;
@@ -261,20 +263,9 @@ export function ModesPage() {
     [deleteMode, selectedMode, setSelectedMode]
   );
 
-  const handleJumpToLine = useCallback(
-    (line: number) => {
-      const ta = textareaRef.current;
-      if (!ta) return;
-      const lines = draft.split("\n");
-      let pos = 0;
-      for (let i = 0; i < line; i++) pos += (lines[i]?.length ?? 0) + 1;
-      ta.focus();
-      ta.setSelectionRange(pos, pos);
-      const lineHeight = parseFloat(getComputedStyle(ta).lineHeight || "20");
-      ta.scrollTop = Math.max(0, line * lineHeight - 80);
-    },
-    [draft]
-  );
+  const handleJumpToLine = useCallback((line: number) => {
+    editorRef.current?.jumpToLine(line);
+  }, []);
 
   const isLoading =
     modesQuery.isLoading || (selectedMode !== null && modeQuery.isLoading);
@@ -381,10 +372,11 @@ export function ModesPage() {
             />
             <div className="min-w-0 flex-1 overflow-y-auto">
               <MarkdownEditor
+                ref={editorRef}
                 value={draft}
                 onChange={setDraft}
                 onHeadingsChange={setHeadings}
-                textareaRef={textareaRef}
+                onActiveLineChange={setActiveLine}
               />
             </div>
           </>
