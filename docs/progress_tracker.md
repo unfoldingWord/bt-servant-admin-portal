@@ -93,11 +93,12 @@ Ian replied to the long-running cross-repo coordination question while on vacati
 **Operational implications:**
 
 - **Supersedes the admin-portal-only scope** that's been in force since 2026-05-11 ([[feedback_scope_admin_portal_only]] now flagged SUPERSEDED; new [[project_cross_repo_authorization]] memory captures the current rule and the open questions).
-- **8+ blocked items become actionable directly,** not just file-and-wait:
-  - bt-servant-worker#143 (`isSuperAdmin` redaction follow-up) — small, well-scoped.
+- **Sibling-repo PRs become actionable directly,** not just file-and-wait:
   - bt-servant-worker#191 (gates Epic #72's fifth Goal — dynamic language-file loading).
   - bt-servant-worker#215 (gates portal #125 Phase 2) — verify portal#125 state first since it's already CLOSED.
-  - The cross-repo companions filed 2026-05-21: #177 identity bridge family, #172 cascade storage, #236 chain resolution, web-client #36/#37/#38, baruch#18.
+  - The cross-repo companions filed 2026-05-21: bt-servant-worker#236 chain resolution, bt-servant-web-client#36/#37/#38 identity-bridge consumers, baruch#18 language pre-fill.
+  - Worker-side execution downstream of portal#172 / #177 once those upstream design calls land — Ian still owns the design decisions ("storage backend" + "identity bridge protocol"), but the downstream sibling-repo work is now Seth's option in either repo.
+  - (Portal #143 — `isSuperAdmin` redaction follow-up — was already in scope under the prior rule, just deprioritized. Worker #143 is a different issue, "Cross-org mode availability," which is in the cross-link batch.)
 - **Today's 8-comment cross-link batch gets re-shaped.** Comments that were advisory ("recommend move," "file portal companion") can now be action-oriented: file the PR or open the companion, then comment with the link. Lower friction; faster resolution.
 - **Open questions flagged for clarification before exercising the new authority:**
   - Merge authority on sibling-repo PRs — does the "ask before merge" rule from admin-portal carry over, or is autonomy implied? Default: ask, until I learn each repo's norms.
