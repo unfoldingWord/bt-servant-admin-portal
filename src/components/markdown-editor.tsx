@@ -6,7 +6,7 @@ import {
   useRef,
 } from "react";
 
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -24,6 +24,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 
 import { cn } from "@/lib/utils";
 import { parseHeadings } from "@/lib/markdown-headings";
+import { findCommentRanges } from "@/lib/markdown-comment-ranges";
 import type { MarkdownHeading } from "@/types/markdown";
 
 export interface MarkdownEditorHandle {
@@ -45,25 +46,14 @@ interface MarkdownEditorProps {
 // truth; this is presentation only. A multi-line %% paragraph comment
 // only gets its first line dimmed here — the author still sees the
 // raw markers on subsequent lines, which is an acceptable v1.
+//
+// Fence-aware matching lives in `findCommentRanges` so that `%%` or
+// `++…++` inside fenced code blocks (legitimate literal content) are
+// left alone — same fence semantics the heading parser uses.
 const COMMENT_MARK = Decoration.mark({ class: "cm-comment-mark" });
-const COMMENT_LINE_RE = /^%%.*/gm;
-const COMMENT_SPAN_RE = /\+\+[\s\S]*?\+\+/g;
 
 function buildCommentDecorations(view: EditorView): DecorationSet {
-  const doc = view.state.doc.toString();
-  const ranges: { from: number; to: number }[] = [];
-
-  let m: RegExpExecArray | null;
-  COMMENT_LINE_RE.lastIndex = 0;
-  while ((m = COMMENT_LINE_RE.exec(doc)) !== null) {
-    ranges.push({ from: m.index, to: m.index + m[0].length });
-  }
-  COMMENT_SPAN_RE.lastIndex = 0;
-  while ((m = COMMENT_SPAN_RE.exec(doc)) !== null) {
-    ranges.push({ from: m.index, to: m.index + m[0].length });
-  }
-
-  ranges.sort((a, b) => a.from - b.from);
+  const ranges = findCommentRanges(view.state.doc.toString());
   return Decoration.set(
     ranges.map((r) => COMMENT_MARK.range(r.from, r.to)),
     true
@@ -159,7 +149,22 @@ export const MarkdownEditor = forwardRef<
     onActiveLineChangeRef.current = onActiveLineChange;
   });
 
-  // History first so its keymap binds Ctrl/Cmd+Z + Shift+Ctrl/Cmd+Z.
+  // Per-instance Compartment for the read-only facet so a `readOnly`
+  // prop change reconfigures the existing view instead of triggering a
+  // remount (which would destroy undo history + cursor state).
+  const readOnlyCompartmentRef = useRef<Compartment | null>(null);
+  if (readOnlyCompartmentRef.current === null) {
+    readOnlyCompartmentRef.current = new Compartment();
+  }
+  // Initial readOnly captured at mount; subsequent changes flow through
+  // the reconfigure effect below. Held in a ref so the extensions
+  // useMemo can stay free of prop deps.
+  const initialReadOnlyRef = useRef(readOnly === true);
+
+  // Extensions array is stable for the component lifetime — no deps —
+  // so the mount effect runs exactly once. `readOnly` flows through the
+  // Compartment reconfigure effect below; callback closures flow through
+  // the *Ref pattern above.
   const extensions = useMemo(
     () => [
       history(),
@@ -169,7 +174,9 @@ export const MarkdownEditor = forwardRef<
       commentDecoration,
       editorTheme,
       EditorView.lineWrapping,
-      EditorState.readOnly.of(readOnly === true),
+      readOnlyCompartmentRef.current!.of(
+        EditorState.readOnly.of(initialReadOnlyRef.current)
+      ),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           const text = update.state.doc.toString();
@@ -184,12 +191,11 @@ export const MarkdownEditor = forwardRef<
         }
       }),
     ],
-    [readOnly]
+    []
   );
 
-  // Mount once; tear down on unmount. A readOnly toggle remounts via the
-  // memoized extensions array — acceptable since readOnly transitions
-  // are rare and unaccompanied by active editing.
+  // Mount once; tear down on unmount. The `extensions` array is stable
+  // (empty deps above), so this effect fires exactly once per instance.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -206,10 +212,11 @@ export const MarkdownEditor = forwardRef<
       view.destroy();
       viewRef.current = null;
     };
-    // `value` is intentionally only used as the initial doc; subsequent
-    // external value changes flow through the sync effect below.
+    // `value` is intentionally only the initial doc; external value
+    // changes flow through the sync effect below. `extensions` is
+    // stable by construction.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [extensions]);
+  }, []);
 
   // External value → editor sync. The guard prevents this from
   // overwriting in-flight user edits (typing → onChange → parent state
@@ -222,6 +229,19 @@ export const MarkdownEditor = forwardRef<
       changes: { from: 0, to: view.state.doc.length, insert: value },
     });
   }, [value]);
+
+  // ReadOnly toggle → reconfigure compartment in place. No remount,
+  // undo history + cursor state preserved.
+  useEffect(() => {
+    const view = viewRef.current;
+    const compartment = readOnlyCompartmentRef.current;
+    if (!view || !compartment) return;
+    view.dispatch({
+      effects: compartment.reconfigure(
+        EditorState.readOnly.of(readOnly === true)
+      ),
+    });
+  }, [readOnly]);
 
   useImperativeHandle(
     ref,
