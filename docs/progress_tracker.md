@@ -163,6 +163,58 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 6. **Stream A.2 continuation** — CM6 polish (edge cases on large docs, dark-mode rendering quality, accessibility of the contenteditable surface).
 7. **#215 Path B Zulip draft** — Seth's send still pending.
 
+### 2026-05-27 (late-evening) — Tuning project plan locked + cross-repo coordination scaffold
+
+**Context entering the session:** Earlier EOD wrapped #166 + the post-EOD Ian Zulip update unblocking cross-repo work. Late-evening session opened with a question about June 9 demo feasibility under the new cross-repo authorization, then expanded into full project scoping + plan-as-source-of-truth coordination work.
+
+**Completed:**
+
+- **Tuning project plan committed + merged.** `docs/tuning-project-plan.md` (PR #190 merged at `54678c7`). Source-of-truth coordination document covering scope (51 issues across 4 repos), June 9 demo critical path, parallel-track structure (6 tracks A–G), operating model, quality gates, risk register, and a decision log (D-001 through D-006). Three Frank review rounds: rev 1 → rev 2 with P1 worker#191 reclassification → rev 3 cleanup-pass on stale section + portal#72 status + Day-12 typo.
+
+- **Three sibling-repo EPICs filed.** worker#239 (Tuning Architecture — worker side), web-client#39 (Identity Bridge consumers), baruch#19 (Language Tuning Integration). Each links back to portal EPICs + the plan doc.
+
+- **51 tuning issues cross-linked.** Comment on every in-scope issue across 4 repos pointing at the plan doc, the parent EPIC in its own repo, the plan track (A–G), and any companion EPIC in sibling repos. Comments not body edits (per [[feedback_gh_closes_keyword]]). Bulk-scripted via `cross-link-issues.sh`.
+
+- **5 portal EPIC umbrella headers added.** Body-prepend on #72, #149, #153, #170, #171 with a quoted header pointing at the plan + cross-repo siblings. First pass had a separator-merge bug (`---## Overview` instead of `---\n\n## Overview`) caused by bash `$(...)` stripping trailing newlines; fixed with a Python re.sub pass.
+
+- **CodeMirror 6 decision locked for #77 / #167.** Three parallel deep-dive research agents (Ian decision-pattern profile from 40+ commits across 5 repos, #77 issue evidence pass, MarkdownEditor stopgap feasibility analysis) converged on CM6 over DIY mirror-div. Key piece of evidence: **70% rewrite cost on the stopgap when CM6 eventually lands** violates Ian's stopgap pattern (named, scoped, recovery-path-clear). Captured as D-001 with day-1 scope-gate mitigation to fall back to DIY if CM6 isn't tractable in 1 day.
+
+- **Frank P1: worker#191 was on the wrong track.** Original plan classified worker#191 under Track B (cascade architecture). Frank verified against portal#72 fifth Goal which calls worker#191 "the remaining DoD-blocker for 'a user typing #spoken @arabic gets responses shaped by both files.'" Without it, the demo trigger parses, mode applies, but the arabic-language tuning document **does not flow into the system prompt**. Plan revision 2 moved worker#191 to Track A.1 (demo PROMISE enabler); #77/#167 became Track A.2 (demo POLISH enabler). Both streams run in parallel since they touch different repos. Captured as D-005.
+
+- **Local main checkout synced.** Was 8 commits behind origin/main; pulled to `a75e57f` (and now `54678c7` post-#190-merge). `.husky/pre-commit` mode-flip drift (chmod via husky `prepare`) discarded. `.understand-anything/` is now in origin's `.gitignore` so it's auto-ignored.
+
+- **bt-servant-web-client + baruch repos cloned** to `/workspace/`. Both up to date on main. Now have working checkouts of every repo the tuning project touches.
+
+**In Progress:**
+
+- None code-wise. Plan is locked; sibling-EPIC scaffold is in place; cross-link graph is fully wired. Day 1 of the June 9 critical path opens tomorrow.
+
+**Blockers / Carryover:**
+
+- **Day 1 verification tasks** (tomorrow): (a) spoken + arabic content readiness in uW; (b) read chat-time system-prompt assembly to confirm whether arabic language content is already injected somewhere (sanity check before implementing worker#191); (c) ping Chris (Klappy) on the worker#191 architecture coordination note; (d) CM6 day-1 scope gate.
+- **Ian still on vacation.** Cross-repo authorization in effect (D-003). #172 (cascade storage) + #177 (identity bridge protocol) still design-gated on Ian's return.
+- **Tim's modes-cascade reply** still outstanding (carryover from 2026-05-21). Gates Track B detail-scoping; not demo-critical.
+- **#215 Path B Zulip draft** still unsent. Awaiting Seth's send to Tim/Christou/Elsy before that rollout can start.
+- **Stray untracked file** `src/components/org-context-selector 2.tsx` in main checkout. macOS-style duplicate, unrelated to today's work. Worth clean-up but not urgent.
+
+**Patterns / decisions captured this session:**
+
+- **Three-agent parallel research pattern for high-stakes decisions when the gatekeeper is unavailable.** Today's Ian-on-vacation editor-library decision used: (1) issue + library deep-dive agent, (2) technical feasibility agent on the stopgap path, (3) decision-pattern profile agent reading the gatekeeper's actual commits across multiple repos. Converged evidence beats single-agent inference; the profile agent in particular caught Ian's "stopgaps need named recovery paths" pattern which was the load-bearing argument against DIY. Worth re-using for any future Ian-/Tim-/Christou-gated decision where waiting isn't viable.
+- **Plan-as-source-of-truth pattern (D-004).** Source-of-truth coordination doc with decision log (D-NNN refs), bottleneck split (demo-critical vs post-demo), parallel-track structure (independent streams that can run concurrently), and explicit cross-link discipline (every issue knows its plan track, every EPIC knows its sibling EPICs). Makes parallel agentic work tractable; without it, each new agent re-derives the strategic picture. Worth keeping for any future multi-repo coordination of this scale.
+- **Bottleneck-split discipline.** Frank P2 surfaced that the original bottleneck ranking (Tim cascade reply, identity bridge, governance) was strategically-ordered but wrong for the June 9 demo specifically — content readiness + worker#191 + CM6 scope were the actual demo-blocking items, ranked further down. Lesson: a single ranked list of bottlenecks across timeframes makes people optimize the wrong queue. Split by horizon explicitly. Captured as the demo-vs-post-demo bisection in the plan.
+- **Frank's P1 strategic miss on the original plan was 100% correct.** The CM6 recommendation framing risked making editor polish look like the demo path while runtime language-file injection remained the actual blocker. Without his catch, Day 1–7 work would have gone to editor migration while the demo's stated promise (`#spoken @arabic` shaped by **both** files) sat unimplemented. Worth remembering as a pattern: when the immediate decision feels obvious, audit whether you've correctly identified what's load-bearing for the deadline.
+- **Body-edit separator pitfall.** Bash `$(...)` strips trailing newlines. When prepending a `---` separator header to existing body content, the result is `---## Overview` not `---\n\n## Overview`. Use explicit newline injection or Python re.sub for the join. Caught immediately on first portal-EPIC-body update and fixed across all 5.
+- **70%-rewrite-cost on a stopgap is the right discriminator for stopgap-vs-do-it-right.** Not "is the stopgap faster" (obviously yes), but "what fraction of the stopgap survives the eventual replacement." If it's <50%, the stopgap is a write-off; if it's >70%, the principled choice is probably right. Captured in D-001's rationale.
+
+**Next Steps (Day 1 of June 9 critical path, 2026-05-28):**
+
+1. **Verify uW spoken mode + arabic language content readiness.** ~30 min smoke check in the portal. If thin, escalate to Elsy/Tim same day.
+2. **Read worker chat-time system-prompt assembly.** Sanity check: is arabic language content ALREADY injected somewhere via another path? If yes, scope of worker#191 changes. ~30 min.
+3. **Ping Chris (Klappy) on worker#191 architecture note** ("Ian and Chris are pairing on the architecture"). Coordination ask; not a blocker per D-003.
+4. **CM6 day-1 scope check.** Setup `@codemirror/lang-markdown` + decoration extension + `useActiveHeadingLine` port concept. If tractable in 1 day, proceed with CM6. If not, fall back to DIY mirror-div per D-001 mitigation.
+5. **Implement worker#191** (quick-and-dirty per issue body) starting same day as the CM6 scope check, in parallel.
+6. **#215 Path B Zulip draft** — Seth's send to Tim/Christou/Elsy when ready.
+
 ### 2026-05-27 — #166 cross-org config end-to-end (2 PRs in one day, one Frank round each)
 
 **Post-EOD update — Ian unblocks cross-repo work (Zulip, late afternoon):**
