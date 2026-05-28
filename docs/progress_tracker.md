@@ -4,35 +4,37 @@
 
 ## Current Status
 
-**Phase**: Day 1 of June 9 demo critical path complete. Epic #72 DoD-met (CM6 editor migration shipped, closing #167 + visual half of #77); worker#191 trigger-path injection verified shipped via D-007 (scope collapsed to e2e test + persistence design). Demo PROMISE works against staging today modulo the persistence-as-UX gap and the thin arabic content.
-**Last Updated**: 2026-05-28
+**Phase**: All demo-critical code shipped end-to-end as of 2026-05-28 morning. EPIC #72 fully closed; worker #191 closed via worker PR #241 (language persistence). Demo PROMISE works against staging today — `#spoken @arabic` parses, mode applies, language doc injects, language persists across turns. Single dominant remaining risk is arabic content thinness (R-001, Tim/Elsy non-engineering). 12 days to demo.
+**Last Updated**: 2026-05-28 (morning)
 **Demo target**: June 9 — `#spoken @arabic` working end-to-end with the new editor
-**Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` — staging is 12 commits ahead with the new-org CLI, super-admin feature, #166 cross-org config, D-007 plan patch, and CM6 editor migration; awaiting promotion)
+**Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` — staging is 13 commits ahead with the new-org CLI, super-admin feature, #166 cross-org config, D-007 plan patch, CM6 editor migration, and #187 Export Config; awaiting promotion)
 
 ## Milestones
 
-| Milestone                                 | Progress | Status                                                           |
-| ----------------------------------------- | -------- | ---------------------------------------------------------------- |
-| Per-PR ephemeral CF Workers (#83)         | 100%     | Shipped 2026-05-07                                               |
-| Auto-staging deploy on PR merge (#89)     | 100%     | Shipped 2026-05-08                                               |
-| Language-shepherd permissions (#80)       | 100%     | Shipped 2026-05-08                                               |
-| Users admin UI (#96)                      | 100%     | Shipped 2026-05-08                                               |
-| Mode/language context accents (#78)       | 100%     | Shipped 2026-05-08                                               |
-| Language scaffold preload (#74)           | 100%     | Shipped 2026-05-11                                               |
-| Test chat trigger wiring (#81)            | 100%     | Shipped 2026-05-11                                               |
-| AlertDialogAction sweep (#102)            | 100%     | Shipped 2026-05-11                                               |
-| Mode markdown editor + TOC (#76, #82)     | 100%     | Shipped 2026-05-11                                               |
-| Retrospective audit batch (#112–#120)     | 89%      | 8 of 9 shipped 2026-05-11 (#117 deferred)                        |
-| Admin password reset → invalidation (#99) | 100%     | Shipped 2026-05-11                                               |
-| Prompt Overrides retirement (#125)        | 50%      | Phase 1 shipped 2026-05-11; Phase 2 gated on worker #215         |
-| Node 24 actions bump (#91)                | 100%     | Shipped 2026-05-13                                               |
-| Dark mode polish (#133 + 6 subs)          | 100%     | Shipped 2026-05-13                                               |
-| Chat panes cleanup (#31, #48, #50)        | 100%     | Shipped 2026-05-13                                               |
-| New-org CLI stopgap (#139)                | 100%     | Shipped 2026-05-20                                               |
-| Super-admin role + UI (#138)              | 100%     | Shipped 2026-05-20 (PR A backend + PR B frontend)                |
-| Cross-org config edits (#166)             | 100%     | Shipped 2026-05-27 (PR A worker + PR B UI)                       |
-| CM6 editor migration (#167, #77 visual)   | 100%     | Shipped 2026-05-28 (PR #193 — D-001 mitigation not triggered)    |
-| Epic #72 — Admin Portal Redesign          | ~99%     | DoD-met 2026-05-28; #77 multi-line `%%` paragraph deferred as v2 |
+| Milestone                                 | Progress | Status                                                                                              |
+| ----------------------------------------- | -------- | --------------------------------------------------------------------------------------------------- |
+| Per-PR ephemeral CF Workers (#83)         | 100%     | Shipped 2026-05-07                                                                                  |
+| Auto-staging deploy on PR merge (#89)     | 100%     | Shipped 2026-05-08                                                                                  |
+| Language-shepherd permissions (#80)       | 100%     | Shipped 2026-05-08                                                                                  |
+| Users admin UI (#96)                      | 100%     | Shipped 2026-05-08                                                                                  |
+| Mode/language context accents (#78)       | 100%     | Shipped 2026-05-08                                                                                  |
+| Language scaffold preload (#74)           | 100%     | Shipped 2026-05-11                                                                                  |
+| Test chat trigger wiring (#81)            | 100%     | Shipped 2026-05-11                                                                                  |
+| AlertDialogAction sweep (#102)            | 100%     | Shipped 2026-05-11                                                                                  |
+| Mode markdown editor + TOC (#76, #82)     | 100%     | Shipped 2026-05-11                                                                                  |
+| Retrospective audit batch (#112–#120)     | 89%      | 8 of 9 shipped 2026-05-11 (#117 deferred)                                                           |
+| Admin password reset → invalidation (#99) | 100%     | Shipped 2026-05-11                                                                                  |
+| Prompt Overrides retirement (#125)        | 50%      | Phase 1 shipped 2026-05-11; Phase 2 gated on worker #215                                            |
+| Node 24 actions bump (#91)                | 100%     | Shipped 2026-05-13                                                                                  |
+| Dark mode polish (#133 + 6 subs)          | 100%     | Shipped 2026-05-13                                                                                  |
+| Chat panes cleanup (#31, #48, #50)        | 100%     | Shipped 2026-05-13                                                                                  |
+| New-org CLI stopgap (#139)                | 100%     | Shipped 2026-05-20                                                                                  |
+| Super-admin role + UI (#138)              | 100%     | Shipped 2026-05-20 (PR A backend + PR B frontend)                                                   |
+| Cross-org config edits (#166)             | 100%     | Shipped 2026-05-27 (PR A worker + PR B UI)                                                          |
+| CM6 editor migration (#167, #77 visual)   | 100%     | Shipped 2026-05-28 (PR #193 — D-001 mitigation not triggered)                                       |
+| Worker #191 dynamic language injection    | 100%     | Shipped 2026-05-28 (worker PR #241 — language persistence)                                          |
+| Export Config (#187)                      | 100%     | Shipped 2026-05-28 (PR #197)                                                                        |
+| Epic #72 — Admin Portal Redesign          | 100%     | Fully closed 2026-05-28; #77 reframed via portal #196 + worker #240 follow-ups for paragraph-parity |
 
 ### Per-PR ephemeral CF Workers — Shipped
 
@@ -84,6 +86,65 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-05-28 (morning) — Demo code path closes: EPIC #72 + worker #191 + Export Config all ship in parallel
+
+**Context entering the session:** Day 1 EOD (logged late 2026-05-27 local) had Track A.1 substantially descoped via D-007 and Track A.2 (CM6) shipped. Outstanding entering the morning: worker #191 e2e + persistence (queued for Day 2), portal #77 multi-line `%%` deferred as v2, PR #191 (late-evening tracker) awaiting Frank, arabic content escalation drafted but unsent.
+
+**Completed:**
+
+- **PR #191 (late-evening tracker) — P1 rebase fix + merge.** Frank flagged that taking the PR's stale `Current Status` hunk would roll back D-007 / CM6 / Day-1 completion. Resolution: rebase onto current main, drop stale hunk, insert late-evening session block chronologically between 2026-05-28 entry and existing 2026-05-27 #166 entry. Pure addition, 52 insertions / 0 deletions. Force-push-with-lease (`8cc1b1f` → `9731edd`). All CI green. Merged at `d42cd10`.
+
+- **Track E duplicates housekeeping shipped (~5 min).** Per plan's quick-win callout: closed #157 as dup of #181 (verb-based permissions) and #158 as dup of #182 (audit log). Newer issues were strict supersets — schema design, migration story, full event lists. #153 EPIC body already referenced canonical numbers (no stale-ref cleanup needed). Freed Frank review later when Track E unblocks.
+
+- **#77 closed + Ulysses parity audit + 3 follow-up issues filed.** Originally queued as "implement #77 v2 multi-line `%%` paragraph dimming." Investigation surfaced that the framing was wrong: portal's TOC parser is paragraph-terminated; editor decoration AND worker stripper are line-terminated; worker's docstring even cites "matching the admin portal's v1 parser" as line-termination rationale, but the portal's HEADING parser is paragraph-terminated. Three-component inconsistency with self-contradictory citation. Implementing portal-only paragraph-dim would have shipped NEW editor-vs-backend divergence (author sees full paragraph dimmed; model receives lines 2–n). Correct fix is end-to-end paragraph parity (Tim's stated Ulysses preference). #77 closed as all-original-ACs-met; #196 (portal) and worker #240 (companion) filed for post-demo parity work; memory `project_ulysses_comment_syntax` + `MEMORY.md` index updated to reflect actual shipped semantics.
+
+- **worker #191 design lock posted as agent-ready comment.** Frank reviewed the persistence-mirroring-mode plan and added two refinements I missed: (1) stale/unpublished masking parallel to mode pattern at `user-do.ts:1341-1351`; (2) single-place resolution — `loadChatContext` reads `selectedLanguageName` only; `applyTriggerOverrides` is the sole site for trigger-override-OR-persisted → resolve → published-filter → inject-or-mask. Design lock posted on worker #191 ([#issuecomment-4565403569](https://github.com/unfoldingWord/bt-servant-worker/issues/191#issuecomment-4565403569)) sized for an agent to pick up cold, with implementation map + e2e test approach + reserved-token side-effect call-out.
+
+- **Portal #195 + #198 filed.** UI affordance for surfacing persisted mode/language (#195) + Import path for exported mode configs (#198). #198 specifically satisfies #187 AC #4's "tracked in a separate issue" requirement (Frank P3 catch on PR #197).
+
+- **PR #197 — #187 Export Config button shipped.** YAML frontmatter + markdown body export format with full escape coverage for user-controlled metadata. Sanitized + sortable ISO-timestamped filenames (`{org}-mode-{name}-{ts}.md`). 14 new pure tests (263 → 277). Self-review caught a `new Date()` called twice that could've drifted frontmatter vs filename across a second; folded into the same commit pre-push. Frank P3 post-PR: AC #4's "tracked in separate issue" requirement that I'd waved off as "out of scope when wanted" — filed #198 and corrected PR body framing without code changes. Merged at `a296611`; staging deploy fired; per-PR worker cleaned up.
+
+- **worker #241 shipped (independent agent, Seth-driven).** Implemented per the design lock — language persistence mirroring `#<mode>` exactly. Merged at 15:55:55Z; closes worker #191. Effectively simultaneous with portal #197 merge (~15:56:31Z) — both demo-critical shipments landed within the same minute.
+
+**Day rollup (morning session):**
+
+| Merged      | Commit        | Closes      |
+| ----------- | ------------- | ----------- |
+| portal #191 | `d42cd10`     | —           |
+| portal #197 | `a296611`     | #187        |
+| worker #241 | (worker main) | worker #191 |
+
+**Issues closed:** portal #157 (dup), portal #158 (dup), portal #77, portal #187, worker #191.
+**Issues filed:** portal #195, portal #196, portal #198, worker #240.
+
+**In Progress:**
+
+- None code-wise. All demo-critical code is shipped end-to-end on staging.
+
+**Blockers / Carryover:**
+
+- **Arabic content fleshing (R-001)** — Tim + Elsy contacted today; awaiting their work. Single dominant remaining demo risk. 12 days to demo.
+- **Browser smoke on staging** — three targets newly available: CM6 editor flows (PR #193 test plan + the in-fence negative case), Export button (PR #197 test plan), `@<language>` persistence (type `@arabic`, send a turn, send a second turn without trigger, confirm response style stays arabic). Seth's lane.
+- **Prod promotion** — staging now 13 commits ahead of `25ea9c1` (last prod deploy 2026-05-13). Gated on Elsy's comfort signal. Includes super-admin, #166 cross-org, D-007 plan patch, CM6, late-evening tracker, #187 Export Config.
+- **Track G #215 Path B Zulip draft** — still unsent.
+- **worker #141** — original tracking for Export Config; can be closed in favor of portal #187 now that portal-side shipped.
+
+**Patterns / decisions captured this session:**
+
+- **Verification-before-implementation pattern repeated (cf. D-007), twice today.** Same shape: (a) Worker tests inspection found existing e2e harness + observable `vi.spyOn(globalThis, 'fetch')` seam, shaving days off the worker #191 e2e estimate; (b) `%%` semantics audit found the planned #77 v2 work would have shipped NEW divergence. Each cost ~30 min of grep + read, saved days. Heuristic: any time you're about to implement a "v2 follow-up" or "missing wire-up," spend 30 min verifying the gap is actually what you think it is.
+- **Misframed "deferred follow-up" can be its own gap.** PR #193's "v1 limitation — multi-line `%%` paragraph dimming" framing was post-hoc rationalization that obscured a deeper end-to-end semantics question. Lesson: when noting a "limitation" in a PR description, check whether it's actually a limitation OR whether the spec it diverges from is itself unsettled. The latter deserves a tracking issue spanning the right surfaces, not a v2 backlog entry.
+- **Don't relax acceptance criteria with post-hoc rationalization.** PR #197 body claimed Import was "out of scope when wanted" — but #187 AC #4 explicitly said "tracked in a separate issue," which is a hard requirement. Frank caught it as P3. Heuristic: when an AC says "tracked in N," file N before claiming AC closure; an AC that's been quietly demoted to "optional" is a future debt.
+- **Cross-repo design coordination via on-issue comments scales well.** Posting Frank's design lock on worker #191 as a comment (with implementation map, file:line refs, e2e approach, scope/estimate, per-PR ritual lifted) gave the independent worker agent everything to pick up cold. Total orchestration time: <5 min to verify the result; the agent shipped a clean PR by 15:55Z. The agent-ready-comment pattern is reusable for any cross-repo work where a different driver picks up the implementation.
+- **EPIC #72 closed on Day 1.** Original plan budgeted 7+ days for #77/#167 polish + worker #191 implementation. Actual: D-007 collapsed worker #191's implementation cost to ~6h (test + persistence); CM6 migration tractable in 1 day; #77's "v2" gap revealed to be a different shape entirely. Combined effect: 5+ days of plan slack now redirected to content readiness + soak + post-demo track-E/track-C quick wins.
+
+**Next session (this afternoon, 2026-05-28):**
+
+1. **Browser smoke on staging** — CM6 + Export + `@<lang>` persistence end-to-end. Seth's lane; only he can do it.
+2. **Decide on Track G #215 Path B Zulip send.** Seth.
+3. **Consider a Track C quick win** — #150 org metadata or #184 read-only cross-org browse. Both demo-adjacent polish, both unblocked.
+4. **Close worker #141** in favor of portal #187 (housekeeping; ~5 min).
+5. **Arabic content nudge** if no movement from Tim/Elsy by mid-afternoon.
 
 ### 2026-05-28 — Day 1 of June 9 critical path: worker#191 verification + CM6 editor migration shipped
 
