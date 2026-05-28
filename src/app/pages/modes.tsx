@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Save } from "lucide-react";
+import { Download, Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
+import {
+  buildModeExportContent,
+  buildModeExportFilename,
+} from "@/lib/mode-export";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { useUiStore } from "@/lib/ui-store";
 import { OrgContextSelector } from "@/components/org-context-selector";
@@ -40,6 +44,7 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 
 export function ModesPage() {
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
+  const homeOrg = useAuthStore((s) => s.user?.org);
   const selectedMode = useUiStore((s) => s.selectedMode);
   const setSelectedMode = useUiStore((s) => s.setSelectedMode);
   const showDrafts = useUiStore((s) => s.showDrafts);
@@ -152,6 +157,49 @@ export function ModesPage() {
     if (!isDirty || isSaving) return;
     performSave(draft);
   }, [draft, isDirty, isSaving, performSave]);
+
+  // Export captures what's currently on screen — draft (including unsaved
+  // edits) + last-synced metadata. The export's `org` is the effective
+  // context (cross-org if a super-admin has switched orgs; otherwise the
+  // caller's home org).
+  const effectiveOrg = contextOrg ?? homeOrg ?? null;
+  const handleExport = useCallback(() => {
+    if (!selectedMode || !modeQuery.data || !effectiveOrg) return;
+    // Single `Date` instance so the frontmatter `exported_at` and the
+    // filename timestamp can never drift by a second across the call.
+    const ctx = { org: effectiveOrg, exportedAt: new Date() };
+    const content = buildModeExportContent(
+      {
+        name: selectedMode,
+        label: serverLabel,
+        description: serverDescription,
+        document: draft,
+        published: lastSyncedPublished,
+      },
+      ctx
+    );
+    const filename = buildModeExportFilename(
+      { name: selectedMode, document: draft },
+      ctx
+    );
+    const blob = new Blob([content], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [
+    draft,
+    effectiveOrg,
+    lastSyncedPublished,
+    modeQuery.data,
+    selectedMode,
+    serverDescription,
+    serverLabel,
+  ]);
 
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
@@ -317,6 +365,16 @@ export function ModesPage() {
               >
                 {saveStatus}
               </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleExport}
+                disabled={!effectiveOrg}
+                title="Download a Markdown snapshot of this mode's config"
+              >
+                <Download className="mr-1.5 size-3.5" />
+                Export
+              </Button>
               <Button
                 size="sm"
                 onClick={flushSave}
