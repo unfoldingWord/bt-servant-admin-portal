@@ -4,10 +4,10 @@
 
 ## Current Status
 
-**Phase**: All demo-critical code shipped end-to-end as of 2026-05-28 morning. EPIC #72 fully closed; worker #191 closed via worker PR #241 (language persistence). Demo PROMISE works against staging today — `#spoken @arabic` parses, mode applies, language doc injects, language persists across turns. Single dominant remaining risk is arabic content thinness (R-001, Tim/Elsy non-engineering). 12 days to demo.
-**Last Updated**: 2026-05-28 (morning)
+**Phase**: All demo-critical code shipped end-to-end as of 2026-05-28; afternoon closed the versioning hygiene gap (1.5.1 → 1.9.0 catch-up) so Elsy can disambiguate environments at a glance. EPIC #72 fully closed; worker #191 closed via worker PR #241 (language persistence); worker #141 closed in favor of portal #187. Demo PROMISE works against staging — `#spoken @arabic` parses, mode applies, language doc injects, language persists across turns. Single dominant remaining risk is arabic content thinness (R-001, Tim/Elsy non-engineering). 12 days to demo.
+**Last Updated**: 2026-05-28 (afternoon)
 **Demo target**: June 9 — `#spoken @arabic` working end-to-end with the new editor
-**Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` — staging is 13 commits ahead with the new-org CLI, super-admin feature, #166 cross-org config, D-007 plan patch, CM6 editor migration, and #187 Export Config; awaiting promotion)
+**Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` / v1.5.1 — staging is 17 commits ahead at `8b4a507` / v1.9.0 with the new-org CLI, super-admin feature, #166 cross-org config, D-007 plan patch, CM6 editor migration, #187 Export Config, and 1.9.0 catch-up bump; awaiting promotion)
 
 ## Milestones
 
@@ -35,6 +35,7 @@
 | Worker #191 dynamic language injection    | 100%     | Shipped 2026-05-28 (worker PR #241 — language persistence)                                          |
 | Export Config (#187)                      | 100%     | Shipped 2026-05-28 (PR #197)                                                                        |
 | Epic #72 — Admin Portal Redesign          | 100%     | Fully closed 2026-05-28; #77 reframed via portal #196 + worker #240 follow-ups for paragraph-parity |
+| Version-bump catch-up (1.5.1 → 1.9.0)     | 100%     | Shipped 2026-05-28 afternoon (PR #200) — closes deploy-disambiguation gap flagged by Elsy           |
 
 ### Per-PR ephemeral CF Workers — Shipped
 
@@ -86,6 +87,70 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-05-28 (afternoon) — Versioning gap closed (1.5.1 → 1.9.0); 4-environment model framed; housekeeping carryover
+
+**Context entering the session:** Morning shipped all demo-critical code (EPIC #72 closed, worker #191 closed, Export Config + language persistence live on staging). Afternoon opened with Ian's question (via Elsy's Zulip thread) about whether versions had been getting bumped, plus Elsy's parallel ask for a stable demo environment.
+
+**Completed:**
+
+- **Versioning diagnosis + catch-up bump shipped.** Honest answer to Ian's question: **no bumps since 2026-04-23**. The version field had been stuck at v1.5.1 since Ian's last solo-dev commit (`d9d154e`, "Bump MAX_SLOT_LENGTH"), through ~23 marquee Seth-era feature shipments across 5 weeks. All three environments displaying v1.5.1 explained why Elsy couldn't tell them apart — the field was useless as a deployment indicator. Diagnosis posted to the Zulip thread with evidence (commit/date references + feature count). PR #200 (`8b4a507`) catch-up bump 1.5.1 → 1.9.0 shipped via `npm version 1.9.0 --no-git-tag-version` — single chore commit touching `package.json` + lock only. Calibrated to Ian's prior cadence (he bumped 1.0 → 1.5 in ~6 weeks of comparable scope; 5 weeks of Seth-era shipments maps to roughly the same 5-minor jump). Number `1.9.0` chosen as synthesis of menu options (recommendation 1.10.0, conservative 1.6.0, clean-break 2.0.0). Deploy Staging fired on merge; staging now reads **v1.9.0** vs Prod's **v1.5.1** — gap is visually obvious.
+
+- **GH Action auto-bump proposal killed in favor of Ian's existing skill.** Initially proposed wiring a conventional-commit → `npm version` GH Action so the catch-up never had to happen again (~1h PR). Seth redirected: _"Ian uses a skill for the version bumps. I'm trying to keep things uniform."_ Searched the shared `uw-dev-skills` repo (`origin/main` at `e593bd1`) — confirmed no version-bump skill there yet (current inventory: `eod`, `progress`, `sod` commands + `cf-logs` skill). Killed the parallel-automation proposal; pending getting Ian's skill shared into `uw-dev-skills` so future bumps are uniform across the team.
+
+- **Morning EOD PR #199 + version-bump PR #200 merged in chronological order** (`b8e9937` → `8b4a507`). Both clean; remote branches deleted; per-PR worker for #200 cleaned up. Order matters: #199 first preserved the chronological accuracy of the morning EOD reflecting pre-bump state; #200 second carries the Deploy Staging trigger so staging lands at the new version.
+
+- **Worker #141 closed in favor of portal #187** — carryover housekeeping from the morning EOD's next-step list. Issue body explicitly recommended close-in-favor-of #187 once portal-side shipped; that happened via PR #197 today. Closing comment links the portal companion + the import-path follow-up #198.
+
+- **Memory `feedback_synthesis_between_options.md` saved.** Pattern surfaced when Seth picked 1.9.0 from a menu of 1.6.0 / 1.10.0 / 2.0.0: he often synthesizes between presented options rather than picking off the menu. Calibrated as "tendency, not a hard rule" after his joke-but-mostly-true confirmation. Useful for future option-presenting decisions: present anchors that bracket the range, not just a fixed slate. `MEMORY.md` index updated.
+
+- **4-environment model framed (Zulip, with Ian + Elsy).** Concept locked: **Ephemeral** (per-PR Cloudflare deploys, transient, for in-flight testing) > **Dev/QA** (Elsy's QA testing target) > **Staging** (Tim/Elsy demo target with somewhat-stable features) > **Prod** (outside world). Naming is contested ("dev" vs "qa" vs "demo"); parked for ToT discussion. The version-bump catch-up is the structural enabler — until the version field disambiguated, the env-naming question was moot. Stable-demo-env strategy (cherry-pick branch, tag-based promotion, etc.) similarly parked for ToT.
+
+**Day rollup (full day, both sessions combined):**
+
+| Repo   | Merged | Commit        | Closes                    |
+| ------ | ------ | ------------- | ------------------------- |
+| portal | #191   | `d42cd10`     | — (rebase fix on docs PR) |
+| portal | #197   | `a296611`     | #187                      |
+| portal | #199   | `b8e9937`     | — (morning EOD docs)      |
+| portal | #200   | `8b4a507`     | — (version bump)          |
+| worker | #241   | (worker main) | worker #191               |
+
+**Issues closed today:** portal #157 (dup), portal #158 (dup), portal #77, portal #187, worker #191, worker #141.
+**Issues filed today:** portal #195, portal #196, portal #198, worker #240.
+**Memories saved/updated:** `feedback_synthesis_between_options` (new); `project_ulysses_comment_syntax` (revised — line-vs-paragraph semantics correctly captured).
+
+**In Progress:**
+
+- None. Code-critical-path for demo is fully shipped on staging at v1.9.0. Hygiene/coordination items continue in parallel.
+
+**Blockers / Carryover:**
+
+- **Ian's version-bump skill not in shared repo.** For uniformity going forward, need to either (a) ask Ian to share his skill into `uw-dev-skills` so the team has one canonical bump workflow, or (b) accept manual `npm version` runs without a skill. Pending Seth's call on routing — Zulip ask or ToT discussion.
+- **Arabic content fleshing (R-001)** — Tim + Elsy contacted morning of 2026-05-28; no movement yet. Single dominant remaining demo risk. 12 days runway.
+- **Browser smoke on staging** — three targets newly available (CM6 + Export + `@<lang>` persistence + v1.9.0 version-field verification). Seth's lane.
+- **Prod promotion** — staging now 17 commits ahead of `25ea9c1` (last prod deploy 2026-05-13). Gated on Elsy's comfort signal.
+- **Track G #215 Path B Zulip draft** — still unsent.
+- **ToT items pending:** environment naming (Dev/QA/Demo/stable-demo-env strategy), Ian's bump-skill sharing.
+
+**Patterns / decisions captured this session:**
+
+- **Versioning hygiene is a demo-readiness gate, not vanity.** Elsy's _"That's why we need versioning tight. So that I know."_ crystallized it. Without distinct version fields, "Dev vs Staging vs Prod" is a name-only distinction; Elsy can't confirm what's in front of her. The catch-up bump unlocks every downstream environment-naming + demo-env conversation because it makes the build-state visible. Heuristic for future tooling decisions: when a tracking field has decayed (versions stuck, dashboards stale), prioritize its restoration ahead of feature work — the field is what other people use to coordinate without DMing.
+- **Calibrated catch-up: don't undersell, don't overshoot.** Conservative reads ("just bump one minor since you skipped some") undersell volume and mislead reviewers about how much changed; "clean break" 2.0.0 invites questions about what's breaking. Honest math = match the prior cadence × elapsed time. Pre-Seth Ian shipped 5 minors in 6 weeks; 5 Seth-era weeks → 5 minors → 1.10ish. Landing at 1.9.0 (synthesis between 1.6 / 1.10 / 2.0) was both honest and team-readable.
+- **Uniformity-with-existing-practice over inventing-new.** Killed the GH Action auto-bump proposal the moment Seth pointed at Ian's existing skill, even though the Action would have shipped today. Reasoning: process divergence is a long-tail tax that compounds. Better to wait for the existing skill to be shared than to ship a parallel mechanism that does the same job slightly differently. Heuristic: if a teammate has an existing workflow for the gap, adopt theirs before authoring your own — even if yours would land sooner.
+- **Seth synthesizes between menu options.** Captured as memory `feedback_synthesis_between_options`. When presenting decision menus on continuous spectra (numbers, scope-cut sizes, timeline buffers), present the menu as bracketing anchors and explicitly invite synthesis — Seth's pick often interpolates. For genuinely discrete decisions (yes/no, merge/don't), the pattern doesn't apply; say so.
+- **Order-of-merge matters when multiple docs/chore PRs land same-day.** Morning EOD before version bump preserves chronological accuracy in commit history (the EOD reflects pre-bump state). Trivial example, but the principle generalizes: when multiple PRs are ready and only one triggers an environment-changing side effect (Deploy Staging), land the others first so they're reflected at the new environment state.
+- **Sub-thread housekeeping carryover discipline.** The morning EOD's "Next Steps" listed "Close worker #141 in favor of portal #187 (housekeeping, ~5 min)" — actually done in the afternoon EOD. Useful pattern: small carryover items get listed in the previous EOD's next-steps and are first-tackled in the next session as warmup before deeper work. Keeps the open-issue surface from drifting.
+
+**Next session (evening or next day):**
+
+1. **Get Ian's version-bump skill into shared `uw-dev-skills`** — Zulip ask or PR mention. Unblocks uniform bumps for the team.
+2. **Browser smoke on staging** — verify v1.9.0 shows in the UI, plus CM6 editor flows, Export button, `@<language>` persistence end-to-end. Seth's lane.
+3. **Arabic content nudge** if no movement from Tim/Elsy.
+4. **Decide on Track G #215 Path B Zulip send.**
+5. **Optional Track C quick win** — #150 org metadata or #184 read-only cross-org browse (both unblocked, both demo-adjacent polish).
+6. **Optional Prod promotion** if Elsy comfort-signals (manual workflow dispatch only).
+7. **ToT prep**: environment naming (Dev/QA/Demo, stable-demo-env strategy), bump-skill sharing, anything else.
 
 ### 2026-05-28 (morning) — Demo code path closes: EPIC #72 + worker #191 + Export Config all ship in parallel
 
