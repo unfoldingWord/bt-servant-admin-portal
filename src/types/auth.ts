@@ -16,5 +16,13 @@ export interface AuthUser {
   // the same powers regardless of UI state (worker/admin.ts +
   // worker/config.ts both honor the "super trumps isAdmin" rule).
   isSuperAdmin?: boolean;
+  // Legacy single-bit rights, kept as the lazy-migration source for the
+  // four verb-perms fields below. Pre-#181 sessions only carry this one;
+  // the BFF (`worker/auth.ts`) lazy-maps it into the verb-perms fields on
+  // every request so the client always sees both shapes. See #181.
   language_rights?: LanguageRights;
+  language_edit_rights?: LanguageRights;
+  language_publish_rights?: LanguageRights;
+  mode_edit_rights?: LanguageRights;
+  mode_publish_rights?: LanguageRights;
 }
