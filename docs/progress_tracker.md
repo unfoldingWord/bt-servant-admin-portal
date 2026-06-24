@@ -4,10 +4,10 @@
 
 ## Current Status
 
-**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan now active. Track E plan refresh shipped (PR #202) with explicit Phase 1 entry sequence ordered off the foundational #154 versioned-config API. Identity-bridge EPIC #171 closed as over-scoped per Ian's 2026-06-06 reframe; narrow CHAT_ORG_KV fix at bt-servant-web-client#40 shipped via PR #41 + #43, **live on staging at `638f136`** — first successful web-client deploy since 2026-04-30. EPIC #72 also closed (DoD met). Outstanding portal-side prod promotion still awaits Elsy comfort.
-**Last Updated**: 2026-06-13
+**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **Track E phase 1 step 2 entered today** — #181 verb-perms schema + lazy migration shipped (PR #234). Both prod-promotion carryovers cleared in one window: portal v1.9.0 deployed by Ian (42-day gap), web-client CHAT_ORG_KV stack deployed by Ian (55-day gap, first chat-app prod since 2026-04-30). #230 (resource visibility panel) assigned by Elsy + design memo posted; blocked on Elsy/Ian product+contract decisions. Track E phase 1 step 1 (#154 ↔ worker#94 reconciliation) still un-picked.
+**Last Updated**: 2026-06-24
 **Demo target**: June 9 (passed) — outcome to be summarized
-**Last prod deploy**: 2026-05-13 (HEAD `25ea9c1` / v1.5.1 — staging is 18 commits ahead at `3169477` / v1.9.0; identical contents to last EOD plus today's PR #202 doc refresh; awaiting promotion)
+**Last prod deploy**: 2026-06-24 (HEAD `3bebe24` / v1.9.0) — portal promoted by Ian at 15:55 UTC; web-client also promoted same day (first ever post-#41 chat-app prod)
 
 ## Milestones
 
@@ -38,6 +38,11 @@
 | Version-bump catch-up (1.5.1 → 1.9.0)     | 100%     | Shipped 2026-05-28 afternoon (PR #200) — closes deploy-disambiguation gap flagged by Elsy                                                                                                                                            |
 | Track E Phase 1 orientation               | 100%     | Shipped 2026-06-13 (PR #202 + Frank P2 fix) — Track E table refreshed, 6-step Phase 1 entry sequence locked off #154 foundational                                                                                                    |
 | Identity-bridge EPIC reframed             | 100%     | Closed 2026-06-03 (EPIC #171 + #177/#178/#179 + web-client #36/#37/#39); narrow CHAT_ORG_KV fix shipped 2026-06-13 (web-client PR #41) + deploy fix (web-client PR #43); first successful web-client staging deploy since 2026-04-30 |
+| Portal prod promotion (v1.9.0)            | 100%     | Shipped 2026-06-24 — Ian promoted v1.9.0 to prod (HEAD `3bebe24`); closes 42-day promotion gap from 2026-05-13                                                                                                                       |
+| Web-client prod promotion                 | 100%     | Shipped 2026-06-24 — Ian promoted CHAT_ORG_KV stack to prod; **first chat-app prod deploy since 2026-04-30** (55-day gap)                                                                                                            |
+| Orphan `McpServerConfig` cleanup          | 100%     | Shipped 2026-06-24 (PR #233) — deletes unused interface from project-kickoff scaffolding                                                                                                                                             |
+| #181 verb-perms schema (PR 1 of 2)        | 50%      | Shipped 2026-06-24 (PR #234) — schema + lazy migration + 16 tests. PR 2 (enforcement gates + RightsSelector matrix UI) is next; unblocked                                                                                            |
+| #230 resource visibility panel            | 5%       | Assigned 2026-06-24 by Elsy; design memo posted with 6 open questions for Elsy + Ian. Blocked on worker #257 (MCP resource-list endpoint, Ian's lane) before substantive portal work                                                 |
 
 ### Per-PR ephemeral CF Workers — Shipped
 
@@ -89,6 +94,70 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-06-24 — Both prod promotions cleared; #181 PR 1 + orphan cleanup shipped; #230 assigned + scoped
+
+**Context entering the session:** 11 days since last EOD (2026-06-13). Both prod-promotion carryovers (portal 42 days stale, web-client never-promoted) still pending Ian/Elsy comfort. Track E phase 1 was oriented but no implementation slice picked. Identity-bridge reframe complete from prior session. Session opened with a small web-client follow-up: PR #44 (org-name-spaces, Frank's regex fix) needed merge — green from a prior background CI run.
+
+**Completed:**
+
+- **bt-servant-web-client PR #44 merged** (org-name-spaces regex tightening per Frank's P2). Squash-merged `1446d9c`, remote branch cleaned up via API delete after the in-worktree branch checkout blocked `gh pr merge --delete-branch` (same pattern as the previous in-worktree merges). Post-merge CI green.
+- **#230 picked up + dup landscape mapped.** Elsy assigned the new resource visibility & prioritization panel (per-mode RAG curation) overnight; surfaced as portal #230. Recon found three pairs of duplicate-ish issues from two BTServant syncs: portal #211 (Elsy's earlier draft) + worker #254 (sync note) both pre-date the cleaner #230 / #231 split. Sent Elsy a tightening message: confirm-the-dups, panel-side question (left vs right rail), include/exclude-vs-prioritize-only collapse, worker #257 unassigned. **Elsy responded within ~20 min**: dups closed (#211 + worker #254); panel goes on the **left** rail as a new icon next to Languages/Modes/Users; **prioritize-only** (no include/exclude); worker #257 moved as sub-issue of #230 and assigned to Ian.
+- **Aquifer recon for #230.** Read all of the worker MCP layer (`bt-servant-worker/src/services/mcp/types.ts`, `catalog.ts`) and translation-helps-mcp's tools registry. **Key find**: worker has _no_ resource concept today — only tools. Worker's `MCPServerConfig.priority` is server-level only, sorted at `bt-servant-worker/src/durable-objects/user-do.ts:1523` — distinct from the per-resource priority #230 wants. **Second key find**: translation-helps-mcp **already** exposes a `list_resources_for_language` tool returning `{[subject]: ResourceItem[]}` where `ResourceItem = {name, subject, organization, version?, url?}` with 7 default subjects (Bible, Aligned Bible, Translation Words, Translation Academy, TSV Translation Notes, TSV Translation Questions, TSV Translation Words Links) — maps almost exactly to Elsy's taxonomy. Aquifer is reportedly the same shape but not checked out locally; can't verify directly.
+- **#230 design memo posted** ([comment](https://github.com/unfoldingWord/bt-servant-admin-portal/issues/230#issuecomment-4791660977)) capturing the verified state of worker + portal + translation-helps-mcp with three open questions for Elsy (granularity axis: per-individual-resource vs per-subject-category; language × mode product; default behavior on un-curated modes) and three for Ian on worker #257 (standardize on `{[subject]: ResourceItem[]}`, single worker-aggregated endpoint vs per-server proxy, where the curated priority list persists). Memo cited file paths so reviewers can verify each claim.
+- **Orphan `McpServerConfig` cleanup — PR #233 shipped.** Verified via `grep -rn "McpServerConfig"` that the portal-side interface in `src/types/mcp-server.ts` is unused (single defining-file hit). `git log` confirms it landed in commit `0a8ce41` "Add UI shell ... placeholder pages" — original project-kickoff scaffolding, never wired. Worker has its own separate `MCPServerConfig` in `bt-servant-worker/src/types/mcp.ts:26` used at runtime. Pre-commit gates clean; merged at `6c4611f`.
+- **Portal v1.9.0 prod deployed by Ian** at 15:55 UTC (workflow run 28111591084, 1m47s success). One promotion landed: EPIC #72 closure, CM6 editor migration, Export Config, cross-org config edits, version-bump catch-up, Track E plan refresh — the entire 18-commit post-2026-05-13 stack in one go. **Closes 42-day promotion gap.** 1.9.0 finally visible in prod, deploy-disambiguation gap Elsy flagged in May fully closed.
+- **Web-client first-ever post-#41 prod deploy by Ian** at 16:25 UTC (workflow run 28113432886, 1m11s success). CHAT_ORG_KV server-side binding, Credentials stub removed, client switcher gone, #43 deploy hotfix, #44 space-handling fix — all live. **First chat-app prod deploy since 2026-04-30** (55-day gap). Ian's note: "My bots agree with your bots. Deploying to prod."
+- **#181 verb-perms design lock memo posted** ([comment](https://github.com/unfoldingWord/bt-servant-admin-portal/issues/181#issuecomment-4791780928)) with three decisions locked after Seth accepted the recommendations: (1) server-side change-detection on the existing PUT (no new publish endpoint), (2) keep `LanguageRights = string[] | "*"` shape for all four new rights fields (NOT `{[name]: boolean}` as the original body proposed) — identity-copy lazy migration, (3) ship both language + mode verb-perms together (one design, PR 1 = schema + lazy-migrate, PR 2 = enforcement + UI). Body amended with a locked-decisions banner so future readers don't re-debate the superseded specifics.
+- **#181 PR 1 shipped — verb-perms schema + lazy migration.** Merged via PR #234 as `3bebe24`. Four new optional fields on `StoredUser` + `SessionData` (`language_edit_rights`, `language_publish_rights`, `mode_edit_rights`, `mode_publish_rights`) all using `LanguageRights = string[] | "*"`. Lazy fallback in three places in `worker/auth.ts`: `validateSession` (per-request rehydration), `handleLogin` (initial session construction), and the `/login` + `/me` response shapes — `language_*_rights ?? language_rights`. `worker/admin.ts` renames `parseLanguageRights` → `parseRights(value, fieldName)` so a bad `mode_edit_rights` payload doesn't surface as a misleading "language_rights" error; `safeUser` round-trips all four; `createUser` + `updateUser` accept + validate them. `src/types/auth.ts` mirrors the four new fields on `AuthUser`. **No enforcement change** at `worker/config.ts:171` — pure type expansion. **Reviewer initially flagged a coverage gap** (no direct tests for the new lazy-migration response fields or malformed new field names); per [[feedback_real_tests]] added 16 tests across `tests/admin-auth.test.ts` (CRUD round-trip, `parseRights` field-named errors via `it.each`, `listUsers` shape) and a new `tests/auth.test.ts` (lazy-mapping cases for legacy `["en"]` / `"*"` / `undefined`, explicit-wins-over-fallback, mode-rights pass-through). Reviewer cleared the test additions on re-review. Test count 277 → 293. Pre-commit gates + CI green both rounds.
+
+**Day rollup:**
+
+| Repo       | Merged | Commit    | Closes                                                    |
+| ---------- | ------ | --------- | --------------------------------------------------------- |
+| web-client | #44    | `1446d9c` | — (org-name regex tightening, Frank P2)                   |
+| portal     | #233   | `6c4611f` | — (orphan type cleanup, no tracking issue)                |
+| portal     | #234   | `3bebe24` | — (#181 stays open for PR 2)                              |
+| portal     | n/a    | n/a       | Portal v1.9.0 prod deploy (Ian) at workflow `28111591084` |
+| web-client | n/a    | n/a       | Web-client prod deploy (Ian) at workflow `28113432886`    |
+
+**Issues closed today:** portal #211 + #217 + worker #254 (closed by Elsy as dups of #230 / #231).
+**Issues filed today:** none — #230 and worker #257 were already filed by Elsy from Monday's sync; today's work was scoping not filing.
+**Cross-repo coordination:** Elsy moved worker #257 as a sub-issue under #230 and assigned to Ian.
+
+**In Progress:**
+
+- **#181 PR 2 (enforcement + UI)** — unblocked, ready to start. Five sub-items: split `worker/config.ts:171` `hasLanguageRights` into edit/publish via change-detection on PUT body, add parallel `mode_*_rights` gate to `/api/config/modes/{name}` PUT/DELETE, factor `LanguageRightsSelector` into generic `RightsSelector` parameterized over `kind`, wire 4 selectors into AdminUserEditDialog + AdminUserCreateDialog, tests for edit-without-publish / publish-without-edit / legacy-grandfather / admin-trump rules.
+- **#230 design memo** — out for reaction. Six questions queued; three for Elsy (granularity axis, language × mode product, un-curated default), three for Ian on worker #257 (contract shape, endpoint topology, write-time storage). No substantive portal work doable until these lock.
+
+**Blockers / Carryover:**
+
+- **web-client#42 disposition** — still open from 2026-06-13 EOD. Framing is now correct (Node-22-specific sandbox issue, not project regression) but the CI Build job remains removed. Either restore it (~10 min PR on Node 20) or close-as-wrong-framing. Not touched today.
+- **Track E next slice (#154 + worker#94 reconciliation)** — phase 1 entry step 1, still un-picked. Foundational unlock that gates #155/#156/#160/#183. Needs Seth+Ian deliberation on KV namespace placement before implementation. Self-driven #181 work picked instead today.
+- **Demo (June 9) retrospective** — not yet summarized in tracker. Demo target has been passed for 15 days.
+- **Welcome flow (#180 + web-client#38)** — separable product slice, still parked.
+- **Ian's version-bump skill into `uw-dev-skills`** — pending from 2026-05-28; no movement.
+- **Track G #215 Path B Zulip draft** — still unsent from 2026-05-28.
+- **Cascade design (Track B) implementation** — #170 / #172 — design locked, gated on Ian's `ORG_CONFIG` vs new `SYSTEM_CONFIG` KV namespace decision. No movement.
+
+**Patterns / decisions captured this session:**
+
+- **"worker" disambiguation.** The #181 body referenced `worker/config.ts` — initially I assumed that meant `bt-servant-worker/src/config/`, but grep against bt-servant-worker returned zero `language_rights` hits. The admin-portal has its own `worker/` directory (the Cloudflare-Worker BFF), and that's where StoredUser / SessionData / language_rights actually live. Heuristic: when an issue body says "worker/X", first check which repo the issue belongs to and which `worker/` it could mean. Admin-portal's BFF and bt-servant-worker (the engine) are both legitimately referred to as "worker" and the wrong assumption costs a recon detour.
+- **Lazy-migration via session rehydration.** The existing `validateSession` pattern (re-read StoredUser from KV on every request, construct SessionData fresh) is the right place to add lazy fallbacks for any new field on StoredUser. PR 1 added the verb-perms fallback there _and_ at the parallel construction site in `handleLogin`, plus at the `/login` + `/me` response shapes. The same pattern applies to any future StoredUser additions — no separate backfill script needed, no DB migration ceremony.
+- **Verb-perms shape decision (#181).** Kept the discriminated `LanguageRights = string[] | "*"` shape for all four new rights fields rather than the proposal's `{[name]: boolean}` map. The shape choice collapses lazy migration to an identity copy, keeps JSON compact, and lets the existing `LanguageRightsSelector` parameterize over modes vs languages in PR 2. The map shape would have required a real conversion in the migration layer and forced a different UI component family.
+- **Aquifer "ready" claim has a verifiable shape.** translation-helps-mcp's `list_resources_for_language` returns `{[subject]: ResourceItem[]}` — that's likely the shape Aquifer also exposes, and the natural worker #257 contract. Confirms the granularity question for Elsy (fine per-resource is _available_ from translation-helps; the question is whether portal UX should expose it or collapse to per-subject).
+- **Reviewer "not a blocker" coverage gap ≠ "skip the tests."** The PR 1 reviewer cleared the schema-only PR with no medium+ issues but noted the new lazy-migration response fields lacked direct tests. Per [[feedback_real_tests]] standing position, added the tests anyway before merge — pure functions with discrete edge cases (5 inputs × 4 output fields, clean cases for legacy / wildcard / undefined / explicit-override / mode pass-through). The reviewer cleared the test additions on re-review.
+- **Memo-before-code is the right shape for design-loaded work.** The #181 memo posted before any code surfaced three real tensions (no publish endpoint exists; shape mismatch in proposal; no mode UI exists). Resolving them on the issue rather than mid-PR meant PR 1 was a clean diff with no spec drift. Same pattern applied to #230 memo — surfaced six questions, the actual implementation is now blocked on product decisions, not blocked-in-flight.
+
+**Next session:**
+
+1. **#181 PR 2** — enforcement + UI. Self-driven, unblocked, design fully locked in this morning's memo. Probably 2 sessions of focused work.
+2. **web-client #42** — quick close-or-restore. ~10 min cleanup of 2026-06-13 carryover.
+3. **#230** — only if Elsy/Ian have responded to the design memo. Otherwise it waits.
+4. **Track E phase 1 step 1 (#154 + worker#94)** — gated on Ian availability; worth raising when next sync with him happens.
+5. **Demo retrospective + Phase 1 plan refresh** — increasingly stale.
+
+---
 
 ### 2026-06-13 — Identity-bridge reframe shipped to staging; Track E phase 1 oriented; web-client back in deployable shape
 
