@@ -15,6 +15,10 @@ interface SeedUserInput {
   isAdmin?: boolean;
   isSuperAdmin?: boolean;
   language_rights?: LanguageRights;
+  language_edit_rights?: LanguageRights;
+  language_publish_rights?: LanguageRights;
+  mode_edit_rights?: LanguageRights;
+  mode_publish_rights?: LanguageRights;
 }
 
 async function seedUser(input: SeedUserInput): Promise<StoredUser> {
@@ -30,6 +34,10 @@ async function seedUser(input: SeedUserInput): Promise<StoredUser> {
     isAdmin: input.isAdmin ?? false,
     isSuperAdmin: input.isSuperAdmin ?? false,
     language_rights: input.language_rights,
+    language_edit_rights: input.language_edit_rights,
+    language_publish_rights: input.language_publish_rights,
+    mode_edit_rights: input.mode_edit_rights,
+    mode_publish_rights: input.mode_publish_rights,
   };
   await env.AUTH_KV.put(`user:${input.email}`, JSON.stringify(stored));
   return stored;
@@ -1293,5 +1301,200 @@ describe("admin auth — X-Admin-Secret retains super powers post-#138", () => {
     expect(
       (body as { user: { isSuperAdmin: boolean } }).user.isSuperAdmin
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Verb-perms fields (#181 PR 1 — schema + lazy migration)
+// ---------------------------------------------------------------------------
+//
+// Covers the create/update/list surface for the four new fields:
+//   language_edit_rights, language_publish_rights, mode_edit_rights,
+//   mode_publish_rights
+//
+// All four use the existing `LanguageRights = string[] | "*"` shape, share
+// the renamed `parseRights(value, fieldName)` validator, and round-trip
+// through `safeUser`. Lazy-mapping at the read path (validateSession +
+// handleMe) is covered in tests/auth.test.ts.
+
+interface UserWithVerbPerms {
+  language_rights?: LanguageRights;
+  language_edit_rights?: LanguageRights;
+  language_publish_rights?: LanguageRights;
+  mode_edit_rights?: LanguageRights;
+  mode_publish_rights?: LanguageRights;
+}
+
+describe("verb-perms — create + update round-trip", () => {
+  it("create user with all four verb-perms fields → 201, safeUser returns them verbatim", async () => {
+    const { status, body } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: {
+        email: "verb@acme.com",
+        password: "test-password",
+        name: "Verb",
+        org: "acme",
+        language_edit_rights: ["en", "es"],
+        language_publish_rights: "*",
+        mode_edit_rights: ["bible-study"],
+        mode_publish_rights: ["bible-study", "trainer"],
+      },
+    });
+    expect(status).toBe(201);
+    const user = (body as { user: UserWithVerbPerms }).user;
+    expect(user.language_edit_rights).toEqual(["en", "es"]);
+    expect(user.language_publish_rights).toBe("*");
+    expect(user.mode_edit_rights).toEqual(["bible-study"]);
+    expect(user.mode_publish_rights).toEqual(["bible-study", "trainer"]);
+  });
+
+  it("update user assigns all four verb-perms fields → 200, persists alongside language_rights", async () => {
+    await seedUser({
+      email: "carol@acme.com",
+      name: "Carol",
+      org: "acme",
+      language_rights: ["en"],
+    });
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: "/api/admin/users/carol@acme.com",
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: {
+        language_edit_rights: ["en"],
+        language_publish_rights: "*",
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: ["spoken"],
+      },
+    });
+    expect(status).toBe(200);
+    const user = (body as { user: UserWithVerbPerms }).user;
+    expect(user.language_rights).toEqual(["en"]); // legacy field untouched
+    expect(user.language_edit_rights).toEqual(["en"]);
+    expect(user.language_publish_rights).toBe("*");
+    expect(user.mode_edit_rights).toEqual(["spoken"]);
+    expect(user.mode_publish_rights).toEqual(["spoken"]);
+  });
+
+  // Without this, a PUT with only `name` changes could accidentally wipe
+  // verb-perms — exactly the bug pattern the existing language_rights
+  // handler already guards against (see "can assign language_rights" test).
+  it("update user with only `name` in body leaves all verb-perms untouched", async () => {
+    await seedUser({
+      email: "eve@acme.com",
+      name: "Eve",
+      org: "acme",
+      language_rights: ["en"],
+      language_edit_rights: ["en", "ar"],
+      mode_publish_rights: ["trainer"],
+    });
+
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: "/api/admin/users/eve@acme.com",
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: { name: "Eve Updated" },
+    });
+    expect(status).toBe(200);
+    const user = (body as { user: { name: string } & UserWithVerbPerms }).user;
+    expect(user.name).toBe("Eve Updated");
+    expect(user.language_edit_rights).toEqual(["en", "ar"]);
+    expect(user.mode_publish_rights).toEqual(["trainer"]);
+  });
+
+  it("listUsers reflects verb-perms fields (undefined on legacy users)", async () => {
+    await seedUser({
+      email: "legacy@acme.com",
+      name: "Legacy",
+      org: "acme",
+      language_rights: ["en"],
+    });
+
+    const { status, body } = await call({
+      method: "GET",
+      pathname: "/api/admin/users",
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+    });
+    expect(status).toBe(200);
+    const users = (body as { users: ({ email: string } & UserWithVerbPerms)[] })
+      .users;
+    const legacy = users.find((u) => u.email === "legacy@acme.com");
+    expect(legacy).toBeDefined();
+    // safeUser returns the raw StoredUser fields. Lazy migration applies at
+    // the session-read path, not at user-list — legacy users show
+    // verb-perms as undefined here. The lazy fallback shows up in
+    // handleMe (see tests/auth.test.ts).
+    expect(legacy?.language_rights).toEqual(["en"]);
+    expect(legacy?.language_edit_rights).toBeUndefined();
+    expect(legacy?.language_publish_rights).toBeUndefined();
+    expect(legacy?.mode_edit_rights).toBeUndefined();
+    expect(legacy?.mode_publish_rights).toBeUndefined();
+  });
+});
+
+describe("verb-perms — parseRights validation errors", () => {
+  it.each([
+    ["language_edit_rights", { language_edit_rights: 42 }],
+    ["language_publish_rights", { language_publish_rights: "yes" }],
+    ["mode_edit_rights", { mode_edit_rights: { a: true } }],
+    ["mode_publish_rights", { mode_publish_rights: [""] }],
+  ])(
+    "create user with malformed %s → 400 with the field name in the error",
+    async (fieldName, badField) => {
+      const { status, body } = await call({
+        method: "POST",
+        pathname: "/api/admin/users",
+        headers: { "X-Admin-Secret": ADMIN_SECRET },
+        body: {
+          email: "bad@acme.com",
+          password: "test-password",
+          name: "Bad",
+          org: "acme",
+          ...badField,
+        },
+      });
+      expect(status).toBe(400);
+      expect((body as { error: string }).error).toContain(fieldName);
+    }
+  );
+
+  it.each([
+    ["language_edit_rights", { language_edit_rights: 42 }],
+    ["mode_publish_rights", { mode_publish_rights: "all" }],
+  ])(
+    "update user with malformed %s → 400 with the field name in the error",
+    async (fieldName, badField) => {
+      await seedUser({ email: "dan@acme.com", name: "Dan", org: "acme" });
+
+      const { status, body } = await call({
+        method: "PUT",
+        pathname: "/api/admin/users/dan@acme.com",
+        headers: { "X-Admin-Secret": ADMIN_SECRET },
+        body: badField,
+      });
+      expect(status).toBe(400);
+      expect((body as { error: string }).error).toContain(fieldName);
+    }
+  );
+
+  it("create user with valid array containing non-string entry → 400 with field name", async () => {
+    const { status, body } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: {
+        email: "mixed@acme.com",
+        password: "test-password",
+        name: "Mixed",
+        org: "acme",
+        mode_edit_rights: ["valid", 7],
+      },
+    });
+    expect(status).toBe(400);
+    expect((body as { error: string }).error).toMatch(
+      /mode_edit_rights.*must be strings/
+    );
   });
 });

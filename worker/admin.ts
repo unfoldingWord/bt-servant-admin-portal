@@ -4,11 +4,15 @@ import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
 import type { LanguageRights, StoredUser } from "./types";
 
-// Accepts `"*"` or an array of non-empty trimmed strings. Returns null if
-// the input is unset (caller should treat as "leave existing value alone")
-// or a validation error message if the shape is invalid.
-function parseLanguageRights(
-  value: unknown
+// Accepts `"*"` or an array of non-empty trimmed strings. Returns `undefined`
+// when the input is unset so the caller can treat that as "leave existing
+// value alone". Shared by `language_rights` (legacy) and the four verb-perms
+// fields added in #181 — they all use the same `LanguageRights` shape.
+// `fieldName` is interpolated into error messages so a bad `mode_edit_rights`
+// payload doesn't surface as a misleading "language_rights" error.
+function parseRights(
+  value: unknown,
+  fieldName: string
 ):
   | { ok: true; value: LanguageRights | undefined }
   | { ok: false; error: string } {
@@ -20,14 +24,14 @@ function parseLanguageRights(
       if (typeof entry !== "string") {
         return {
           ok: false,
-          error: "language_rights array entries must be strings",
+          error: `${fieldName} array entries must be strings`,
         };
       }
       const trimmed = entry.trim();
       if (!trimmed) {
         return {
           ok: false,
-          error: "language_rights array entries must be non-empty",
+          error: `${fieldName} array entries must be non-empty`,
         };
       }
       cleaned.push(trimmed);
@@ -36,9 +40,22 @@ function parseLanguageRights(
   }
   return {
     ok: false,
-    error: 'language_rights must be "*" or an array of strings',
+    error: `${fieldName} must be "*" or an array of strings`,
   };
 }
+
+// The four verb-perms fields share `parseRights`'s shape. Listing them as
+// `[bodyKey, storedKey]` so the create/update handlers can loop instead of
+// repeating five near-identical parse blocks. `language_rights` (legacy)
+// stays out of this table; it's parsed inline because its lazy-migration
+// role is different.
+const VERB_PERMS_FIELDS = [
+  "language_edit_rights",
+  "language_publish_rights",
+  "mode_edit_rights",
+  "mode_publish_rights",
+] as const;
+type VerbPermsField = (typeof VERB_PERMS_FIELDS)[number];
 
 // ---------------------------------------------------------------------------
 // Auth — tri-mode
@@ -162,6 +179,10 @@ function safeUser(user: StoredUser) {
     isAdmin: user.isAdmin ?? false,
     isSuperAdmin: user.isSuperAdmin ?? false,
     language_rights: user.language_rights,
+    language_edit_rights: user.language_edit_rights,
+    language_publish_rights: user.language_publish_rights,
+    mode_edit_rights: user.mode_edit_rights,
+    mode_publish_rights: user.mode_publish_rights,
   };
 }
 
@@ -186,6 +207,10 @@ async function createUser(
     isAdmin?: boolean;
     isSuperAdmin?: boolean;
     language_rights?: unknown;
+    language_edit_rights?: unknown;
+    language_publish_rights?: unknown;
+    mode_edit_rights?: unknown;
+    mode_publish_rights?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -222,9 +247,19 @@ async function createUser(
     return errorResponse(passwordError, 400);
   }
 
-  const rightsResult = parseLanguageRights(body.language_rights);
+  const rightsResult = parseRights(body.language_rights, "language_rights");
   if (!rightsResult.ok) {
     return errorResponse(rightsResult.error, 400);
+  }
+
+  const verbPerms: Partial<Record<VerbPermsField, LanguageRights | undefined>> =
+    {};
+  for (const field of VERB_PERMS_FIELDS) {
+    const result = parseRights(body[field], field);
+    if (!result.ok) {
+      return errorResponse(result.error, 400);
+    }
+    verbPerms[field] = result.value;
   }
 
   const existing = await env.AUTH_KV.get(`user:${email}`);
@@ -244,6 +279,10 @@ async function createUser(
     isAdmin: body.isAdmin ?? false,
     isSuperAdmin: body.isSuperAdmin ?? false,
     language_rights: rightsResult.value,
+    language_edit_rights: verbPerms.language_edit_rights,
+    language_publish_rights: verbPerms.language_publish_rights,
+    mode_edit_rights: verbPerms.mode_edit_rights,
+    mode_publish_rights: verbPerms.mode_publish_rights,
   };
 
   await env.AUTH_KV.put(`user:${email}`, JSON.stringify(user));
@@ -313,6 +352,10 @@ async function updateUser(
     isAdmin?: boolean;
     isSuperAdmin?: boolean;
     language_rights?: unknown;
+    language_edit_rights?: unknown;
+    language_publish_rights?: unknown;
+    mode_edit_rights?: unknown;
+    mode_publish_rights?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -393,11 +436,19 @@ async function updateUser(
     user.passwordHash = await hashPassword(body.password as string, user.salt);
   }
   if (body.language_rights !== undefined) {
-    const rightsResult = parseLanguageRights(body.language_rights);
+    const rightsResult = parseRights(body.language_rights, "language_rights");
     if (!rightsResult.ok) {
       return errorResponse(rightsResult.error, 400);
     }
     user.language_rights = rightsResult.value;
+  }
+  for (const field of VERB_PERMS_FIELDS) {
+    if (body[field] === undefined) continue;
+    const result = parseRights(body[field], field);
+    if (!result.ok) {
+      return errorResponse(result.error, 400);
+    }
+    user[field] = result.value;
   }
 
   await env.AUTH_KV.put(`user:${email}`, JSON.stringify(user));

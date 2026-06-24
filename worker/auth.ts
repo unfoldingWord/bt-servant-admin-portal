@@ -123,6 +123,12 @@ export async function validateSession(
     return null;
   }
 
+  // Lazy-migrate the legacy single-bit `language_rights` into the two
+  // verb-perms fields when the stored record predates #181. Identity copy
+  // — same shape (`string[] | "*"`) — so old rights become both edit and
+  // publish access until an admin edits the user explicitly. Mode rights
+  // have no legacy source; absent ⇒ undefined ⇒ treated as full access
+  // until PR 2 enforces per-mode gating.
   return {
     userId: data.userId,
     createdAt: data.createdAt,
@@ -132,6 +138,11 @@ export async function validateSession(
     isAdmin: user.isAdmin ?? false,
     isSuperAdmin: user.isSuperAdmin ?? false,
     language_rights: user.language_rights,
+    language_edit_rights: user.language_edit_rights ?? user.language_rights,
+    language_publish_rights:
+      user.language_publish_rights ?? user.language_rights,
+    mode_edit_rights: user.mode_edit_rights,
+    mode_publish_rights: user.mode_publish_rights,
   };
 }
 
@@ -179,6 +190,10 @@ export async function handleLogin(
   }
 
   const sessionId = crypto.randomUUID();
+  // Same lazy-migration semantics as validateSession — pre-#181 users only
+  // have `language_rights` set; new verb-perms fields fall back to it so
+  // the session created here is shaped identically to one re-hydrated on a
+  // later request.
   const sessionData: SessionData = {
     userId: user.id,
     email: user.email,
@@ -188,6 +203,11 @@ export async function handleLogin(
     isSuperAdmin: user.isSuperAdmin ?? false,
     createdAt: new Date().toISOString(),
     language_rights: user.language_rights,
+    language_edit_rights: user.language_edit_rights ?? user.language_rights,
+    language_publish_rights:
+      user.language_publish_rights ?? user.language_rights,
+    mode_edit_rights: user.mode_edit_rights,
+    mode_publish_rights: user.mode_publish_rights,
   };
 
   await env.AUTH_KV.put(`session:${sessionId}`, JSON.stringify(sessionData), {
@@ -203,6 +223,10 @@ export async function handleLogin(
       isAdmin: user.isAdmin ?? false,
       isSuperAdmin: user.isSuperAdmin ?? false,
       language_rights: sessionData.language_rights,
+      language_edit_rights: sessionData.language_edit_rights,
+      language_publish_rights: sessionData.language_publish_rights,
+      mode_edit_rights: sessionData.mode_edit_rights,
+      mode_publish_rights: sessionData.mode_publish_rights,
     },
   });
   response.headers.set("Set-Cookie", sessionCookie(sessionId, request.url));
@@ -246,6 +270,10 @@ export async function handleMe(request: Request, env: Env): Promise<Response> {
       isAdmin: session.isAdmin ?? false,
       isSuperAdmin: session.isSuperAdmin ?? false,
       language_rights: session.language_rights,
+      language_edit_rights: session.language_edit_rights,
+      language_publish_rights: session.language_publish_rights,
+      mode_edit_rights: session.mode_edit_rights,
+      mode_publish_rights: session.mode_publish_rights,
     },
   });
 }
