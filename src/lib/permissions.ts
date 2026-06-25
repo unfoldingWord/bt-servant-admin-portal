@@ -46,6 +46,86 @@ export function hasAnyLanguageRights(
   return hasAnyRights(rights);
 }
 
+// Effective verb-perm helpers — client-side mirror of
+// worker/auth.ts:lazyMigrateLanguageRights. Return the rights value
+// the WORKER will see for this user at request time, applying the
+// partner-aware rule:
+//
+//   - If the explicit verb-perm is set, use it.
+//   - Else if the PARTNER verb-perm is set, the unset verb is a
+//     deliberate gap (= []), NOT legacy back-compat. Without this
+//     rule, a stored user with `language_rights: "*"` plus an
+//     explicit `language_edit_rights: ["spanish"]` would show as
+//     publish="*" in the admin UI even though the worker treats them
+//     as publish=[] — admin saves through the dialog would then
+//     persist the misleading "*" explicitly, silently widening
+//     access (Frank rd-2 P1).
+//   - Else (both verb-perms unset) fall back to legacy
+//     `language_rights` for languages, or undefined for modes (which
+//     have no legacy fallback).
+export function effectiveLanguageEditRights(
+  user:
+    | {
+        language_edit_rights?: LanguageRights;
+        language_publish_rights?: LanguageRights;
+        language_rights?: LanguageRights;
+      }
+    | null
+    | undefined
+): LanguageRights | undefined {
+  if (!user) return undefined;
+  if (user.language_edit_rights !== undefined) return user.language_edit_rights;
+  if (user.language_publish_rights !== undefined) return [];
+  return user.language_rights;
+}
+
+export function effectiveLanguagePublishRights(
+  user:
+    | {
+        language_edit_rights?: LanguageRights;
+        language_publish_rights?: LanguageRights;
+        language_rights?: LanguageRights;
+      }
+    | null
+    | undefined
+): LanguageRights | undefined {
+  if (!user) return undefined;
+  if (user.language_publish_rights !== undefined)
+    return user.language_publish_rights;
+  if (user.language_edit_rights !== undefined) return [];
+  return user.language_rights;
+}
+
+export function effectiveModeEditRights(
+  user:
+    | {
+        mode_edit_rights?: LanguageRights;
+        mode_publish_rights?: LanguageRights;
+      }
+    | null
+    | undefined
+): LanguageRights | undefined {
+  if (!user) return undefined;
+  if (user.mode_edit_rights !== undefined) return user.mode_edit_rights;
+  if (user.mode_publish_rights !== undefined) return [];
+  return undefined;
+}
+
+export function effectiveModePublishRights(
+  user:
+    | {
+        mode_edit_rights?: LanguageRights;
+        mode_publish_rights?: LanguageRights;
+      }
+    | null
+    | undefined
+): LanguageRights | undefined {
+  if (!user) return undefined;
+  if (user.mode_publish_rights !== undefined) return user.mode_publish_rights;
+  if (user.mode_edit_rights !== undefined) return [];
+  return undefined;
+}
+
 // Union helpers — "user has *some* access via *either* verb on *some*
 // item." Used by page-level / sidebar gates that just decide whether to
 // render the surface at all; finer-grained gates (per-item edit vs

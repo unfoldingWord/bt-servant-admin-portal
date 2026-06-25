@@ -8,6 +8,8 @@ import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
 import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
+  effectiveLanguageEditRights,
+  effectiveLanguagePublishRights,
   filterByAnyRights,
   hasAnyLanguageAccess,
   hasAnyRights,
@@ -64,26 +66,24 @@ export function LanguagesPage() {
   // #181: each verb-perm falls back to legacy `language_rights` for pre-
   // PR-1 users, mirroring the worker's rightsFor language logic.
   const isCrossOrg = contextOrg !== null;
-  const editRights = isCrossOrg
-    ? "*"
-    : (user?.language_edit_rights ?? user?.language_rights);
-  const publishRights = isCrossOrg
-    ? "*"
-    : (user?.language_publish_rights ?? user?.language_rights);
+  // Worker-effective verb-perms — applies the partner-aware rule so a
+  // user with `language_rights:"*"` plus only an explicit edit grant
+  // sees publish=[] in the UI (matching what the worker sees), not
+  // publish="*" via the naive `?? language_rights` fallback (Frank
+  // rd-2 P1).
+  const editRights = isCrossOrg ? "*" : effectiveLanguageEditRights(user);
+  const publishRights = isCrossOrg ? "*" : effectiveLanguagePublishRights(user);
   const hasAccess = isCrossOrg || hasAnyLanguageAccess(user);
 
   // Per-row capability gates passed to LanguageSelector. Languages
   // don't carry an admin trump (PR #185 enforced per-row even for
-  // super-admins), so these are pure verb-perm reads. The Frank P1
-  // review flagged the prior `isAdmin`-only gating as making non-admin
-  // publish/delete shepherds unreachable.
+  // super-admins), so these are pure verb-perm reads.
   const canCreate = hasAnyRights(editRights);
+  const canEditSelected =
+    selectedLanguage !== null && hasRights(editRights, selectedLanguage);
   const canPublishSelected =
     selectedLanguage !== null && hasRights(publishRights, selectedLanguage);
-  const canDeleteSelected =
-    selectedLanguage !== null &&
-    hasRights(editRights, selectedLanguage) &&
-    hasRights(publishRights, selectedLanguage);
+  const canDeleteSelected = canEditSelected && canPublishSelected;
 
   // Queries / mutations
   const languagesQuery = useLanguages(contextOrg);
@@ -225,6 +225,12 @@ export function LanguagesPage() {
     if (saveLanguage.isPending) return;
     if (debouncedDraft === lastSyncedDoc) return;
     if (debouncedDraft === lastFailedDoc) return;
+    // Frank rd-2 P2: skip autosave when the user has no edit rights on
+    // the selected row. Without this gate, a publish-only shepherd's
+    // accidental keystroke triggers an autosave that 403s — the
+    // editor below is also rendered readOnly so this branch only
+    // fires if the gate state changed mid-edit.
+    if (!canEditSelected) return;
     performSave(debouncedDraft);
   }, [
     debouncedDraft,
@@ -233,12 +239,14 @@ export function LanguagesPage() {
     lastFailedDoc,
     performSave,
     selectedLanguage,
+    canEditSelected,
   ]);
 
   const flushSave = useCallback(() => {
     if (!isDirty || isSaving) return;
+    if (!canEditSelected) return;
     performSave(draft);
-  }, [draft, isDirty, isSaving, performSave]);
+  }, [canEditSelected, draft, isDirty, isSaving, performSave]);
 
   // Block route changes while there are pending edits or an in-flight save.
   // The blocker fires only when navigating to a different pathname (selecting
@@ -465,7 +473,12 @@ export function LanguagesPage() {
               <Button
                 size="sm"
                 onClick={flushSave}
-                disabled={!isDirty || isSaving}
+                disabled={!isDirty || isSaving || !canEditSelected}
+                title={
+                  canEditSelected
+                    ? undefined
+                    : "You don't have edit rights on this language."
+                }
               >
                 <Save className="mr-1.5 size-3.5" />
                 Save
@@ -540,6 +553,7 @@ export function LanguagesPage() {
                 onChange={setDraft}
                 onHeadingsChange={setHeadings}
                 onActiveLineChange={setActiveLine}
+                readOnly={!canEditSelected}
               />
             </div>
           </>

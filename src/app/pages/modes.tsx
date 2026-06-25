@@ -12,6 +12,8 @@ import {
 } from "@/lib/mode-export";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import {
+  effectiveModeEditRights,
+  effectiveModePublishRights,
   filterByAnyRights,
   hasAdminPowers,
   hasAnyRights,
@@ -63,11 +65,15 @@ export function ModesPage() {
   // bypasses per-mode gate for admins) and a cross-org bypass (super-
   // admin viewing another org sees everything; their home-org mode
   // rights don't translate). Both bypasses surface as "*" so the same
-  // filter/gate logic works without separate code paths.
+  // filter/gate logic works without separate code paths. For non-
+  // admin same-org users the effective helpers apply the worker's
+  // partner-aware rule (one explicit verb makes the unset partner
+  // [], not legacy back-compat — Frank rd-2 P1).
   const isCrossOrg = contextOrg !== null;
-  const modeEditRights = isAdmin || isCrossOrg ? "*" : user?.mode_edit_rights;
+  const modeEditRights =
+    isAdmin || isCrossOrg ? "*" : effectiveModeEditRights(user);
   const modePublishRights =
-    isAdmin || isCrossOrg ? "*" : user?.mode_publish_rights;
+    isAdmin || isCrossOrg ? "*" : effectiveModePublishRights(user);
 
   const modesQuery = useModes(contextOrg);
   const modeQuery = useMode(selectedMode, contextOrg);
@@ -90,14 +96,14 @@ export function ModesPage() {
     };
   }, [modesQuery.data, modeEditRights, modePublishRights]);
 
-  // Per-row capability gates passed to ModeSelector.
+  // Per-row capability gates passed to ModeSelector + used for
+  // editor/save gating.
   const canCreate = hasAnyRights(modeEditRights);
+  const canEditSelected =
+    selectedMode !== null && hasRights(modeEditRights, selectedMode);
   const canPublishSelected =
     selectedMode !== null && hasRights(modePublishRights, selectedMode);
-  const canDeleteSelected =
-    selectedMode !== null &&
-    hasRights(modeEditRights, selectedMode) &&
-    hasRights(modePublishRights, selectedMode);
+  const canDeleteSelected = canEditSelected && canPublishSelected;
 
   // Local document draft (auto-save target).
   //
@@ -185,6 +191,10 @@ export function ModesPage() {
     if (saveMode.isPending) return;
     if (debouncedDraft === lastSyncedDoc) return;
     if (debouncedDraft === lastFailedDoc) return;
+    // Frank rd-2 P2: skip autosave when the user has no edit rights on
+    // the selected mode. The editor below is also rendered readOnly,
+    // so this branch only fires if the gate state changed mid-edit.
+    if (!canEditSelected) return;
     performSave(debouncedDraft);
   }, [
     debouncedDraft,
@@ -193,12 +203,14 @@ export function ModesPage() {
     lastFailedDoc,
     performSave,
     selectedMode,
+    canEditSelected,
   ]);
 
   const flushSave = useCallback(() => {
     if (!isDirty || isSaving) return;
+    if (!canEditSelected) return;
     performSave(draft);
-  }, [draft, isDirty, isSaving, performSave]);
+  }, [canEditSelected, draft, isDirty, isSaving, performSave]);
 
   // Export captures what's currently on screen — draft (including unsaved
   // edits) + last-synced metadata. The export's `org` is the effective
@@ -439,7 +451,12 @@ export function ModesPage() {
               <Button
                 size="sm"
                 onClick={flushSave}
-                disabled={!isDirty || isSaving}
+                disabled={!isDirty || isSaving || !canEditSelected}
+                title={
+                  canEditSelected
+                    ? undefined
+                    : "You don't have edit rights on this mode."
+                }
               >
                 <Save className="mr-1.5 size-3.5" />
                 Save
@@ -496,6 +513,7 @@ export function ModesPage() {
                 onChange={setDraft}
                 onHeadingsChange={setHeadings}
                 onActiveLineChange={setActiveLine}
+                readOnly={!canEditSelected}
               />
             </div>
           </>

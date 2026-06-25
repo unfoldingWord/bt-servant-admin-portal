@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  effectiveLanguageEditRights,
+  effectiveLanguagePublishRights,
+  effectiveModeEditRights,
+  effectiveModePublishRights,
   filterAuthorizedLanguages,
   filterByAnyRights,
   hasAdminPowers,
@@ -213,6 +217,92 @@ describe("hasAnyLanguageAccess", () => {
     expect(hasAnyLanguageAccess({ language_rights: ["en"] })).toBe(true);
     expect(hasAnyLanguageAccess({ language_rights: "*" })).toBe(true);
     expect(hasAnyLanguageAccess({ language_rights: [] })).toBe(false);
+  });
+});
+
+// Effective verb-perm helpers — mirror worker/auth.ts:lazyMigrate-
+// LanguageRights. Required by Frank rd-2 P1: the dialog + AccessSummary
+// must show what the WORKER actually sees, not the raw stored shape.
+
+describe("effectiveLanguageEditRights", () => {
+  it("explicit value wins", () => {
+    expect(
+      effectiveLanguageEditRights({
+        language_edit_rights: ["en"],
+        language_rights: "*",
+      })
+    ).toEqual(["en"]);
+  });
+
+  it("partner explicit + this unset → [] (deliberate deny)", () => {
+    expect(
+      effectiveLanguageEditRights({
+        language_publish_rights: ["en"],
+      })
+    ).toEqual([]);
+  });
+
+  it("[Frank rd-2 P1] legacy '*' + explicit publish → edit becomes [] (not '*')", () => {
+    // The exact scenario that broke the AccessSummary + dialog before
+    // the helpers were introduced: showing "*" for the unset verb
+    // would let an admin re-save and persist "*" explicitly.
+    expect(
+      effectiveLanguageEditRights({
+        language_rights: "*",
+        language_publish_rights: ["spanish"],
+      })
+    ).toEqual([]);
+  });
+
+  it("both unset → legacy language_rights fallback", () => {
+    expect(effectiveLanguageEditRights({ language_rights: "*" })).toBe("*");
+    expect(effectiveLanguageEditRights({ language_rights: ["en"] })).toEqual([
+      "en",
+    ]);
+    expect(effectiveLanguageEditRights({})).toBeUndefined();
+  });
+
+  it("null user → undefined", () => {
+    expect(effectiveLanguageEditRights(null)).toBeUndefined();
+  });
+});
+
+describe("effectiveLanguagePublishRights", () => {
+  it("symmetric: explicit edit + unset publish → [] (Frank's scenario)", () => {
+    expect(
+      effectiveLanguagePublishRights({
+        language_rights: "*",
+        language_edit_rights: ["spanish"],
+      })
+    ).toEqual([]);
+  });
+
+  it("both unset → legacy language_rights fallback", () => {
+    expect(effectiveLanguagePublishRights({ language_rights: "*" })).toBe("*");
+  });
+});
+
+describe("effectiveModeEditRights / effectiveModePublishRights", () => {
+  it("modes have no legacy fallback — both unset → undefined", () => {
+    expect(effectiveModeEditRights({})).toBeUndefined();
+    expect(effectiveModePublishRights({})).toBeUndefined();
+  });
+
+  it("partner explicit + this unset → [] (matches worker rightsFor mode rule)", () => {
+    expect(
+      effectiveModeEditRights({ mode_publish_rights: ["spoken"] })
+    ).toEqual([]);
+    expect(
+      effectiveModePublishRights({ mode_edit_rights: ["spoken"] })
+    ).toEqual([]);
+  });
+
+  it("explicit value wins", () => {
+    expect(effectiveModeEditRights({ mode_edit_rights: ["a", "b"] })).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(effectiveModePublishRights({ mode_publish_rights: "*" })).toBe("*");
   });
 });
 

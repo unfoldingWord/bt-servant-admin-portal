@@ -11,6 +11,12 @@ import {
 } from "@/lib/admin-users-api";
 import type { LanguageRights } from "@/types/auth";
 import { useAuthStore } from "@/lib/auth-store";
+import {
+  effectiveLanguageEditRights,
+  effectiveLanguagePublishRights,
+  effectiveModeEditRights,
+  effectiveModePublishRights,
+} from "@/lib/permissions";
 import { useAdminUsers, useDeleteAdminUser } from "@/hooks/use-admin-users";
 import {
   AlertDialog,
@@ -352,18 +358,23 @@ function UserRow({
 // Verb-perms summary cell — shows effective access on both axes
 // (language + mode) and both verbs. For each verb the badge collapses
 // to one of: All / None / N items / Default (full, legacy back-compat).
-// Mirrors the lazy-fallback chain the worker applies: explicit verb-
-// perm → legacy `language_rights` for languages → undefined for modes.
+// Mirrors the worker's partner-aware lazy-fallback chain (Frank rd-2
+// P1): explicit verb-perm → `[]` when partner is explicit but this
+// verb isn't → legacy `language_rights` for languages with both unset
+// → undefined for modes with both unset.
 function AccessSummary({ user }: { user: AdminUser }) {
-  const langEdit = user.language_edit_rights ?? user.language_rights;
-  const langPublish = user.language_publish_rights ?? user.language_rights;
-  const modeEdit = user.mode_edit_rights;
-  const modePublish = user.mode_publish_rights;
-
   return (
     <div className="space-y-1.5 text-xs">
-      <AccessRow label="Lang" edit={langEdit} publish={langPublish} />
-      <AccessRow label="Mode" edit={modeEdit} publish={modePublish} />
+      <AccessRow
+        label="Lang"
+        edit={effectiveLanguageEditRights(user)}
+        publish={effectiveLanguagePublishRights(user)}
+      />
+      <AccessRow
+        label="Mode"
+        edit={effectiveModeEditRights(user)}
+        publish={effectiveModePublishRights(user)}
+      />
     </div>
   );
 }

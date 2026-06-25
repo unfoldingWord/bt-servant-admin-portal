@@ -10,6 +10,12 @@ import {
 import { useUpdateAdminUser } from "@/hooks/use-admin-users";
 import { useLanguages } from "@/hooks/use-languages";
 import { useModes } from "@/hooks/use-prompt-config";
+import {
+  effectiveLanguageEditRights,
+  effectiveLanguagePublishRights,
+  effectiveModeEditRights,
+  effectiveModePublishRights,
+} from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -37,17 +43,6 @@ interface EditUserDialogProps {
   // Super-admin checkbox. When false, the dialog matches the original
   // org-admin shape exactly.
   callerIsSuperAdmin: boolean;
-}
-
-// Pre-PR-1 users have only the legacy `language_rights` bit; the worker
-// lazy-migrates it into both verb-perms fields on every request. The
-// dialog mirrors that fallback so the selector populates with the user's
-// effective rights rather than starting blank.
-function effectiveLangRights(
-  user: AdminUser,
-  fallback: LanguageRights | undefined
-) {
-  return fallback ?? user.language_rights;
 }
 
 // Comparable normal form for LanguageRights — undefined → null, arrays
@@ -114,10 +109,14 @@ export function AdminUserEditDialog({
     setOrg(user.org);
     setIsAdmin(user.isAdmin);
     setIsSuperAdmin(user.isSuperAdmin ?? false);
-    setLangEdit(effectiveLangRights(user, user.language_edit_rights));
-    setLangPublish(effectiveLangRights(user, user.language_publish_rights));
-    setModeEdit(user.mode_edit_rights);
-    setModePublish(user.mode_publish_rights);
+    // Populate from the worker-effective rights — applies the
+    // partner-aware rule (one explicit verb makes the unset partner
+    // []) so the dialog shows what the worker actually sees, not the
+    // raw stored value (Frank rd-2 P1).
+    setLangEdit(effectiveLanguageEditRights(user));
+    setLangPublish(effectiveLanguagePublishRights(user));
+    setModeEdit(effectiveModeEditRights(user));
+    setModePublish(effectiveModePublishRights(user));
     setPassword("");
     setErrorText(null);
     updateUser.reset();
@@ -159,22 +158,15 @@ export function AdminUserEditDialog({
     }
 
     // Send BOTH verb-perms when either changed (#181 review F2). The
-    // worker's partner-aware deny rule (rightsFor) treats an unset
-    // verb-perm as `[]` whenever the partner verb is explicit, so a
-    // partial save would silently strip access on the verb the admin
-    // didn't touch. Persisting both with their dialog state — even
-    // unchanged — preserves admin intent exactly. Both fields must be
-    // defined; the dialog state is always defined post-mount via the
-    // effectiveLangRights fallback for languages and the legacy
-    // suppression for modes.
-    const initialLangEdit = effectiveLangRights(
-      user,
-      user.language_edit_rights
-    );
-    const initialLangPublish = effectiveLangRights(
-      user,
-      user.language_publish_rights
-    );
+    // worker's partner-aware deny rule treats an unset verb-perm as
+    // `[]` whenever the partner is explicit, so a partial save would
+    // silently strip access on the verb the admin didn't touch.
+    // Persisting both with their effective initial state preserves
+    // admin intent exactly. Initial values come from the worker-
+    // effective helpers (Frank rd-2 P1) so the diff is against what
+    // the worker ACTUALLY sees, not the raw stored shape.
+    const initialLangEdit = effectiveLanguageEditRights(user);
+    const initialLangPublish = effectiveLanguagePublishRights(user);
     const langEditChanged = diffRights(initialLangEdit, langEdit);
     const langPublishChanged = diffRights(initialLangPublish, langPublish);
     if (langEditChanged || langPublishChanged) {
@@ -182,11 +174,10 @@ export function AdminUserEditDialog({
       if (langPublish !== undefined) body.language_publish_rights = langPublish;
     }
 
-    const modeEditChanged = diffRights(user.mode_edit_rights, modeEdit);
-    const modePublishChanged = diffRights(
-      user.mode_publish_rights,
-      modePublish
-    );
+    const initialModeEdit = effectiveModeEditRights(user);
+    const initialModePublish = effectiveModePublishRights(user);
+    const modeEditChanged = diffRights(initialModeEdit, modeEdit);
+    const modePublishChanged = diffRights(initialModePublish, modePublish);
     if (modeEditChanged || modePublishChanged) {
       if (modeEdit !== undefined) body.mode_edit_rights = modeEdit;
       if (modePublish !== undefined) body.mode_publish_rights = modePublish;
