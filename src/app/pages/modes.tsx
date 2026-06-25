@@ -106,9 +106,11 @@ export function ModesPage() {
   const canPublishSelected =
     selectedMode !== null && hasRights(modePublishRights, selectedMode);
   const canDeleteSelected = canEditSelected && canPublishSelected;
-  // Rename reslugs a published mode's identity — gate it as strictly as
-  // delete (both verbs). Mirrors the worker's edit+publish gate (#232).
-  const canRenameSelected = canEditSelected && canPublishSelected;
+  // Rename is admin/cross-org only (#238 review). Per-user mode rights are
+  // slug-scoped, so a non-admin shepherd renaming a mode would lock
+  // themselves out of the renamed slug. Mirror the worker gate, which
+  // 403s any non-admin same-org rename.
+  const canRenameSelected = isAdmin || isCrossOrg;
 
   // Local document draft (auto-save target).
   //

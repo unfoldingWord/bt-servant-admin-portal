@@ -215,10 +215,8 @@ function computeRequiredVerbsForPut(
 //      both verbs, reject before consuming the body. Keeps bodyless
 //      probes (DELETE, GET-with-method-override, malformed PUTs) on
 //      the 403 path rather than a downstream 400.
-//   5. DELETE / POST → requires BOTH edit + publish on the row. Deletion
-//      is strictly more destructive than either alone; POST is the
-//      mode `_rename` op (#232), which reslugs a mode's canonical
-//      identity — gated as destructively as deletion.
+//   5. DELETE → requires BOTH edit + publish on the row. Deletion is
+//      strictly more destructive than either alone.
 //   6. PUT → diff body vs current and require the union of verbs the
 //      diff implies (`edit` if any editorial field changed, `publish`
 //      if the published flag flipped).
@@ -268,11 +266,7 @@ async function gateConfigMutation(
     return { error: errorResponse("Forbidden", 403) };
   }
 
-  // DELETE and POST (mode `_rename`, #232) both require the full
-  // edit+publish pair. The gate never consumes the body on these paths,
-  // so the downstream proxy reads the `_rename` `{ newName }` payload
-  // intact.
-  if (request.method === "DELETE" || request.method === "POST") {
+  if (request.method === "DELETE") {
     if (
       !hasRights(rightsFor(session, kind, "edit"), name) ||
       !hasRights(rightsFor(session, kind, "publish"), name)
@@ -395,27 +389,27 @@ export async function handleConfig(
     );
   }
 
-  // /api/config/modes/{name}/_rename → POST (per-mode verb-perms,
-  // both edit+publish, admin-trump). Matched BEFORE the generic mode
-  // route below — the `(.+)` there would otherwise capture
-  // `{name}/_rename` as the mode name and reject POST as 405. The
-  // engine (#232) reslugs the mode in place and keeps the old slug as
-  // an alias so existing user assignments aren't stranded.
+  // /api/config/modes/{name}/_rename → POST. Matched BEFORE the generic
+  // mode route below — the `(.+)` there would otherwise capture
+  // `{name}/_rename` as the mode name and reject POST as 405. The engine
+  // (#232) reslugs the mode in place and keeps the old slug as an alias
+  // so existing user assignments aren't stranded.
+  //
+  // Restricted to admins + super-admin cross-org. Per-user mode rights
+  // are slug-scoped (`mode_edit_rights` / `mode_publish_rights`), so a
+  // non-admin shepherd who renamed a mode would keep rights on the OLD
+  // slug and lose access to the renamed mode — and the worker would 403
+  // their later `/modes/{newName}` calls (#238 review). Until rights
+  // migration exists, only admins (blanket mode access) and cross-org
+  // super-admins (per-row gate bypassed anyway) may rename.
   const modeRenameMatch = pathname.match(
     /^\/api\/config\/modes\/(.+)\/_rename$/
   );
   if (modeRenameMatch?.[1]) {
     const modeName = decodeURIComponent(modeRenameMatch[1]);
-    const gate = await gateConfigMutation(
-      request,
-      env,
-      session,
-      resolved.org,
-      "mode",
-      modeName,
-      resolved.crossOrg
-    );
-    if ("error" in gate) return gate.error;
+    if (!resolved.crossOrg && !hasAdminPowers(session)) {
+      return errorResponse("Forbidden", 403);
+    }
     return proxyToEngine(
       request,
       env,

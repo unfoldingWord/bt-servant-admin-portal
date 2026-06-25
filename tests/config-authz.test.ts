@@ -819,11 +819,13 @@ describe("config authz — #181 verb-perms (modes)", () => {
 // ---------------------------------------------------------------------------
 //
 // Rename reslugs a mode's canonical identity in place (the engine keeps the
-// old slug as an alias so assigned users aren't stranded). The BFF gates it
-// on BOTH edit + publish — as destructive as DELETE — and proxies the POST
-// (with its `{ newName }` body) to the engine `_rename` op. The dedicated
-// route must be matched before the generic `modes/{name}` route, which would
-// otherwise swallow `{name}/_rename` and 405 the POST.
+// old slug as an alias so assigned users aren't stranded). The BFF restricts
+// it to admins + super-admin cross-org and proxies the POST (with its
+// `{ newName }` body) to the engine `_rename` op. Non-admin shepherds are
+// blocked even with full per-row rights: their mode rights are slug-scoped
+// and a rename would lock them out of the renamed slug (#238 review). The
+// dedicated route must be matched before the generic `modes/{name}` route,
+// which would otherwise swallow `{name}/_rename` and 405 the POST.
 
 function makeRenameRequest(name: string, newName: string): Request {
   return new Request(
@@ -877,31 +879,10 @@ describe("config authz — #232 mode rename (_rename)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("non-admin with edit only → 403 (publish missing, like DELETE)", async () => {
-    const fetchSpy = spyFetch();
-    const res = await handleConfig(
-      makeRenameRequest("spoken", "conversation"),
-      env,
-      makeSession({ mode_edit_rights: ["spoken"] }),
-      "/api/config/modes/spoken/_rename"
-    );
-    expect(res.status).toBe(403);
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("non-admin with publish only → 403 (edit missing)", async () => {
-    const fetchSpy = spyFetch();
-    const res = await handleConfig(
-      makeRenameRequest("spoken", "conversation"),
-      env,
-      makeSession({ mode_edit_rights: [], mode_publish_rights: ["spoken"] }),
-      "/api/config/modes/spoken/_rename"
-    );
-    expect(res.status).toBe(403);
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("non-admin with BOTH edit+publish on the row → proxies POST", async () => {
+  it("non-admin with BOTH edit+publish on the row → 403 (rename is admin-only)", async () => {
+    // The crux of the #238 review: full per-row rights are NOT enough.
+    // Mode rights are slug-scoped, so letting a shepherd rename would lock
+    // them out of the renamed slug. Only admins/cross-org may rename.
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeRenameRequest("spoken", "conversation"),
@@ -912,9 +893,8 @@ describe("config authz — #232 mode rename (_rename)", () => {
       }),
       "/api/config/modes/spoken/_rename"
     );
-    expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("POST");
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("super-admin cross-org via ?org=other → proxies to /orgs/other/.../_rename", async () => {
