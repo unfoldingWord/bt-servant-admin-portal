@@ -189,6 +189,55 @@ export async function deleteMode(
   }
 }
 
+// Engine mode-op endpoints (`_rename`) reject with a JSON `{ error }` body
+// (validation 400 / not-found 404 / slug-collision 409). Surface that
+// message rather than the raw `{"error":"…"}` blob so the rename dialog can
+// show e.g. "Mode 'x' already exists" inline. Falls back to plain text for
+// non-JSON error bodies.
+async function readModeOpError(res: Response): Promise<string> {
+  const text = await res.text().catch(() => "");
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown };
+    if (typeof parsed.error === "string") return parsed.error;
+  } catch {
+    // Body wasn't JSON — fall through to the raw text.
+  }
+  return text;
+}
+
+// Reslug a mode in place via the engine's `_rename` op (#232). The engine
+// preserves the old slug as an alias so users already assigned to the mode
+// keep resolving — no one is stranded in "no mode". Returns the renamed
+// mode (new canonical `name`). The worker BFF gates this on edit+publish.
+export async function renameMode(
+  name: string,
+  newName: string,
+  signal?: AbortSignal,
+  org?: string | null
+): Promise<PromptMode> {
+  const res = await fetch(
+    buildConfigUrl(
+      `/api/config/modes/${encodeURIComponent(name)}/_rename`,
+      org
+    ),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
+      body: JSON.stringify({ newName }),
+      signal,
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(
+      `Failed to rename mode (${res.status}): ${await readModeOpError(res)}`
+    );
+  }
+
+  // Same `{ org, mode, message }` envelope as putMode/getMode.
+  return unwrapModeResponse((await res.json()) as Record<string, unknown>);
+}
+
 // ---------------------------------------------------------------------------
 // Per-user memory
 // ---------------------------------------------------------------------------

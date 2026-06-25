@@ -26,6 +26,7 @@ import {
   useDeleteMode,
   useMode,
   useModes,
+  useRenameMode,
   useSaveMode,
 } from "@/hooks/use-prompt-config";
 import type { MarkdownHeading } from "@/types/markdown";
@@ -79,6 +80,7 @@ export function ModesPage() {
   const modeQuery = useMode(selectedMode, contextOrg);
   const saveMode = useSaveMode(contextOrg);
   const deleteMode = useDeleteMode(contextOrg);
+  const renameMode = useRenameMode(contextOrg);
 
   // Filter modes to those the user has any verb on (admin/cross-org
   // sees everything via the `*` short-circuit above). Mirrors
@@ -104,6 +106,9 @@ export function ModesPage() {
   const canPublishSelected =
     selectedMode !== null && hasRights(modePublishRights, selectedMode);
   const canDeleteSelected = canEditSelected && canPublishSelected;
+  // Rename reslugs a published mode's identity — gate it as strictly as
+  // delete (both verbs). Mirrors the worker's edit+publish gate (#232).
+  const canRenameSelected = canEditSelected && canPublishSelected;
 
   // Local document draft (auto-save target).
   //
@@ -382,6 +387,17 @@ export function ModesPage() {
     [deleteMode, selectedMode, setSelectedMode]
   );
 
+  const handleRenameMode = useCallback(
+    async (name: string, newName: string) => {
+      await renameMode.mutateAsync({ name, newName });
+      // Follow the selection to the new slug so the editor re-syncs the
+      // doc under the renamed identity instead of orphaning on the old
+      // (now alias-only) name.
+      if (name === selectedMode) setSelectedMode(newName);
+    },
+    [renameMode, selectedMode, setSelectedMode]
+  );
+
   const handleJumpToLine = useCallback((line: number) => {
     editorRef.current?.jumpToLine(line);
   }, []);
@@ -391,7 +407,7 @@ export function ModesPage() {
 
   const error =
     modesQuery.error || (selectedMode !== null ? modeQuery.error : null);
-  const saveError = saveMode.error ?? deleteMode.error;
+  const saveError = saveMode.error ?? deleteMode.error ?? renameMode.error;
 
   const saveStatus = useMemo(() => {
     if (isSaving) return "Saving…";
@@ -419,14 +435,22 @@ export function ModesPage() {
               onCreateMode={handleCreateMode}
               onDeleteMode={handleDeleteMode}
               onSetPublished={handleSetPublished}
+              onRenameMode={handleRenameMode}
               isCreating={saveMode.isPending}
               isDeleting={deleteMode.isPending}
+              isRenaming={renameMode.isPending}
               isSettingPublished={saveMode.isPending}
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
               canCreate={canCreate}
               canPublishSelected={canPublishSelected}
               canDeleteSelected={canDeleteSelected}
+              canRenameSelected={canRenameSelected}
+              renameDisabledReason={
+                isDirty || isSaving
+                  ? "Save your changes before renaming."
+                  : null
+              }
             />
           </div>
 

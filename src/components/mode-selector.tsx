@@ -1,7 +1,15 @@
 import { useCallback, useState } from "react";
 import { faLayerGroup } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Eye, EyeOff, Plus, Send, SendHorizontal, Trash2 } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  Pencil,
+  Plus,
+  Send,
+  SendHorizontal,
+  Trash2,
+} from "lucide-react";
 
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import type { OrgModes, PromptMode } from "@/types/prompt-override";
@@ -38,8 +46,12 @@ interface ModeSelectorProps {
       and stay open so the user can read it (#102). */
   onDeleteMode: (name: string) => Promise<void>;
   onSetPublished: (name: string, published: boolean) => Promise<void>;
+  /** Reslug a mode in place (#232). Like onDeleteMode, must reject on
+      error so the rename dialog can surface it inline and stay open. */
+  onRenameMode: (name: string, newName: string) => Promise<void>;
   isCreating: boolean;
   isDeleting: boolean;
+  isRenaming: boolean;
   isSettingPublished: boolean;
   showDrafts: boolean;
   onToggleShowDrafts: (showDrafts: boolean) => void;
@@ -51,10 +63,28 @@ interface ModeSelectorProps {
   canCreate: boolean;
   canPublishSelected: boolean;
   canDeleteSelected: boolean;
+  canRenameSelected: boolean;
+  /** Non-null disables the Rename trigger and shows the string as its
+      tooltip — used to block rename while the editor has unsaved edits
+      (renaming re-syncs the doc under the new slug and would drop them). */
+  renameDisabledReason: string | null;
 }
 
 function isPublished(mode: Pick<PromptMode, "published">): boolean {
   return mode.published === true;
+}
+
+// Canonical mode-slug normalization, shared by the create and rename
+// flows: lowercase, spaces → hyphens, drop anything outside
+// [a-z0-9-_], trim leading/trailing hyphens. The engine validates the
+// result again server-side.
+function slugify(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9\-_]/g, "")
+    .replace(/^-+|-+$/g, "");
 }
 
 export function ModeSelector({
@@ -64,14 +94,18 @@ export function ModeSelector({
   onCreateMode,
   onDeleteMode,
   onSetPublished,
+  onRenameMode,
   isCreating,
   isDeleting,
+  isRenaming,
   isSettingPublished,
   showDrafts,
   onToggleShowDrafts,
   canCreate,
   canPublishSelected,
   canDeleteSelected,
+  canRenameSelected,
+  renameDisabledReason,
 }: ModeSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -86,6 +120,9 @@ export function ModeSelector({
   const [unpublishError, setUnpublishError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const handleConfirmUnpublish = useCallback(() => {
     if (selectedMode === null) return;
@@ -107,6 +144,28 @@ export function ModeSelector({
     );
   }, [onDeleteMode, selectedMode]);
 
+  const handleConfirmRename = useCallback(() => {
+    if (selectedMode === null) return;
+    const slug = slugify(renameValue);
+    if (!slug) {
+      setRenameError("Enter a valid name (letters, numbers, hyphens).");
+      return;
+    }
+    if (slug === selectedMode) {
+      setRenameError("New name must differ from the current name.");
+      return;
+    }
+    return runConfirmedAction(
+      () => onRenameMode(selectedMode, slug),
+      setRenameError,
+      () => {
+        setRenameOpen(false);
+        setRenameValue("");
+      },
+      "Failed to rename mode."
+    );
+  }, [onRenameMode, renameValue, selectedMode]);
+
   const modes = modesData?.modes ?? [];
   const selectedModeData = modes.find((m) => m.name === selectedMode) ?? null;
   const selectedIsPublished = selectedModeData
@@ -120,12 +179,7 @@ export function ModeSelector({
   );
 
   const handleCreate = useCallback(() => {
-    const slug = newName
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9\-_]/g, "")
-      .replace(/^-+|-+$/g, "");
+    const slug = slugify(newName);
     if (!slug) return;
     onCreateMode(slug, newLabel.trim(), newDescription.trim());
     setNewName("");
@@ -276,6 +330,78 @@ export function ModeSelector({
                   Publish
                 </Button>
               ))}
+
+            {canRenameSelected && (
+              <AlertDialog
+                open={renameOpen}
+                onOpenChange={(next) => {
+                  setRenameOpen(next);
+                  if (next) {
+                    // Prefill with the current slug so the user edits
+                    // from it rather than retyping; clear stale errors.
+                    setRenameValue(selectedMode);
+                    setRenameError(null);
+                  } else {
+                    setRenameError(null);
+                    setRenameValue("");
+                  }
+                }}
+              >
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isRenaming || renameDisabledReason !== null}
+                    title={renameDisabledReason ?? undefined}
+                  >
+                    <Pencil className="mr-1.5 size-3.5" />
+                    Rename
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Rename mode</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Change the slug for{" "}
+                      <span className="text-foreground font-medium">
+                        &ldquo;{selectedMode}&rdquo;
+                      </span>
+                      . Existing users stay assigned &mdash; the old name keeps
+                      working as an alias, so no one is left without a mode.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="mode-rename" className="text-xs">
+                      New name (slug)
+                    </Label>
+                    <Input
+                      id="mode-rename"
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      placeholder="e.g. conversation"
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  {renameError && (
+                    <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+                      {renameError}
+                    </p>
+                  )}
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isRenaming}>
+                      Cancel
+                    </AlertDialogCancel>
+                    {/* Plain Button — see comment in Unpublish dialog above. */}
+                    <Button
+                      onClick={handleConfirmRename}
+                      disabled={isRenaming || !renameValue.trim()}
+                    >
+                      {isRenaming ? "Renaming…" : "Rename"}
+                    </Button>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
 
             {canDeleteSelected && (
               <AlertDialog

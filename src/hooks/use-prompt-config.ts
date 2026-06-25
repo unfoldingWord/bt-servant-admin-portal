@@ -108,6 +108,24 @@ export function useDeleteMode(org?: string | null) {
   });
 }
 
+// Reslug a mode in place (#232). Invalidate the list plus BOTH the old and
+// new per-mode caches: the old slug's entry is now stale (the engine keeps
+// it only as an alias), and the new slug needs a fresh fetch so the editor
+// re-syncs under the renamed identity.
+export function useRenameMode(org?: string | null) {
+  const qc = useQueryClient();
+  const key = normalize(org);
+  return useMutation({
+    mutationFn: ({ name, newName }: { name: string; newName: string }) =>
+      configApi.renameMode(name, newName, undefined, key),
+    onSuccess: (_data, { name, newName }) => {
+      void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
+      void qc.invalidateQueries({ queryKey: keys.mode(newName, key) });
+    },
+  });
+}
+
 export function useSetUserMode(org?: string | null) {
   const key = normalize(org);
   return useMutation({
