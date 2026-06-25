@@ -13,6 +13,7 @@ import { useSessionGuard } from "@/hooks/use-session-guard";
 import { AppShell } from "@/components/app-shell";
 import { RequireAdmin } from "@/components/require-admin";
 import { RequireAuth } from "@/components/require-auth";
+import { RequireModeAccess } from "@/components/require-mode-access";
 import { AdminUsersPage } from "@/app/pages/admin-users";
 import { BaruchPage } from "@/app/pages/baruch";
 import { LanguagesPage } from "@/app/pages/languages";
@@ -50,9 +51,9 @@ const router = createBrowserRouter([
           {
             path: "modes",
             element: (
-              <RequireAdmin>
+              <RequireModeAccess>
                 <ModesPage />
-              </RequireAdmin>
+              </RequireModeAccess>
             ),
           },
           {
