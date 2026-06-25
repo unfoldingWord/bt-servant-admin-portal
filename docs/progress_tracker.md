@@ -4,10 +4,10 @@
 
 ## Current Status
 
-**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **Track E phase 1 step 2 entered today** — #181 verb-perms schema + lazy migration shipped (PR #234). Both prod-promotion carryovers cleared in one window: portal v1.9.0 deployed by Ian (42-day gap), web-client CHAT_ORG_KV stack deployed by Ian (55-day gap, first chat-app prod since 2026-04-30). #230 (resource visibility panel) assigned by Elsy + design memo posted; blocked on Elsy/Ian product+contract decisions. Track E phase 1 step 1 (#154 ↔ worker#94 reconciliation) still un-picked.
-**Last Updated**: 2026-06-24
+**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **Track E phase 1 step 2 complete** — #181 verb-perms enforcement + UI shipped end-to-end (PR #234 + PR #236, closes EPIC #181) and live in staging at HEAD `e46d32b`. Elsy locked her three #230 product decisions overnight; Ian's three worker-#257 contract questions still open (no portal code possible until they lock). Track E phase 1 step 1 (#154 ↔ worker#94 reconciliation) still un-picked.
+**Last Updated**: 2026-06-25
 **Demo target**: June 9 (passed) — outcome to be summarized
-**Last prod deploy**: 2026-06-24 (HEAD `3bebe24` / v1.9.0) — portal promoted by Ian at 15:55 UTC; web-client also promoted same day (first ever post-#41 chat-app prod)
+**Last prod deploy**: 2026-06-24 (HEAD `3bebe24` / v1.9.0) — portal promoted by Ian at 15:55 UTC; web-client also promoted same day (first ever post-#41 chat-app prod). Staging is 1 commit ahead at `e46d32b` (#181 verb-perms PR 2)
 
 ## Milestones
 
@@ -41,7 +41,7 @@
 | Portal prod promotion (v1.9.0)            | 100%     | Shipped 2026-06-24 — Ian promoted v1.9.0 to prod (HEAD `3bebe24`); closes 42-day promotion gap from 2026-05-13                                                                                                                       |
 | Web-client prod promotion                 | 100%     | Shipped 2026-06-24 — Ian promoted CHAT_ORG_KV stack to prod; **first chat-app prod deploy since 2026-04-30** (55-day gap)                                                                                                            |
 | Orphan `McpServerConfig` cleanup          | 100%     | Shipped 2026-06-24 (PR #233) — deletes unused interface from project-kickoff scaffolding                                                                                                                                             |
-| #181 verb-perms schema (PR 1 of 2)        | 50%      | Shipped 2026-06-24 (PR #234) — schema + lazy migration + 16 tests. PR 2 (enforcement gates + RightsSelector matrix UI) is next; unblocked                                                                                            |
+| #181 verb-perms — end-to-end              | 100%     | Shipped 2026-06-25 (PR #234 + PR #236, EPIC closed). BFF verb-perms gate (diff-based per-verb authz with partner-aware deny), 4-selector dialog, editor readOnly + Save/autosave gates, RequireModeAccess route guard, 354/354 tests |
 | #230 resource visibility panel            | 5%       | Assigned 2026-06-24 by Elsy; design memo posted with 6 open questions for Elsy + Ian. Blocked on worker #257 (MCP resource-list endpoint, Ian's lane) before substantive portal work                                                 |
 
 ### Per-PR ephemeral CF Workers — Shipped
@@ -94,6 +94,75 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-06-25 — #181 PR 2 shipped end-to-end (5 commits, 4 Frank review rounds); EPIC #181 closed; staging deployed
+
+**Context entering the session:** Yesterday's #181 PR 1 (schema + lazy migration) shipped at `3bebe24`. Today's plan from the 2026-06-24 EOD: pick up PR 2 (enforcement + UI). #230 was waiting on Elsy/Ian. Two other follow-ups (web-client #42 disposition, Track E phase 1 step 1) parked.
+
+**Completed:**
+
+- **#230 morning check-in.** Read Elsy's overnight reply locking the three product decisions: granularity = per-subject/category with expandable rows (defensible under probabilistic RAG, BSK trust signal preserved via expansion view), language × mode product = per-mode only with language as display-time resolution, default for uncurated = everything in server-default order. Her last paragraph surfaced a NEW design choice the memo hadn't: **exclusion capability is server-dependent** — translation-helps and Aquifer can't enforce exclusion (probabilistic), FIA / Johan's server can (filter at MCP level). Posted ack-and-nudge comment on #230 confirming the three locks in my own words, raising the exclusion-capability axis as a new (i)/(ii)/(iii) choice with lean toward (i) hide-affordance-per-server, and re-pinged @IanLindsley on the three open contract questions for worker #257.
+
+- **PR #236 — #181 PR 2 (enforcement + UI) shipped end-to-end.** Merged at `e46d32b` 2026-06-25 18:08 UTC. **Five commits over the day across the initial implementation + four Frank review rounds**:
+  1. **Initial implementation** (`6ec71ea`, 1314+/89-). BFF verb-perms gate (`worker/config.ts:gateConfigMutation`) diffs PUT body against current engine state to determine which verbs the diff implies — necessary because the portal always sends both `document` and `published` on every PUT, so naive presence-based intent doesn't work. DELETE requires both verbs. Asymmetric admin trump: cross-org super-admin bypasses everything; admin trumps per-row FOR MODES ONLY (preserves pre-#181 "admin can edit all modes" while keeping the per-language same-org gate intact per PR #185). Mode-baseline gate blocks non-admin shepherds without any explicit grant. 4-selector dialog (`rights-selector.tsx` renamed from `language-rights-selector.tsx`, parameterized over `kind` ∈ {language, mode} and `verb` ∈ {edit, publish}). Both Admin User dialogs wired with the 4 selectors. Mode footgun guard: undefined for a mode verb past the baseline returns `[]` (not legacy full). Union helpers (`hasAnyLanguageAccess`, `hasAnyModeAccess`, `filterByAnyRights`). 16 verb-perms tests + 10 verb-diff pure-function tests + 5 union-helper tests = +43, 293 → 336.
+
+  2. **`/code-review xhigh` round** (`139c3e7`, 12 of 15 findings addressed). Reading the workflow output surfaced several real issues including: F1 — `rightsFor` language fallback returned undefined (legacy full) when both explicit and legacy were missing → privilege escalation on partial verb-perms (tightened to partner-aware deny mirroring modes); F3 — clicking "Specific" radio on a legacy-undefined value clobbered full access to `[]` in one click → pre-populate all items for languages; F8 — dialogs used caller's-org item lists, so super-admin creating users in another org granted wrong names → moved fetches into each dialog with target-org param; F10 — `diffRights` JSON.stringify was order-sensitive → sort normalize; F11 — engine GET 5xx → 502 broke autosaves → fall through as null (creation, conservative); F15 — engine row without `published` field caused false 403s → `current.published ?? false`; F4/F12/F13 — page gates still read legacy `language_rights` → migrated to union helpers, `hasAnyModeAccess({}) → false` to match worker baseline; F6 — mode legacy hint claimed a privilege legacy non-admins never had → suppressed; F7 — Users-table column showed only legacy field → replaced with effective verb-perms 2×2 access grid. F5 (no-op PUT bypass) refuted as early-deny already covers it; F9 (useEffect clobber) pre-existing in PR 1; F14 (speculative). +6 tests (336 → 342).
+
+  3. **Frank rd-1** (`adba072`). Three P1/P2 findings: (P1) **auth.ts defeated the partner-aware deny** — `validateSession` + `handleLogin` materialized missing `language_*_rights` from `language_rights` BEFORE the session reached `rightsFor`, so the partner-aware check in the gate never fired for stored partial-state users. Factored `lazyMigrateLanguageRights(user)` shared by both auth paths: when either verb is explicit, the unset partner falls back to `[]` (not legacy). Only both-unset users get legacy back-compat. Existing test that asserted `publish:["en"]` for a partial-storage user encoded the bug — flipped to assert `[]`, plus 2 new tests for Frank's exact scenario. (P1) **Selectors hid publish/delete behind isAdmin** despite worker now allowing non-admin shepherds with publish-rights → replaced `isAdmin` prop with `canCreate` / `canPublishSelected` / `canDeleteSelected` flags in both LanguageSelector + ModeSelector. (P2) **Modes page exposed all modes** to non-admin shepherds and enabled edit attempts on unauthorized rows → ModesPage now mirrors LanguagesPage with `filterByAnyRights`, selection-cleanup useEffect, per-row gates. +2 auth tests.
+
+  4. **Frank rd-2** (`e1b7aee`). Two more findings: (P1) **Edit dialog + AccessSummary used the old `verb ?? language_rights` fallback** which after the auth.ts fix no longer matches worker semantics → admin sees publish="\*", touches another field, F2's both-verbs persist logic widens publish explicitly. Factored four `effective{Language,Mode}{Edit,Publish}Rights` helpers mirroring `lazyMigrateLanguageRights` on the client; wired at every site that needs worker-equivalent reads (dialog populate + diff baseline, AccessSummary, page-level editRights/publishRights). (P2) **Publish-only users got writable editor** that 403s on autosave → both pages compute `canEditSelected`, pass to `MarkdownEditor readOnly`, Save button `disabled`, and autosave useEffect short-circuit. +10 tests for the helpers (344 → 354).
+
+  5. **Frank rd-3** (`91fdec1`). One P1: **`/modes` route still wrapped in RequireAdmin** even though activity-bar opens it for `hasAnyModeAccess` → created `RequireModeAccess` route guard (admin OR hasAnyModeAccess) and swapped into App.tsx for `/modes` only. `/admin/users` and `/prompt-configuration` remain admin-only.
+
+- **#181 EPIC closed.** GitHub auto-closed via `Closes #181` keyword in the PR body. Posted a comment with the closeout summary listing all acceptance criteria met across PR 1 + PR 2 and the staging deploy link.
+
+- **Staging deploy succeeded** end-to-end on `e46d32b` — deploy-staging.yml workflow run 25530389396 success, ~1m total wall-clock. Staging now serving the verb-perms enforcement + 4-selector dialog + readOnly publish-only editor.
+
+**Day rollup:**
+
+| Merged | Commit                                                | Closes                                            |
+| ------ | ----------------------------------------------------- | ------------------------------------------------- |
+| #236   | `e46d32b` (squash of 5 commits on the feature branch) | EPIC #181 (auto-closed via `Closes #181` keyword) |
+
+**Issues closed today:** #181.
+**Issues filed today:** none.
+**Comments posted:** Elsy on #230 (ack-and-nudge with the exclusion-capability axis), #181 closeout summary.
+
+**In Progress:**
+
+- None code-wise.
+
+**Blockers / Carryover:**
+
+- **#230 — Elsy locked, Ian still pending.** Three product decisions locked overnight; three contract questions still out to Ian on worker #257. Substantive portal code blocked until Q6 (where the curated priority list lives at write time) lands.
+- **Track E phase 1 step 1 (#154 ↔ worker#94 reconciliation)** — still un-picked. Foundational unlock for #155/#156/#160/#183. Phase 1 step 2 (#181) is now done, so this is the natural next slice — but it needs Seth+Ian deliberation on KV namespace placement before implementation.
+- **web-client#42 disposition** — still open from 2026-06-13. Frame is correct (Node-22 sandbox issue, not project regression) but the CI Build job is still removed. ~10 min PR to restore or close-as-wrong-framing.
+- **Demo (June 9) retrospective** — 16 days stale.
+- **Track G #215 Path B Zulip draft** — unsent from 2026-05-28.
+- **Cascade design (Track B) implementation** — #170/#172 — design locked, gated on Ian's `ORG_CONFIG` vs new `SYSTEM_CONFIG` KV decision.
+
+**Patterns / decisions captured this session:**
+
+- **Lazy-migration sites must encode any new business rule, not just enforcement sites.** Frank caught that the partner-aware deny in `worker/config.ts:rightsFor` was defeated by `worker/auth.ts`'s `??` fallback — auth.ts pre-filled the unset verb from `language_rights` before the session reached the gate, so the gate's partner-aware branch never fired. Lesson: when introducing a new rule that interacts with an existing migration, the migration site has to apply the rule too. Adding the check downstream isn't enough. Captured as memory [[project_lazy_migration_pattern]] needs an update with this nuance.
+
+- **Client-side "worker effective" needs explicit mirror helpers.** Frank's rd-2 P1 was the dialog + AccessSummary showing `publish="*"` for a user the worker treats as `publish=[]` — the naive `verb ?? language_rights` matched the OLD migration but not the new partner-aware rule. Lesson: any client-side computation that answers "what does the worker see?" needs a named helper that mirrors the worker logic exactly, not an ad-hoc `??` chain. Factored four `effective{Language,Mode}{Edit,Publish}Rights` helpers as the source of truth for this projection.
+
+- **Per-row capability needs end-to-end gating, not partial.** Frank's rd-2 P2 was the publish-only user with a writable editor that 403s on autosave. Just hiding the publish button isn't enough — the editor itself needs `readOnly`, Save needs `disabled`, autosave needs to skip. Three places must agree on the capability boolean. Lesson: when introducing a per-row capability for a multi-state UI, enumerate every site that produces a wire request (or accepts user input that leads to one) and gate them all.
+
+- **Route guards must follow sidebar gates.** Frank's rd-3 P1 was a sidebar-shows-but-route-bounces inconsistency. Lesson: when loosening a sidebar gate (e.g., showing Modes for non-admin shepherds), check the route guard — they're parallel surfaces and need to agree.
+
+- **`Closes #N` in the PR body auto-closes through squash merges.** Worth re-noting: the EPIC #181 close fired the moment #236 merged. The `Closes #181` keyword in the PR body is the trigger; the squash merge carries the body forward. No need for a separate `gh issue close` step.
+
+- **The workflow-driven `/code-review xhigh` is high-value at this scale.** 15 reportable findings on a 1300-line PR, of which 12 were real fixes (3 were stylistic / pre-existing / speculative). Severity-ranked output let me triage quickly. The 28 refuted findings document what the agents considered and rejected — useful evidence vs. blind trust.
+
+**Next session:**
+
+1. **web-client #42 disposition** — ~10 min cleanup. Restore CI Build on Node 20 OR close as wrong-framing. Either way, the carryover from 2026-06-13 closes.
+2. **Track E phase 1 step 1 (#154 ↔ worker#94 reconciliation)** — only viable self-driven next slice now that #181 is done. Foundational, but needs Ian deliberation on KV namespace. Worth raising at next sync.
+3. **#230 — only if Ian has responded on worker #257.** Substantive portal work still gated; nothing actionable on the portal side until Q6 (storage location) lands.
+4. **Demo retrospective + Phase 1 plan refresh** — increasingly stale.
+
+---
 
 ### 2026-06-24 — Both prod promotions cleared; #181 PR 1 + orphan cleanup shipped; #230 assigned + scoped
 
