@@ -42,7 +42,18 @@ interface LanguageSelectorProps {
   isSettingPublished: boolean;
   showDrafts: boolean;
   onToggleShowDrafts: (showDrafts: boolean) => void;
-  isAdmin: boolean;
+  // #181 verb-perms capabilities, replacing the old `isAdmin` flag.
+  // Languages do NOT carry an admin trump (PR #185 enforced per-row
+  // even for super-admins), so these are pure verb-perm reads computed
+  // by the parent against the user's effective edit/publish rights:
+  //
+  //   canCreate         = user has some edit rights on this org
+  //   canPublishSelected = hasRights(publishRights, selectedLanguage)
+  //   canDeleteSelected  = canPublishSelected && canEditSelected
+  //                       (worker DELETE rule)
+  canCreate: boolean;
+  canPublishSelected: boolean;
+  canDeleteSelected: boolean;
   /** Scaffold template must finish loading before create can fire — new
       languages are pre-populated with the org's scaffold (#74), so creating
       before the scaffold arrives would silently save a blank document. */
@@ -66,7 +77,9 @@ export function LanguageSelector({
   isSettingPublished,
   showDrafts,
   onToggleShowDrafts,
-  isAdmin,
+  canCreate,
+  canPublishSelected,
+  canDeleteSelected,
   isScaffoldReady,
   scaffoldError,
 }: LanguageSelectorProps) {
@@ -182,7 +195,7 @@ export function LanguageSelector({
           {showDrafts ? "Drafts shown" : "Drafts hidden"}
         </Button>
 
-        {isAdmin && (
+        {canCreate && (
           <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
             <Plus className="mr-1.5 size-3.5" />
             New Language
@@ -198,7 +211,7 @@ export function LanguageSelector({
               {selectedIsPublished ? "Published" : "Draft"}
             </Badge>
 
-            {isAdmin &&
+            {canPublishSelected &&
               (selectedIsPublished ? (
                 <AlertDialog
                   open={unpublishOpen}
@@ -271,7 +284,7 @@ export function LanguageSelector({
                 </Button>
               ))}
 
-            {isAdmin && (
+            {canDeleteSelected && (
               <AlertDialog
                 open={deleteOpen}
                 onOpenChange={(next) => {

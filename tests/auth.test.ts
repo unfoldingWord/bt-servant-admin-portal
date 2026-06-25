@@ -155,7 +155,16 @@ describe("validateSession lazy-mapping (#181) — via handleMe", () => {
   // lazy fallback must not clobber them — explicit value wins over the
   // legacy source. Catches the bug shape where the `??` was accidentally
   // reversed.
-  it("user with explicit language_edit_rights → fallback does NOT override the explicit value", async () => {
+  //
+  // Frank P1 (PR 236 review): the partner-aware deny rule means that
+  // when EITHER verb-perm is explicit, the unset partner falls back to
+  // `[]` (deliberate deny), NOT to legacy `language_rights`. Without
+  // this, a stored user with `language_rights: "*"` plus an explicit
+  // edit grant would arrive at worker/config.ts:rightsFor with
+  // `language_publish_rights: "*"` materialized — silently widening
+  // publish past the admin's intent. This test fixture used to expect
+  // the legacy fallback for publish; that behavior is the bug.
+  it("[Frank P1] explicit language_edit_rights → publish becomes [] (partner-aware deny), NOT legacy", async () => {
     const user = await seedUser({
       email: "explicit@acme.com",
       name: "Explicit",
@@ -167,8 +176,45 @@ describe("validateSession lazy-mapping (#181) — via handleMe", () => {
 
     const me = await callMe(session);
     expect(me.language_edit_rights).toEqual(["en", "es", "fr"]);
-    // Publish has no explicit value — still falls back to legacy.
-    expect(me.language_publish_rights).toEqual(["en"]);
+    // Partner-aware deny: edit is explicit, so the unset publish field
+    // is a deliberate gap (= []), NOT legacy ["en"].
+    expect(me.language_publish_rights).toEqual([]);
+  });
+
+  it("[Frank P1] stored language_rights:'*' + language_edit_rights:['spanish'] → publish becomes [] (Frank's verification scenario)", async () => {
+    // Frank's exact scenario: stored user has a legacy wildcard plus
+    // an explicit edit grant on a single language. Pre-fix, the
+    // session would arrive at rightsFor with publish_rights="*" and a
+    // publish flip on ANY language would be allowed. Post-fix, the
+    // session reflects publish=[] and the worker correctly denies.
+    const user = await seedUser({
+      email: "franks-scenario@acme.com",
+      name: "Franks Scenario",
+      org: "acme",
+      language_rights: "*",
+      language_edit_rights: ["spanish"],
+    });
+    const session = await seedLegacySession(user);
+
+    const me = await callMe(session);
+    expect(me.language_rights).toBe("*");
+    expect(me.language_edit_rights).toEqual(["spanish"]);
+    expect(me.language_publish_rights).toEqual([]);
+  });
+
+  it("[Frank P1] stored explicit publish only → edit becomes [] (mirror direction)", async () => {
+    const user = await seedUser({
+      email: "publish-only@acme.com",
+      name: "Publish Only",
+      org: "acme",
+      language_rights: ["en", "fr"],
+      language_publish_rights: ["fr"],
+    });
+    const session = await seedLegacySession(user);
+
+    const me = await callMe(session);
+    expect(me.language_edit_rights).toEqual([]);
+    expect(me.language_publish_rights).toEqual(["fr"]);
   });
 
   it("user with explicit mode_edit_rights → passes through verbatim (no legacy source to interfere)", async () => {

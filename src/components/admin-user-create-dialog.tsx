@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 
-import type { Language } from "@/types/language";
 import type { LanguageRights } from "@/types/auth";
 import {
   AdminUsersForbiddenError,
@@ -8,6 +7,8 @@ import {
   isReservedOrgSlug,
 } from "@/lib/admin-users-api";
 import { useCreateAdminUser } from "@/hooks/use-admin-users";
+import { useLanguages } from "@/hooks/use-languages";
+import { useModes } from "@/hooks/use-prompt-config";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,7 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { LanguageRightsSelector } from "@/components/language-rights-selector";
+import { RightsSelector } from "@/components/rights-selector";
 
 interface CreateUserDialogProps {
   open: boolean;
@@ -33,16 +34,18 @@ interface CreateUserDialogProps {
   // When true, render the editable Org field and the Super-admin checkbox.
   // When false, the dialog matches the original org-admin shape exactly.
   callerIsSuperAdmin: boolean;
-  availableLanguages: Language[] | undefined;
   onCreated?: (email: string) => void;
 }
+
+// New users default to no access on every axis — matches the pre-PR-1
+// "[]" default for `language_rights`. Admin must explicitly grant.
+const EMPTY_RIGHTS: LanguageRights = [];
 
 export function AdminUserCreateDialog({
   open,
   onOpenChange,
   callerOrg,
   callerIsSuperAdmin,
-  availableLanguages,
   onCreated,
 }: CreateUserDialogProps) {
   const createUser = useCreateAdminUser();
@@ -53,8 +56,20 @@ export function AdminUserCreateDialog({
   const [org, setOrg] = useState(callerOrg);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
-  const [rights, setRights] = useState<LanguageRights>([]);
+  const [langEdit, setLangEdit] = useState<LanguageRights>(EMPTY_RIGHTS);
+  const [langPublish, setLangPublish] = useState<LanguageRights>(EMPTY_RIGHTS);
+  const [modeEdit, setModeEdit] = useState<LanguageRights>(EMPTY_RIGHTS);
+  const [modePublish, setModePublish] = useState<LanguageRights>(EMPTY_RIGHTS);
   const [errorText, setErrorText] = useState<string | null>(null);
+
+  // Item lists scoped to the TARGET org. For super-admins typing a
+  // new org slug, the lists refetch as `org` changes so verb-perms
+  // are granted against names that actually exist in the destination
+  // (#181 review F8). React Query caches by query key, so re-typing
+  // the same slug is free.
+  const orgForFetch = (callerIsSuperAdmin ? org : callerOrg).trim() || null;
+  const languagesQuery = useLanguages(orgForFetch);
+  const modesQuery = useModes(orgForFetch);
 
   // Re-sync the Org default if callerOrg changes while the dialog is
   // mounted (rare — only on auth changes). Without this, a stale org
@@ -70,7 +85,10 @@ export function AdminUserCreateDialog({
     setOrg(callerOrg);
     setIsAdmin(false);
     setIsSuperAdmin(false);
-    setRights([]);
+    setLangEdit(EMPTY_RIGHTS);
+    setLangPublish(EMPTY_RIGHTS);
+    setModeEdit(EMPTY_RIGHTS);
+    setModePublish(EMPTY_RIGHTS);
     setErrorText(null);
     createUser.reset();
   };
@@ -121,7 +139,14 @@ export function AdminUserCreateDialog({
         // get a 403 from the worker (it rejects any non-undefined
         // isSuperAdmin from org-scoped admins).
         ...(callerIsSuperAdmin && isSuperAdmin ? { isSuperAdmin: true } : {}),
-        language_rights: rights,
+        // Send all four verb-perms explicitly. Omitting any field on a
+        // brand-new user would leave the worker fallback computing
+        // `undefined ?? undefined === undefined === full access` — silently
+        // widening the user's verb scope past what the admin intended.
+        language_edit_rights: langEdit,
+        language_publish_rights: langPublish,
+        mode_edit_rights: modeEdit,
+        mode_publish_rights: modePublish,
       },
       {
         onSuccess: (user) => {
@@ -207,7 +232,8 @@ export function AdminUserCreateDialog({
                 />
                 <p className="text-muted-foreground text-xs">
                   Free-text slug. Type the name of an existing org to add the
-                  user there, or a new slug to create a fresh org.
+                  user there, or a new slug to create a fresh org. The
+                  mode/language lists below refresh as you type.
                 </p>
               </div>
             )}
@@ -264,10 +290,33 @@ export function AdminUserCreateDialog({
               </label>
             )}
 
-            <LanguageRightsSelector
-              value={rights}
-              onChange={setRights}
-              availableLanguages={availableLanguages}
+            <RightsSelector
+              kind="language"
+              verb="edit"
+              value={langEdit}
+              onChange={setLangEdit}
+              availableItems={languagesQuery.data?.languages}
+            />
+            <RightsSelector
+              kind="language"
+              verb="publish"
+              value={langPublish}
+              onChange={setLangPublish}
+              availableItems={languagesQuery.data?.languages}
+            />
+            <RightsSelector
+              kind="mode"
+              verb="edit"
+              value={modeEdit}
+              onChange={setModeEdit}
+              availableItems={modesQuery.data?.modes}
+            />
+            <RightsSelector
+              kind="mode"
+              verb="publish"
+              value={modePublish}
+              onChange={setModePublish}
+              availableItems={modesQuery.data?.modes}
             />
 
             {errorText && (

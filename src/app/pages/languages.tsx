@@ -8,9 +8,12 @@ import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
 import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
-  filterAuthorizedLanguages,
-  hasAnyLanguageRights,
-  hasLanguageRights,
+  effectiveLanguageEditRights,
+  effectiveLanguagePublishRights,
+  filterByAnyRights,
+  hasAnyLanguageAccess,
+  hasAnyRights,
+  hasRights,
 } from "@/lib/permissions";
 import { useUiStore } from "@/lib/ui-store";
 import { useDebounced } from "@/hooks/use-debounced";
@@ -45,8 +48,7 @@ import { PageHeader } from "@/components/page-header";
 const AUTO_SAVE_DEBOUNCE_MS = 800;
 
 export function LanguagesPage() {
-  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
-  const languageRights = useAuthStore((s) => s.user?.language_rights);
+  const user = useAuthStore((s) => s.user);
   const selectedLanguage = useUiStore((s) => s.selectedLanguage);
   const setSelectedLanguage = useUiStore((s) => s.setSelectedLanguage);
   const showDrafts = useUiStore((s) => s.showDrafts);
@@ -55,14 +57,33 @@ export function LanguagesPage() {
   const setContextOrg = useUiStore((s) => s.setContextOrg);
 
   // Cross-org reuses the worker's PR A carve-out: super-admins bypass
-  // `hasLanguageRights` when editing a different org's languages, because
-  // shepherd rights are scoped to the user's home org and don't translate
-  // to a foreign namespace. Treat the effective rights as full-access in
-  // that case so the same filter/gate logic continues to work without a
-  // separate cross-org code path.
+  // per-row rights when editing a different org's languages, because
+  // shepherd rights are scoped to the user's home org and don't
+  // translate to a foreign namespace. Treat both verb rights as "*" in
+  // that case so the same filter/gate logic works without a separate
+  // cross-org branch.
+  //
+  // #181: each verb-perm falls back to legacy `language_rights` for pre-
+  // PR-1 users, mirroring the worker's rightsFor language logic.
   const isCrossOrg = contextOrg !== null;
-  const effectiveRights = isCrossOrg ? "*" : languageRights;
-  const hasAccess = hasAnyLanguageRights(effectiveRights);
+  // Worker-effective verb-perms — applies the partner-aware rule so a
+  // user with `language_rights:"*"` plus only an explicit edit grant
+  // sees publish=[] in the UI (matching what the worker sees), not
+  // publish="*" via the naive `?? language_rights` fallback (Frank
+  // rd-2 P1).
+  const editRights = isCrossOrg ? "*" : effectiveLanguageEditRights(user);
+  const publishRights = isCrossOrg ? "*" : effectiveLanguagePublishRights(user);
+  const hasAccess = isCrossOrg || hasAnyLanguageAccess(user);
+
+  // Per-row capability gates passed to LanguageSelector. Languages
+  // don't carry an admin trump (PR #185 enforced per-row even for
+  // super-admins), so these are pure verb-perm reads.
+  const canCreate = hasAnyRights(editRights);
+  const canEditSelected =
+    selectedLanguage !== null && hasRights(editRights, selectedLanguage);
+  const canPublishSelected =
+    selectedLanguage !== null && hasRights(publishRights, selectedLanguage);
+  const canDeleteSelected = canEditSelected && canPublishSelected;
 
   // Queries / mutations
   const languagesQuery = useLanguages(contextOrg);
@@ -71,19 +92,23 @@ export function LanguagesPage() {
   const deleteLanguage = useDeleteLanguage(contextOrg);
   const scaffoldQuery = useLanguageScaffold(contextOrg);
 
-  // Filter the language list to only those the user has rights to. Engine
-  // #207 will eventually filter server-side too, but until then this is the
-  // primary gate against showing forbidden entries in the dropdown.
+  // Filter the language list to those the user has any verb on. Union
+  // semantic: an edit-only or publish-only grant still surfaces the
+  // language (the worker further gates the specific action). Engine
+  // #207 will eventually filter server-side too, but until then this
+  // is the primary gate against showing forbidden entries in the
+  // dropdown.
   const authorizedLanguagesData = useMemo(() => {
     if (!languagesQuery.data) return languagesQuery.data;
     return {
       ...languagesQuery.data,
-      languages: filterAuthorizedLanguages(
+      languages: filterByAnyRights(
         languagesQuery.data.languages,
-        effectiveRights
+        editRights,
+        publishRights
       ),
     };
-  }, [languagesQuery.data, effectiveRights]);
+  }, [languagesQuery.data, editRights, publishRights]);
 
   // Local document draft (auto-save target).
   //
@@ -200,6 +225,12 @@ export function LanguagesPage() {
     if (saveLanguage.isPending) return;
     if (debouncedDraft === lastSyncedDoc) return;
     if (debouncedDraft === lastFailedDoc) return;
+    // Frank rd-2 P2: skip autosave when the user has no edit rights on
+    // the selected row. Without this gate, a publish-only shepherd's
+    // accidental keystroke triggers an autosave that 403s — the
+    // editor below is also rendered readOnly so this branch only
+    // fires if the gate state changed mid-edit.
+    if (!canEditSelected) return;
     performSave(debouncedDraft);
   }, [
     debouncedDraft,
@@ -208,12 +239,14 @@ export function LanguagesPage() {
     lastFailedDoc,
     performSave,
     selectedLanguage,
+    canEditSelected,
   ]);
 
   const flushSave = useCallback(() => {
     if (!isDirty || isSaving) return;
+    if (!canEditSelected) return;
     performSave(draft);
-  }, [draft, isDirty, isSaving, performSave]);
+  }, [canEditSelected, draft, isDirty, isSaving, performSave]);
 
   // Block route changes while there are pending edits or an in-flight save.
   // The blocker fires only when navigating to a different pathname (selecting
@@ -273,13 +306,25 @@ export function LanguagesPage() {
   // Skip the gate under cross-org context: `setContextOrg` already cleared
   // `selectedLanguage` to null when the user switched orgs, and any new
   // selection in cross-org mode is gated server-side via the worker's
-  // super-admin carve-out (PR A) rather than by `language_rights`.
+  // super-admin carve-out (PR A) rather than by per-row rights. Union
+  // semantic: at least one of edit / publish on the row is enough to
+  // keep the selection — the worker further gates the specific verb.
   useEffect(() => {
     if (selectedLanguage === null) return;
     if (isCrossOrg) return;
-    if (hasLanguageRights(languageRights, selectedLanguage)) return;
+    if (
+      hasRights(editRights, selectedLanguage) ||
+      hasRights(publishRights, selectedLanguage)
+    )
+      return;
     setSelectedLanguage(null);
-  }, [isCrossOrg, languageRights, selectedLanguage, setSelectedLanguage]);
+  }, [
+    isCrossOrg,
+    editRights,
+    publishRights,
+    selectedLanguage,
+    setSelectedLanguage,
+  ]);
 
   const confirmSwitch = useCallback(() => {
     setSelectedLanguage(pendingSwitch);
@@ -409,7 +454,9 @@ export function LanguagesPage() {
               isSettingPublished={saveLanguage.isPending}
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
-              isAdmin={isAdmin}
+              canCreate={canCreate}
+              canPublishSelected={canPublishSelected}
+              canDeleteSelected={canDeleteSelected}
               isScaffoldReady={scaffoldQuery.isSuccess}
               scaffoldError={scaffoldQuery.isError}
             />
@@ -426,7 +473,12 @@ export function LanguagesPage() {
               <Button
                 size="sm"
                 onClick={flushSave}
-                disabled={!isDirty || isSaving}
+                disabled={!isDirty || isSaving || !canEditSelected}
+                title={
+                  canEditSelected
+                    ? undefined
+                    : "You don't have edit rights on this language."
+                }
               >
                 <Save className="mr-1.5 size-3.5" />
                 Save
@@ -484,7 +536,7 @@ export function LanguagesPage() {
           </div>
         ) : !hasSelection ? (
           <EmptyState
-            isAdmin={isAdmin}
+            canCreate={canCreate}
             hasAny={(authorizedLanguagesData?.languages.length ?? 0) > 0}
           />
         ) : (
@@ -501,6 +553,7 @@ export function LanguagesPage() {
                 onChange={setDraft}
                 onHeadingsChange={setHeadings}
                 onActiveLineChange={setActiveLine}
+                readOnly={!canEditSelected}
               />
             </div>
           </>
@@ -598,17 +651,17 @@ export function LanguagesPage() {
 }
 
 interface EmptyStateProps {
-  isAdmin: boolean;
+  canCreate: boolean;
   hasAny: boolean;
 }
 
-function EmptyState({ isAdmin, hasAny }: EmptyStateProps) {
+function EmptyState({ canCreate, hasAny }: EmptyStateProps) {
   return (
     <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
       <p className="text-sm">
         {hasAny
           ? "Pick a language above to start editing."
-          : isAdmin
+          : canCreate
             ? "No languages yet. Create one to get started."
             : "No languages are available for your account."}
       </p>
