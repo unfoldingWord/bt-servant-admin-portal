@@ -1,7 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import * as configApi from "@/lib/config-api";
-import type { PromptOverrides } from "@/types/prompt-override";
+import type {
+  OrgModes,
+  PromptMode,
+  PromptOverrides,
+} from "@/types/prompt-override";
 
 // ---------------------------------------------------------------------------
 // Query keys
@@ -108,17 +112,45 @@ export function useDeleteMode(org?: string | null) {
   });
 }
 
-// Reslug a mode in place (#232). Invalidate the list plus BOTH the old and
-// new per-mode caches: the old slug's entry is now stale (the engine keeps
-// it only as an alias), and the new slug needs a fresh fetch so the editor
-// re-syncs under the renamed identity.
+// Swap the old-slug entry for the renamed mode in a cached modes list.
+// Exported for unit tests. Returns `prev` untouched when nothing is cached
+// yet (`undefined`) or the old slug isn't present, so an optimistic write
+// never fabricates a list.
+export function applyRenameToModeList(
+  prev: OrgModes | undefined,
+  oldName: string,
+  renamed: PromptMode
+): OrgModes | undefined {
+  if (!prev) return prev;
+  return {
+    ...prev,
+    modes: prev.modes.map((m) => (m.name === oldName ? renamed : m)),
+  };
+}
+
+// Reslug a mode in place (#232). Two-part cache update:
+//
+//  1. Synchronously swap the old-slug entry for the returned renamed mode
+//     in the LIST cache. The page selects the new slug immediately after
+//     this mutation resolves (`setSelectedMode(newName)` in modes.tsx);
+//     without this optimistic write the list still holds the old slug in
+//     the render gap before the refetch lands, and the stale-selection
+//     guard there (`modes.tsx`) would see `newName` missing and null the
+//     selection — dropping the user into "no mode" right after a
+//     successful rename.
+//  2. Invalidate the list and BOTH per-mode caches so the optimistic
+//     entry is reconciled with server truth (e.g. fresh `aliases`) and
+//     the old slug's now-stale entry is dropped.
 export function useRenameMode(org?: string | null) {
   const qc = useQueryClient();
   const key = normalize(org);
   return useMutation({
     mutationFn: ({ name, newName }: { name: string; newName: string }) =>
       configApi.renameMode(name, newName, undefined, key),
-    onSuccess: (_data, { name, newName }) => {
+    onSuccess: (data, { name, newName }) => {
+      qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
+        applyRenameToModeList(prev, name, data)
+      );
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
       void qc.invalidateQueries({ queryKey: keys.mode(newName, key) });
