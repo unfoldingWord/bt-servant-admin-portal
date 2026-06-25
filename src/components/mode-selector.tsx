@@ -43,7 +43,14 @@ interface ModeSelectorProps {
   isSettingPublished: boolean;
   showDrafts: boolean;
   onToggleShowDrafts: (showDrafts: boolean) => void;
-  isAdmin: boolean;
+  // #181 verb-perms — modes DO carry an admin trump (worker bypasses
+  // the per-mode gate for admins), so the parent should compute these
+  // as `isAdmin || verb-rights-on-row`. Replaces the prior `isAdmin`
+  // flag which made non-admin mode shepherds unable to publish/delete
+  // even when the worker would have allowed them.
+  canCreate: boolean;
+  canPublishSelected: boolean;
+  canDeleteSelected: boolean;
 }
 
 function isPublished(mode: Pick<PromptMode, "published">): boolean {
@@ -62,7 +69,9 @@ export function ModeSelector({
   isSettingPublished,
   showDrafts,
   onToggleShowDrafts,
-  isAdmin,
+  canCreate,
+  canPublishSelected,
+  canDeleteSelected,
 }: ModeSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -183,7 +192,7 @@ export function ModeSelector({
           {showDrafts ? "Drafts shown" : "Drafts hidden"}
         </Button>
 
-        {isAdmin && (
+        {canCreate && (
           <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
             <Plus className="mr-1.5 size-3.5" />
             New Mode
@@ -199,7 +208,7 @@ export function ModeSelector({
               {selectedIsPublished ? "Published" : "Draft"}
             </Badge>
 
-            {isAdmin &&
+            {canPublishSelected &&
               (selectedIsPublished ? (
                 <AlertDialog
                   open={unpublishOpen}
@@ -268,7 +277,7 @@ export function ModeSelector({
                 </Button>
               ))}
 
-            {isAdmin && (
+            {canDeleteSelected && (
               <AlertDialog
                 open={deleteOpen}
                 onOpenChange={(next) => {

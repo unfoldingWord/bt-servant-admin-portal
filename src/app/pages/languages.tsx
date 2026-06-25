@@ -10,6 +10,7 @@ import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
   filterByAnyRights,
   hasAnyLanguageAccess,
+  hasAnyRights,
   hasRights,
 } from "@/lib/permissions";
 import { useUiStore } from "@/lib/ui-store";
@@ -45,7 +46,6 @@ import { PageHeader } from "@/components/page-header";
 const AUTO_SAVE_DEBOUNCE_MS = 800;
 
 export function LanguagesPage() {
-  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
   const user = useAuthStore((s) => s.user);
   const selectedLanguage = useUiStore((s) => s.selectedLanguage);
   const setSelectedLanguage = useUiStore((s) => s.setSelectedLanguage);
@@ -71,6 +71,19 @@ export function LanguagesPage() {
     ? "*"
     : (user?.language_publish_rights ?? user?.language_rights);
   const hasAccess = isCrossOrg || hasAnyLanguageAccess(user);
+
+  // Per-row capability gates passed to LanguageSelector. Languages
+  // don't carry an admin trump (PR #185 enforced per-row even for
+  // super-admins), so these are pure verb-perm reads. The Frank P1
+  // review flagged the prior `isAdmin`-only gating as making non-admin
+  // publish/delete shepherds unreachable.
+  const canCreate = hasAnyRights(editRights);
+  const canPublishSelected =
+    selectedLanguage !== null && hasRights(publishRights, selectedLanguage);
+  const canDeleteSelected =
+    selectedLanguage !== null &&
+    hasRights(editRights, selectedLanguage) &&
+    hasRights(publishRights, selectedLanguage);
 
   // Queries / mutations
   const languagesQuery = useLanguages(contextOrg);
@@ -433,7 +446,9 @@ export function LanguagesPage() {
               isSettingPublished={saveLanguage.isPending}
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
-              isAdmin={isAdmin}
+              canCreate={canCreate}
+              canPublishSelected={canPublishSelected}
+              canDeleteSelected={canDeleteSelected}
               isScaffoldReady={scaffoldQuery.isSuccess}
               scaffoldError={scaffoldQuery.isError}
             />
@@ -508,7 +523,7 @@ export function LanguagesPage() {
           </div>
         ) : !hasSelection ? (
           <EmptyState
-            isAdmin={isAdmin}
+            canCreate={canCreate}
             hasAny={(authorizedLanguagesData?.languages.length ?? 0) > 0}
           />
         ) : (
@@ -622,17 +637,17 @@ export function LanguagesPage() {
 }
 
 interface EmptyStateProps {
-  isAdmin: boolean;
+  canCreate: boolean;
   hasAny: boolean;
 }
 
-function EmptyState({ isAdmin, hasAny }: EmptyStateProps) {
+function EmptyState({ canCreate, hasAny }: EmptyStateProps) {
   return (
     <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
       <p className="text-sm">
         {hasAny
           ? "Pick a language above to start editing."
-          : isAdmin
+          : canCreate
             ? "No languages yet. Create one to get started."
             : "No languages are available for your account."}
       </p>

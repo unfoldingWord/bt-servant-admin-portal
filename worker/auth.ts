@@ -1,7 +1,7 @@
 import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
-import type { SessionData, StoredUser } from "./types";
+import type { LanguageRights, SessionData, StoredUser } from "./types";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -124,11 +124,16 @@ export async function validateSession(
   }
 
   // Lazy-migrate the legacy single-bit `language_rights` into the two
-  // verb-perms fields when the stored record predates #181. Identity copy
-  // — same shape (`string[] | "*"`) — so old rights become both edit and
-  // publish access until an admin edits the user explicitly. Mode rights
-  // have no legacy source; absent ⇒ undefined ⇒ treated as full access
-  // until PR 2 enforces per-mode gating.
+  // verb-perms fields when the stored record predates #181. Partner-
+  // aware: if either verb-perm is explicit, the unset partner falls
+  // back to `[]` (deliberate deny), NOT to legacy `language_rights`.
+  // Without this rule, a stored user with `language_rights: "*"` plus
+  // an explicit `language_edit_rights: ["spanish"]` would arrive at
+  // worker/config.ts:rightsFor with `language_publish_rights: "*"`
+  // already materialized — silently widening publish past the admin's
+  // intent. Only when BOTH verbs are unset (truly pre-#181 user) do we
+  // fall back to legacy, preserving back-compat for unmigrated users.
+  // Mirrors the partner-aware rule in worker/config.ts:rightsFor.
   return {
     userId: data.userId,
     createdAt: data.createdAt,
@@ -138,11 +143,28 @@ export async function validateSession(
     isAdmin: user.isAdmin ?? false,
     isSuperAdmin: user.isSuperAdmin ?? false,
     language_rights: user.language_rights,
-    language_edit_rights: user.language_edit_rights ?? user.language_rights,
-    language_publish_rights:
-      user.language_publish_rights ?? user.language_rights,
+    ...lazyMigrateLanguageRights(user),
     mode_edit_rights: user.mode_edit_rights,
     mode_publish_rights: user.mode_publish_rights,
+  };
+}
+
+// Shared between validateSession and handleLogin so the session shape is
+// identical whether the session is freshly minted or rehydrated from KV.
+function lazyMigrateLanguageRights(user: StoredUser): {
+  language_edit_rights: LanguageRights | undefined;
+  language_publish_rights: LanguageRights | undefined;
+} {
+  const explicitEdit = user.language_edit_rights;
+  const explicitPublish = user.language_publish_rights;
+  const eitherExplicit =
+    explicitEdit !== undefined || explicitPublish !== undefined;
+  // When either verb is explicit, the unset partner is a deliberate
+  // gap (= []); only when both are unset do we fall back to legacy.
+  const fallback = eitherExplicit ? [] : user.language_rights;
+  return {
+    language_edit_rights: explicitEdit ?? fallback,
+    language_publish_rights: explicitPublish ?? fallback,
   };
 }
 
@@ -190,10 +212,9 @@ export async function handleLogin(
   }
 
   const sessionId = crypto.randomUUID();
-  // Same lazy-migration semantics as validateSession — pre-#181 users only
-  // have `language_rights` set; new verb-perms fields fall back to it so
-  // the session created here is shaped identically to one re-hydrated on a
-  // later request.
+  // Same partner-aware lazy migration as validateSession — keeps the
+  // freshly-minted session shape identical to a re-hydrated one so the
+  // worker gate's partner-aware deny isn't bypassed at login time.
   const sessionData: SessionData = {
     userId: user.id,
     email: user.email,
@@ -203,9 +224,7 @@ export async function handleLogin(
     isSuperAdmin: user.isSuperAdmin ?? false,
     createdAt: new Date().toISOString(),
     language_rights: user.language_rights,
-    language_edit_rights: user.language_edit_rights ?? user.language_rights,
-    language_publish_rights:
-      user.language_publish_rights ?? user.language_rights,
+    ...lazyMigrateLanguageRights(user),
     mode_edit_rights: user.mode_edit_rights,
     mode_publish_rights: user.mode_publish_rights,
   };

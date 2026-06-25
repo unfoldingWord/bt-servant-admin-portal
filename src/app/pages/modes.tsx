@@ -11,6 +11,12 @@ import {
   buildModeExportFilename,
 } from "@/lib/mode-export";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
+import {
+  filterByAnyRights,
+  hasAdminPowers,
+  hasAnyRights,
+  hasRights,
+} from "@/lib/permissions";
 import { useUiStore } from "@/lib/ui-store";
 import { OrgContextSelector } from "@/components/org-context-selector";
 import { useDebounced } from "@/hooks/use-debounced";
@@ -43,7 +49,8 @@ import { PageHeader } from "@/components/page-header";
 const AUTO_SAVE_DEBOUNCE_MS = 800;
 
 export function ModesPage() {
-  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = hasAdminPowers(user);
   const homeOrg = useAuthStore((s) => s.user?.org);
   const selectedMode = useUiStore((s) => s.selectedMode);
   const setSelectedMode = useUiStore((s) => s.setSelectedMode);
@@ -52,10 +59,45 @@ export function ModesPage() {
   const contextOrg = useUiStore((s) => s.contextOrg);
   const setContextOrg = useUiStore((s) => s.setContextOrg);
 
+  // Effective mode verb-perms. Modes carry an admin trump (worker
+  // bypasses per-mode gate for admins) and a cross-org bypass (super-
+  // admin viewing another org sees everything; their home-org mode
+  // rights don't translate). Both bypasses surface as "*" so the same
+  // filter/gate logic works without separate code paths.
+  const isCrossOrg = contextOrg !== null;
+  const modeEditRights = isAdmin || isCrossOrg ? "*" : user?.mode_edit_rights;
+  const modePublishRights =
+    isAdmin || isCrossOrg ? "*" : user?.mode_publish_rights;
+
   const modesQuery = useModes(contextOrg);
   const modeQuery = useMode(selectedMode, contextOrg);
   const saveMode = useSaveMode(contextOrg);
   const deleteMode = useDeleteMode(contextOrg);
+
+  // Filter modes to those the user has any verb on (admin/cross-org
+  // sees everything via the `*` short-circuit above). Mirrors
+  // languages.tsx — without this, the dropdown lists modes the user
+  // can't act on and the editor 403s on autosave (Frank P2).
+  const authorizedModesData = useMemo(() => {
+    if (!modesQuery.data) return modesQuery.data;
+    return {
+      ...modesQuery.data,
+      modes: filterByAnyRights(
+        modesQuery.data.modes,
+        modeEditRights,
+        modePublishRights
+      ),
+    };
+  }, [modesQuery.data, modeEditRights, modePublishRights]);
+
+  // Per-row capability gates passed to ModeSelector.
+  const canCreate = hasAnyRights(modeEditRights);
+  const canPublishSelected =
+    selectedMode !== null && hasRights(modePublishRights, selectedMode);
+  const canDeleteSelected =
+    selectedMode !== null &&
+    hasRights(modeEditRights, selectedMode) &&
+    hasRights(modePublishRights, selectedMode);
 
   // Local document draft (auto-save target).
   //
@@ -264,6 +306,23 @@ export function ModesPage() {
     setSelectedMode(null);
   }, [selectedMode, modesQuery.data, setSelectedMode]);
 
+  // #181 Frank P2: drop the selection if the user has no verb-perm on
+  // the row. Without this gate, a non-admin shepherd with
+  // `mode_edit_rights: ["spoken"]` could carry a persisted selection
+  // of "written" across a refresh and see the editor render — only to
+  // have autosave 403. Union semantic: at least one verb on the row
+  // is enough to render (the worker further gates the specific
+  // action). Skip under admin/cross-org (the `*` short-circuit above).
+  useEffect(() => {
+    if (selectedMode === null) return;
+    if (
+      hasRights(modeEditRights, selectedMode) ||
+      hasRights(modePublishRights, selectedMode)
+    )
+      return;
+    setSelectedMode(null);
+  }, [selectedMode, modeEditRights, modePublishRights, setSelectedMode]);
+
   const handleCreateMode = useCallback(
     (name: string, label: string, description: string) => {
       saveMode.mutate(
@@ -342,7 +401,7 @@ export function ModesPage() {
           <OrgContextSelector onRequestChange={handleRequestContextChange} />
           <div className="min-w-0 flex-1">
             <ModeSelector
-              modesData={modesQuery.data}
+              modesData={authorizedModesData}
               selectedMode={selectedMode}
               onSelectMode={handleSelectMode}
               onCreateMode={handleCreateMode}
@@ -353,7 +412,9 @@ export function ModesPage() {
               isSettingPublished={saveMode.isPending}
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
-              isAdmin={isAdmin}
+              canCreate={canCreate}
+              canPublishSelected={canPublishSelected}
+              canDeleteSelected={canDeleteSelected}
             />
           </div>
 
