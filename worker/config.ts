@@ -20,21 +20,30 @@ function rightsFor(
   verb: RightsVerb
 ): LanguageRights | undefined {
   if (kind === "language") {
-    // Lazy fallback mirrors worker/auth.ts:140-145 exactly — legacy
-    // pre-#181 sessions carry only `language_rights`; verb-perms fall
-    // back to it so existing shepherds keep their access until they're
-    // re-saved through the new dialog. Tests that construct SessionData
-    // directly (skipping auth.ts) get the same semantic.
     const explicit =
       verb === "edit"
         ? session.language_edit_rights
         : session.language_publish_rights;
-    return explicit ?? session.language_rights;
+    if (explicit !== undefined) return explicit;
+    // Partner-aware deny: if the OTHER verb is explicit, this verb's
+    // unset state is a deliberate gap, not legacy-full. Without this,
+    // an admin who grants `language_edit_rights = ["spanish"]` and
+    // leaves `language_publish_rights` unset would silently give the
+    // user full publish access (undefined → legacy full via the
+    // pre-#181 hasRights rule) — the opposite of what the dialog UI
+    // signals. Only when BOTH verbs are unset do we fall back to the
+    // legacy `language_rights` bit (worker/auth.ts lazy migration
+    // mirror — preserves access for pre-#181 shepherds until they're
+    // re-saved through the new dialog).
+    const partner =
+      verb === "edit"
+        ? session.language_publish_rights
+        : session.language_edit_rights;
+    if (partner !== undefined) return [];
+    return session.language_rights;
   }
   // Modes: returning `undefined` here would translate to "legacy full
-  // access" via hasRights — which would silently widen a user whose
-  // admin granted, say, mode_edit_rights = ["spoken"] but left
-  // mode_publish_rights unset, into publish-everything. The mode-
+  // access" via hasRights — same partner-aware footgun. The mode-
   // baseline gate above catches the truly-legacy (both undefined) case
   // and returns 403; everywhere downstream, `undefined` for one mode
   // verb means "no rights for this verb," not legacy full.
@@ -124,9 +133,18 @@ async function fetchCurrentResource(
   const res = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
     headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
   });
-  if (res.status === 404) return null;
   if (!res.ok) {
-    throw new Error(`Engine fetch failed: ${res.status}`);
+    // 404 → resource doesn't exist yet (creation). Any other non-2xx
+    // (auth, 5xx, network blip): treat as null too so the gate falls
+    // through to creation semantics. The downstream proxy PUT will
+    // fail naturally if engine is genuinely down — duplicating the
+    // failure mode at the gate makes verb-restricted shepherds the
+    // first to lose autosave during transient engine flakiness for no
+    // security benefit. Creation semantics demand at minimum edit on
+    // any editorial field and publish on `published: true`, so the
+    // fall-through is conservative (stricter, not laxer) than the
+    // diff path would have produced.
+    return null;
   }
   const data = (await res.json()) as Record<string, unknown>;
   // Engine wraps in { org, language|mode: {...} } — mirror of the
@@ -152,6 +170,11 @@ function computeRequiredVerbsForPut(
   current: ResourceShape | null
 ): RightsVerb[] {
   const isCreate = current === null;
+  // Engine rows predating the `published` field may omit it on read.
+  // Coerce undefined → false so an edit-only autosave that sends
+  // `published: false` against such a row doesn't spuriously demand
+  // publish rights (false !== undefined would otherwise trigger).
+  const currentPublished = current?.published ?? false;
   const docChanged =
     body.document !== undefined &&
     (isCreate || body.document !== current.document);
@@ -162,7 +185,7 @@ function computeRequiredVerbsForPut(
     (isCreate || body.description !== current.description);
   const publishChanged =
     body.published !== undefined &&
-    (isCreate ? body.published === true : body.published !== current.published);
+    (isCreate ? body.published === true : body.published !== currentPublished);
 
   const verbs: RightsVerb[] = [];
   if (docChanged || labelChanged || descChanged) verbs.push("edit");
@@ -260,14 +283,11 @@ async function gateConfigMutation(
     } catch {
       return { error: errorResponse("Invalid JSON", 400) };
     }
-    let current: ResourceShape | null;
-    try {
-      current = await fetchCurrentResource(env, kind, org, name);
-    } catch {
-      return {
-        error: errorResponse("Upstream error fetching current state", 502),
-      };
-    }
+    // `fetchCurrentResource` returns null for any engine non-2xx
+    // (including 5xx / network errors) — the gate then treats the PUT
+    // as a creation, which is conservative (every editorial field
+    // present demands edit; published: true demands publish).
+    const current = await fetchCurrentResource(env, kind, org, name);
     for (const verb of computeRequiredVerbsForPut(body, current)) {
       if (!hasRights(rightsFor(session, kind, verb), name)) {
         return { error: errorResponse("Forbidden", 403) };

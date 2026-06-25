@@ -8,9 +8,9 @@ import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
 import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
-  filterAuthorizedLanguages,
-  hasAnyLanguageRights,
-  hasLanguageRights,
+  filterByAnyRights,
+  hasAnyLanguageAccess,
+  hasRights,
 } from "@/lib/permissions";
 import { useUiStore } from "@/lib/ui-store";
 import { useDebounced } from "@/hooks/use-debounced";
@@ -46,7 +46,7 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 
 export function LanguagesPage() {
   const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
-  const languageRights = useAuthStore((s) => s.user?.language_rights);
+  const user = useAuthStore((s) => s.user);
   const selectedLanguage = useUiStore((s) => s.selectedLanguage);
   const setSelectedLanguage = useUiStore((s) => s.setSelectedLanguage);
   const showDrafts = useUiStore((s) => s.showDrafts);
@@ -55,14 +55,22 @@ export function LanguagesPage() {
   const setContextOrg = useUiStore((s) => s.setContextOrg);
 
   // Cross-org reuses the worker's PR A carve-out: super-admins bypass
-  // `hasLanguageRights` when editing a different org's languages, because
-  // shepherd rights are scoped to the user's home org and don't translate
-  // to a foreign namespace. Treat the effective rights as full-access in
-  // that case so the same filter/gate logic continues to work without a
-  // separate cross-org code path.
+  // per-row rights when editing a different org's languages, because
+  // shepherd rights are scoped to the user's home org and don't
+  // translate to a foreign namespace. Treat both verb rights as "*" in
+  // that case so the same filter/gate logic works without a separate
+  // cross-org branch.
+  //
+  // #181: each verb-perm falls back to legacy `language_rights` for pre-
+  // PR-1 users, mirroring the worker's rightsFor language logic.
   const isCrossOrg = contextOrg !== null;
-  const effectiveRights = isCrossOrg ? "*" : languageRights;
-  const hasAccess = hasAnyLanguageRights(effectiveRights);
+  const editRights = isCrossOrg
+    ? "*"
+    : (user?.language_edit_rights ?? user?.language_rights);
+  const publishRights = isCrossOrg
+    ? "*"
+    : (user?.language_publish_rights ?? user?.language_rights);
+  const hasAccess = isCrossOrg || hasAnyLanguageAccess(user);
 
   // Queries / mutations
   const languagesQuery = useLanguages(contextOrg);
@@ -71,19 +79,23 @@ export function LanguagesPage() {
   const deleteLanguage = useDeleteLanguage(contextOrg);
   const scaffoldQuery = useLanguageScaffold(contextOrg);
 
-  // Filter the language list to only those the user has rights to. Engine
-  // #207 will eventually filter server-side too, but until then this is the
-  // primary gate against showing forbidden entries in the dropdown.
+  // Filter the language list to those the user has any verb on. Union
+  // semantic: an edit-only or publish-only grant still surfaces the
+  // language (the worker further gates the specific action). Engine
+  // #207 will eventually filter server-side too, but until then this
+  // is the primary gate against showing forbidden entries in the
+  // dropdown.
   const authorizedLanguagesData = useMemo(() => {
     if (!languagesQuery.data) return languagesQuery.data;
     return {
       ...languagesQuery.data,
-      languages: filterAuthorizedLanguages(
+      languages: filterByAnyRights(
         languagesQuery.data.languages,
-        effectiveRights
+        editRights,
+        publishRights
       ),
     };
-  }, [languagesQuery.data, effectiveRights]);
+  }, [languagesQuery.data, editRights, publishRights]);
 
   // Local document draft (auto-save target).
   //
@@ -273,13 +285,25 @@ export function LanguagesPage() {
   // Skip the gate under cross-org context: `setContextOrg` already cleared
   // `selectedLanguage` to null when the user switched orgs, and any new
   // selection in cross-org mode is gated server-side via the worker's
-  // super-admin carve-out (PR A) rather than by `language_rights`.
+  // super-admin carve-out (PR A) rather than by per-row rights. Union
+  // semantic: at least one of edit / publish on the row is enough to
+  // keep the selection — the worker further gates the specific verb.
   useEffect(() => {
     if (selectedLanguage === null) return;
     if (isCrossOrg) return;
-    if (hasLanguageRights(languageRights, selectedLanguage)) return;
+    if (
+      hasRights(editRights, selectedLanguage) ||
+      hasRights(publishRights, selectedLanguage)
+    )
+      return;
     setSelectedLanguage(null);
-  }, [isCrossOrg, languageRights, selectedLanguage, setSelectedLanguage]);
+  }, [
+    isCrossOrg,
+    editRights,
+    publishRights,
+    selectedLanguage,
+    setSelectedLanguage,
+  ]);
 
   const confirmSwitch = useCallback(() => {
     setSelectedLanguage(pendingSwitch);

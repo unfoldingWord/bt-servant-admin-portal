@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 
-import type { Language } from "@/types/language";
 import type { LanguageRights } from "@/types/auth";
-import type { PromptMode } from "@/types/prompt-override";
 import {
   AdminUsersForbiddenError,
   AdminUsersRequestError,
   isReservedOrgSlug,
 } from "@/lib/admin-users-api";
 import { useCreateAdminUser } from "@/hooks/use-admin-users";
+import { useLanguages } from "@/hooks/use-languages";
+import { useModes } from "@/hooks/use-prompt-config";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -34,8 +34,6 @@ interface CreateUserDialogProps {
   // When true, render the editable Org field and the Super-admin checkbox.
   // When false, the dialog matches the original org-admin shape exactly.
   callerIsSuperAdmin: boolean;
-  availableLanguages: Language[] | undefined;
-  availableModes: PromptMode[] | undefined;
   onCreated?: (email: string) => void;
 }
 
@@ -48,8 +46,6 @@ export function AdminUserCreateDialog({
   onOpenChange,
   callerOrg,
   callerIsSuperAdmin,
-  availableLanguages,
-  availableModes,
   onCreated,
 }: CreateUserDialogProps) {
   const createUser = useCreateAdminUser();
@@ -65,6 +61,15 @@ export function AdminUserCreateDialog({
   const [modeEdit, setModeEdit] = useState<LanguageRights>(EMPTY_RIGHTS);
   const [modePublish, setModePublish] = useState<LanguageRights>(EMPTY_RIGHTS);
   const [errorText, setErrorText] = useState<string | null>(null);
+
+  // Item lists scoped to the TARGET org. For super-admins typing a
+  // new org slug, the lists refetch as `org` changes so verb-perms
+  // are granted against names that actually exist in the destination
+  // (#181 review F8). React Query caches by query key, so re-typing
+  // the same slug is free.
+  const orgForFetch = (callerIsSuperAdmin ? org : callerOrg).trim() || null;
+  const languagesQuery = useLanguages(orgForFetch);
+  const modesQuery = useModes(orgForFetch);
 
   // Re-sync the Org default if callerOrg changes while the dialog is
   // mounted (rare — only on auth changes). Without this, a stale org
@@ -227,7 +232,8 @@ export function AdminUserCreateDialog({
                 />
                 <p className="text-muted-foreground text-xs">
                   Free-text slug. Type the name of an existing org to add the
-                  user there, or a new slug to create a fresh org.
+                  user there, or a new slug to create a fresh org. The
+                  mode/language lists below refresh as you type.
                 </p>
               </div>
             )}
@@ -289,28 +295,28 @@ export function AdminUserCreateDialog({
               verb="edit"
               value={langEdit}
               onChange={setLangEdit}
-              availableItems={availableLanguages}
+              availableItems={languagesQuery.data?.languages}
             />
             <RightsSelector
               kind="language"
               verb="publish"
               value={langPublish}
               onChange={setLangPublish}
-              availableItems={availableLanguages}
+              availableItems={languagesQuery.data?.languages}
             />
             <RightsSelector
               kind="mode"
               verb="edit"
               value={modeEdit}
               onChange={setModeEdit}
-              availableItems={availableModes}
+              availableItems={modesQuery.data?.modes}
             />
             <RightsSelector
               kind="mode"
               verb="publish"
               value={modePublish}
               onChange={setModePublish}
-              availableItems={availableModes}
+              availableItems={modesQuery.data?.modes}
             />
 
             {errorText && (

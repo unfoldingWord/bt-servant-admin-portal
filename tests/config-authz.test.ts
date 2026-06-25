@@ -684,6 +684,108 @@ describe("config authz — #181 verb-perms (modes)", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("[review F1] partner-aware deny: language_edit_rights=['en'], no publish rights → publish-flip 403s", async () => {
+    // Without the partner-aware rightsFor rule, `language_publish_rights`
+    // would fall through to `undefined ⇒ legacy full access` (the
+    // pre-#181 back-compat semantic) and silently widen publish to
+    // every language. Verifies the F1 fix: explicit grant of one verb
+    // makes the unset partner verb a deliberate gap (= []), not legacy.
+    const fetchSpy = spyFetchWithCurrent("mode", {
+      document: "## same\n",
+      published: false,
+    });
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/languages/spanish", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: "# same\n", published: true }),
+      }),
+      env,
+      makeSession({
+        language_edit_rights: ["spanish"],
+        // language_publish_rights and language_rights deliberately
+        // omitted — must NOT fall back to legacy full access.
+      }),
+      "/api/config/languages/spanish"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("[review F1] partner-aware deny: language_publish_rights=['en'], no edit rights → edit 403s", async () => {
+    spyFetchWithCurrent("language", {
+      document: "# old\n",
+      published: false,
+    });
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/languages/spanish", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: "# new\n", published: false }),
+      }),
+      env,
+      makeSession({ language_publish_rights: ["spanish"] }),
+      "/api/config/languages/spanish"
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("[review F15] PUT against engine row missing `published` works for edit-only shepherd", async () => {
+    // Engine rows predating the `published` field omit it on read.
+    // Without F15's `current.published ?? false`, `false !== undefined`
+    // evaluates true and the gate spuriously demands publish rights on
+    // a normal edit save.
+    const fetchSpy = spyFetchWithCurrent("language", { document: "# old\n" });
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/languages/spanish", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: "# new\n", published: false }),
+      }),
+      env,
+      makeSession({
+        language_edit_rights: ["spanish"],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/spanish"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("[review F11] engine GET 5xx → gate treats as creation (no 502 leaked)", async () => {
+    // A transient engine error during the gate's current-state GET
+    // shouldn't add a second failure mode (502 from the BFF). The
+    // gate treats unfetchable current as creation; creation
+    // semantics are stricter than the diff path, so this fall-through
+    // can only deny more, never allow more.
+    let callCount = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve(new Response("upstream oops", { status: 500 }));
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    });
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/languages/spanish", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: "# new\n", published: false }),
+      }),
+      env,
+      makeSession({
+        language_edit_rights: ["spanish"],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/spanish"
+    );
+    // Treated as create: `published: false` doesn't require publish
+    // rights, document does require edit (caller has it) → pass.
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("mode label change triggers edit gate (not just document)", async () => {
     const fetchSpy = spyFetchWithCurrent("mode", {
       document: "## same\n",

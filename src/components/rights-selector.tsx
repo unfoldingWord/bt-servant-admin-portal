@@ -132,7 +132,25 @@ export function RightsSelector({
             type="radio"
             name={radioName}
             checked={!isFull && !isLegacy}
-            onChange={() => onChange([...selected].sort())}
+            onChange={() => {
+              if (isLegacy && kind === "language") {
+                // Legacy languages = back-compat full access. Pre-
+                // populate the explicit list with every available
+                // language so the admin's first "Specific" click
+                // PRESERVES the user's current access — they can
+                // then uncheck to revoke. Without this seed, the
+                // click silently collapses their grant to [] (no
+                // access), the literal opposite of what the hint
+                // copy promises. Modes don't pre-populate: legacy
+                // modes had no per-row rights (admin-only baseline),
+                // so [] correctly mirrors the pre-#181 state.
+                const all =
+                  availableItems?.map((item) => item.name).sort() ?? [];
+                onChange(all);
+                return;
+              }
+              onChange([...selected].sort());
+            }}
             className="mt-0.5"
           />
           <div className="flex-1 space-y-2">

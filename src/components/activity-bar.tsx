@@ -11,7 +11,11 @@ import { faUsers as faUsersSolid } from "@fortawesome/pro-solid-svg-icons";
 import { useNavigate } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
-import { hasAdminPowers, hasAnyLanguageRights } from "@/lib/permissions";
+import {
+  hasAdminPowers,
+  hasAnyLanguageAccess,
+  hasAnyModeAccess,
+} from "@/lib/permissions";
 import { useUiStore } from "@/lib/ui-store";
 import { Separator } from "@/components/ui/separator";
 import { ActivityBarItem } from "@/components/activity-bar-item";
@@ -23,11 +27,19 @@ export function ActivityBar() {
   const setActiveSection = useUiStore((s) => s.setActiveSection);
   const testChatOpen = useUiStore((s) => s.testChatOpen);
   const toggleTestChat = useUiStore((s) => s.toggleTestChat);
-  const languageRights = useAuthStore((s) => s.user?.language_rights);
+  const user = useAuthStore((s) => s.user);
   // Uses hasAdminPowers so super admins (even without isAdmin) see the
-  // Modes + Users entries. Mirrors worker's "super trumps" rule.
-  const isAdmin = useAuthStore((s) => hasAdminPowers(s.user));
-  const canAccessLanguages = hasAnyLanguageRights(languageRights);
+  // Users entry. Mirrors worker's "super trumps" rule.
+  const isAdmin = hasAdminPowers(user);
+  // #181 — sidebar gates now consult the verb-perms union helpers so
+  // users granted via the new dialog (no legacy `language_rights`)
+  // correctly see their entry points. `hasAnyLanguageAccess` retains
+  // the legacy `undefined → full access` rule for pre-#181 users;
+  // `hasAnyModeAccess` does NOT (modes had no per-row pre-#181 so
+  // undefined-undefined means "no access" for non-admins), which is
+  // why the Modes entry combines it with the admin trump.
+  const canAccessLanguages = hasAnyLanguageAccess(user);
+  const canEditModes = isAdmin || hasAnyModeAccess(user);
 
   return (
     <div className="bg-card relative z-10 flex h-full w-12 flex-col items-center py-3 shadow-[2px_0_12px_rgba(0,0,0,0.2)] dark:shadow-[2px_0_12px_rgba(0,0,0,0.35)]">
@@ -42,7 +54,7 @@ export function ActivityBar() {
             void navigate("/");
           }}
         />
-        {isAdmin && (
+        {canEditModes && (
           <ActivityBarItem
             icon={faPenToSquareLight}
             activeIcon={faPenToSquareSolid}

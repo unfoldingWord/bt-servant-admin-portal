@@ -9,10 +9,9 @@ import {
   AdminUsersRequestError,
   ORG_FILTER_ALL_SENTINEL,
 } from "@/lib/admin-users-api";
+import type { LanguageRights } from "@/types/auth";
 import { useAuthStore } from "@/lib/auth-store";
 import { useAdminUsers, useDeleteAdminUser } from "@/hooks/use-admin-users";
-import { useLanguages } from "@/hooks/use-languages";
-import { useModes } from "@/hooks/use-prompt-config";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -41,8 +40,6 @@ export function AdminUsersPage() {
   const callerIsSuperAdmin = useAuthStore((s) => s.user?.isSuperAdmin ?? false);
 
   const usersQuery = useAdminUsers();
-  const languagesQuery = useLanguages();
-  const modesQuery = useModes();
   const deleteUser = useDeleteAdminUser();
 
   const [editingEmail, setEditingEmail] = useState<string | null>(null);
@@ -180,9 +177,7 @@ export function AdminUsersPage() {
                   <th className="px-6 py-3 text-left font-medium">Org</th>
                 )}
                 <th className="px-6 py-3 text-left font-medium">Role</th>
-                <th className="px-6 py-3 text-left font-medium">
-                  Language access
-                </th>
+                <th className="px-6 py-3 text-left font-medium">Access</th>
                 <th className="px-6 py-3 text-right font-medium">Actions</th>
               </tr>
             </thead>
@@ -210,8 +205,6 @@ export function AdminUsersPage() {
         onOpenChange={setCreateOpen}
         callerOrg={callerOrg}
         callerIsSuperAdmin={callerIsSuperAdmin}
-        availableLanguages={languagesQuery.data?.languages}
-        availableModes={modesQuery.data?.modes}
       />
 
       <AdminUserEditDialog
@@ -222,8 +215,6 @@ export function AdminUsersPage() {
         }}
         callerEmail={callerEmail}
         callerIsSuperAdmin={callerIsSuperAdmin}
-        availableLanguages={languagesQuery.data?.languages}
-        availableModes={modesQuery.data?.modes}
       />
 
       <AlertDialog
@@ -334,7 +325,7 @@ function UserRow({
         </div>
       </td>
       <td className="px-6 py-3">
-        <LanguageRightsBadge value={user.language_rights} />
+        <AccessSummary user={user} />
       </td>
       <td className="px-6 py-3 text-right">
         <div className="flex justify-end gap-1">
@@ -358,38 +349,81 @@ function UserRow({
   );
 }
 
-function LanguageRightsBadge({
+// Verb-perms summary cell — shows effective access on both axes
+// (language + mode) and both verbs. For each verb the badge collapses
+// to one of: All / None / N items / Default (full, legacy back-compat).
+// Mirrors the lazy-fallback chain the worker applies: explicit verb-
+// perm → legacy `language_rights` for languages → undefined for modes.
+function AccessSummary({ user }: { user: AdminUser }) {
+  const langEdit = user.language_edit_rights ?? user.language_rights;
+  const langPublish = user.language_publish_rights ?? user.language_rights;
+  const modeEdit = user.mode_edit_rights;
+  const modePublish = user.mode_publish_rights;
+
+  return (
+    <div className="space-y-1.5 text-xs">
+      <AccessRow label="Lang" edit={langEdit} publish={langPublish} />
+      <AccessRow label="Mode" edit={modeEdit} publish={modePublish} />
+    </div>
+  );
+}
+
+function AccessRow({
+  label,
+  edit,
+  publish,
+}: {
+  label: string;
+  edit: LanguageRights | undefined;
+  publish: LanguageRights | undefined;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-muted-foreground w-10 font-medium tracking-wide uppercase">
+        {label}
+      </span>
+      <VerbBadge verb="E" value={edit} />
+      <VerbBadge verb="P" value={publish} />
+    </div>
+  );
+}
+
+function VerbBadge({
+  verb,
   value,
 }: {
-  value: AdminUser["language_rights"];
+  verb: "E" | "P";
+  value: LanguageRights | undefined;
 }) {
   if (value === undefined) {
     return (
-      <span className="text-muted-foreground text-xs">Default (full)</span>
+      <span className="text-muted-foreground font-mono text-[10px]">
+        {verb}:default
+      </span>
     );
   }
   if (value === "*") {
-    return <Badge>All languages</Badge>;
+    return (
+      <Badge className="px-1.5 py-0 font-mono text-[10px]">{verb}:all</Badge>
+    );
   }
   if (value.length === 0) {
     return (
-      <Badge variant="outline" className="border-destructive text-destructive">
-        None
+      <Badge
+        variant="outline"
+        className="border-destructive text-destructive px-1.5 py-0 font-mono text-[10px]"
+      >
+        {verb}:none
       </Badge>
     );
   }
   return (
-    <div className="flex flex-wrap gap-1">
-      {value.slice(0, 4).map((name) => (
-        <Badge key={name} variant="outline" className="font-mono text-xs">
-          {name}
-        </Badge>
-      ))}
-      {value.length > 4 && (
-        <Badge variant="outline" className="text-xs">
-          +{value.length - 4}
-        </Badge>
-      )}
-    </div>
+    <Badge
+      variant="outline"
+      className="px-1.5 py-0 font-mono text-[10px]"
+      title={value.join(", ")}
+    >
+      {verb}:{value.length}
+    </Badge>
   );
 }

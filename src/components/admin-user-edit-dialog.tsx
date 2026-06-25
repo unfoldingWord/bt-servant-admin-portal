@@ -2,14 +2,14 @@ import { useEffect, useState } from "react";
 
 import type { AdminUser, UpdateUserBody } from "@/types/admin-users";
 import type { LanguageRights } from "@/types/auth";
-import type { Language } from "@/types/language";
-import type { PromptMode } from "@/types/prompt-override";
 import {
   AdminUsersForbiddenError,
   AdminUsersRequestError,
   isReservedOrgSlug,
 } from "@/lib/admin-users-api";
 import { useUpdateAdminUser } from "@/hooks/use-admin-users";
+import { useLanguages } from "@/hooks/use-languages";
+import { useModes } from "@/hooks/use-prompt-config";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -37,8 +37,6 @@ interface EditUserDialogProps {
   // Super-admin checkbox. When false, the dialog matches the original
   // org-admin shape exactly.
   callerIsSuperAdmin: boolean;
-  availableLanguages: Language[] | undefined;
-  availableModes: PromptMode[] | undefined;
 }
 
 // Pre-PR-1 users have only the legacy `language_rights` bit; the worker
@@ -52,14 +50,22 @@ function effectiveLangRights(
   return fallback ?? user.language_rights;
 }
 
-// Send a verb-perms field only when the admin actually changed it. JSON
-// round-trip handles the `string[] | "*"` discriminated union without a
-// per-shape comparator.
+// Comparable normal form for LanguageRights — undefined → null, arrays
+// sorted so server-stored unsorted ["spanish","english"] doesn't diff
+// against selector-sorted ["english","spanish"] and trigger a spurious
+// PUT on a no-op click. JSON.stringify of the normalized form is the
+// equality test the dialog uses to decide what to send.
+function normRights(value: LanguageRights | undefined): string {
+  if (value === undefined) return "null";
+  if (value === "*") return '"*"';
+  return JSON.stringify([...value].sort());
+}
+
 function diffRights(
   current: LanguageRights | undefined,
   next: LanguageRights | undefined
 ): boolean {
-  return JSON.stringify(current ?? null) !== JSON.stringify(next ?? null);
+  return normRights(current) !== normRights(next);
 }
 
 export function AdminUserEditDialog({
@@ -68,8 +74,6 @@ export function AdminUserEditDialog({
   onOpenChange,
   callerEmail,
   callerIsSuperAdmin,
-  availableLanguages,
-  availableModes,
 }: EditUserDialogProps) {
   const updateUser = useUpdateAdminUser();
 
@@ -91,6 +95,16 @@ export function AdminUserEditDialog({
   );
   const [password, setPassword] = useState("");
   const [errorText, setErrorText] = useState<string | null>(null);
+
+  // Item lists are scoped to the TARGET user's org, not the caller's
+  // home org. For super-admins moving a user to a different org (#181
+  // review F8), this means the selector lists the destination org's
+  // modes/languages — granting names that exist in the target namespace.
+  // For org admins the user.org always equals callerOrg, so this is
+  // identical to the pre-fix behavior.
+  const orgForFetch = user?.org ?? null;
+  const languagesQuery = useLanguages(orgForFetch);
+  const modesQuery = useModes(orgForFetch);
 
   // Re-sync form state from the user prop whenever the target changes
   // (or the dialog reopens with a different user).
@@ -144,10 +158,15 @@ export function AdminUserEditDialog({
       body.isSuperAdmin = isSuperAdmin;
     }
 
-    // Send each verb-perm field only when changed AND the new value is
-    // defined. Sending undefined would not flip the persisted state since
-    // worker-side parsing ignores undefined keys; but skipping the send
-    // entirely keeps PUT bodies minimal and the diff readable in logs.
+    // Send BOTH verb-perms when either changed (#181 review F2). The
+    // worker's partner-aware deny rule (rightsFor) treats an unset
+    // verb-perm as `[]` whenever the partner verb is explicit, so a
+    // partial save would silently strip access on the verb the admin
+    // didn't touch. Persisting both with their dialog state — even
+    // unchanged — preserves admin intent exactly. Both fields must be
+    // defined; the dialog state is always defined post-mount via the
+    // effectiveLangRights fallback for languages and the legacy
+    // suppression for modes.
     const initialLangEdit = effectiveLangRights(
       user,
       user.language_edit_rights
@@ -156,23 +175,21 @@ export function AdminUserEditDialog({
       user,
       user.language_publish_rights
     );
-    if (diffRights(initialLangEdit, langEdit) && langEdit !== undefined) {
-      body.language_edit_rights = langEdit;
+    const langEditChanged = diffRights(initialLangEdit, langEdit);
+    const langPublishChanged = diffRights(initialLangPublish, langPublish);
+    if (langEditChanged || langPublishChanged) {
+      if (langEdit !== undefined) body.language_edit_rights = langEdit;
+      if (langPublish !== undefined) body.language_publish_rights = langPublish;
     }
-    if (
-      diffRights(initialLangPublish, langPublish) &&
-      langPublish !== undefined
-    ) {
-      body.language_publish_rights = langPublish;
-    }
-    if (diffRights(user.mode_edit_rights, modeEdit) && modeEdit !== undefined) {
-      body.mode_edit_rights = modeEdit;
-    }
-    if (
-      diffRights(user.mode_publish_rights, modePublish) &&
-      modePublish !== undefined
-    ) {
-      body.mode_publish_rights = modePublish;
+
+    const modeEditChanged = diffRights(user.mode_edit_rights, modeEdit);
+    const modePublishChanged = diffRights(
+      user.mode_publish_rights,
+      modePublish
+    );
+    if (modeEditChanged || modePublishChanged) {
+      if (modeEdit !== undefined) body.mode_edit_rights = modeEdit;
+      if (modePublish !== undefined) body.mode_publish_rights = modePublish;
     }
 
     // Password is opt-in: only include when the admin actually typed
@@ -214,16 +231,15 @@ export function AdminUserEditDialog({
 
   if (!user) return null;
 
-  // Legacy hint only fires for users who have no rights of any kind set —
-  // not for users whose verb-perm is being populated from the legacy
-  // `language_rights` fallback (which is the populated, intended value).
+  // Legacy hint only fires for users who have no language rights of
+  // any kind set. Modes deliberately skip the hint: pre-#181 non-
+  // admins had no per-mode access (the gate was admin-only), so
+  // "currently full access by default" copy would describe a
+  // privilege that never existed.
   const showLegacyLang =
     user.language_edit_rights === undefined &&
     user.language_publish_rights === undefined &&
     user.language_rights === undefined;
-  const showLegacyMode =
-    user.mode_edit_rights === undefined &&
-    user.mode_publish_rights === undefined;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -321,7 +337,7 @@ export function AdminUserEditDialog({
               verb="edit"
               value={langEdit}
               onChange={setLangEdit}
-              availableItems={availableLanguages}
+              availableItems={languagesQuery.data?.languages}
               showLegacyHint={showLegacyLang}
             />
             <RightsSelector
@@ -329,7 +345,7 @@ export function AdminUserEditDialog({
               verb="publish"
               value={langPublish}
               onChange={setLangPublish}
-              availableItems={availableLanguages}
+              availableItems={languagesQuery.data?.languages}
               showLegacyHint={showLegacyLang}
             />
             <RightsSelector
@@ -337,16 +353,14 @@ export function AdminUserEditDialog({
               verb="edit"
               value={modeEdit}
               onChange={setModeEdit}
-              availableItems={availableModes}
-              showLegacyHint={showLegacyMode}
+              availableItems={modesQuery.data?.modes}
             />
             <RightsSelector
               kind="mode"
               verb="publish"
               value={modePublish}
               onChange={setModePublish}
-              availableItems={availableModes}
-              showLegacyHint={showLegacyMode}
+              availableItems={modesQuery.data?.modes}
             />
 
             <div className="space-y-2">

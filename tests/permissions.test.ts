@@ -204,6 +204,16 @@ describe("hasAnyLanguageAccess", () => {
       })
     ).toBe(true);
   });
+
+  it("[review F4] legacy language_rights falls back when verb-perms unset", () => {
+    // Pre-#181 sessions only carry `language_rights`; the union helper
+    // must mirror the worker's lazy-fallback chain so legacy shepherds
+    // see the sidebar entry until they're re-saved through the new
+    // dialog.
+    expect(hasAnyLanguageAccess({ language_rights: ["en"] })).toBe(true);
+    expect(hasAnyLanguageAccess({ language_rights: "*" })).toBe(true);
+    expect(hasAnyLanguageAccess({ language_rights: [] })).toBe(false);
+  });
 });
 
 describe("hasAnyModeAccess", () => {
@@ -220,6 +230,21 @@ describe("hasAnyModeAccess", () => {
       hasAnyModeAccess({
         mode_edit_rights: [],
         mode_publish_rights: [],
+      })
+    ).toBe(false);
+  });
+
+  it("[review F12] both undefined → false (modes have no pre-#181 legacy access)", () => {
+    // Unlike languages, modes had no per-row rights pre-#181 — the
+    // gate was admin-only. A non-admin with `mode_edit_rights ===
+    // undefined && mode_publish_rights === undefined` had zero mode
+    // access, and the union helper must match the worker's mode-
+    // baseline gate rather than the language back-compat rule.
+    expect(hasAnyModeAccess({})).toBe(false);
+    expect(
+      hasAnyModeAccess({
+        mode_edit_rights: undefined,
+        mode_publish_rights: undefined,
       })
     ).toBe(false);
   });
