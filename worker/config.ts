@@ -2,17 +2,45 @@ import type { Env } from "./helpers";
 import { errorResponse } from "./helpers";
 import type { LanguageRights, SessionData } from "./types";
 
-// Sole authorization gate for per-language access. Engine is a
-// trusted-portal model (single shared ADMIN_API_TOKEN, no user identity
-// on admin paths), so this check is the only thing standing between a
-// portal user and an engine call. `undefined` is the back-compat default
-// for users predating language_rights — treated as full access.
-function hasLanguageRights(
-  rights: LanguageRights | undefined,
-  name: string
-): boolean {
+// `undefined` is the back-compat default for users predating the rights
+// system (and for fields the worker hasn't lazy-migrated into yet — see
+// worker/auth.ts) — treated as full access. Same rule on the client
+// (src/lib/permissions.ts) so the UI matches the BFF gate.
+function hasRights(rights: LanguageRights | undefined, name: string): boolean {
   if (rights === undefined || rights === "*") return true;
   return rights.includes(name);
+}
+
+type ResourceKind = "language" | "mode";
+type RightsVerb = "edit" | "publish";
+
+function rightsFor(
+  session: SessionData,
+  kind: ResourceKind,
+  verb: RightsVerb
+): LanguageRights | undefined {
+  if (kind === "language") {
+    // Lazy fallback mirrors worker/auth.ts:140-145 exactly — legacy
+    // pre-#181 sessions carry only `language_rights`; verb-perms fall
+    // back to it so existing shepherds keep their access until they're
+    // re-saved through the new dialog. Tests that construct SessionData
+    // directly (skipping auth.ts) get the same semantic.
+    const explicit =
+      verb === "edit"
+        ? session.language_edit_rights
+        : session.language_publish_rights;
+    return explicit ?? session.language_rights;
+  }
+  // Modes: returning `undefined` here would translate to "legacy full
+  // access" via hasRights — which would silently widen a user whose
+  // admin granted, say, mode_edit_rights = ["spoken"] but left
+  // mode_publish_rights unset, into publish-everything. The mode-
+  // baseline gate above catches the truly-legacy (both undefined) case
+  // and returns 403; everywhere downstream, `undefined` for one mode
+  // verb means "no rights for this verb," not legacy full.
+  const own =
+    verb === "edit" ? session.mode_edit_rights : session.mode_publish_rights;
+  return own ?? [];
 }
 
 const UUID_V4_RE =
@@ -26,7 +54,11 @@ async function proxyToEngine(
   request: Request,
   env: Env,
   enginePath: string,
-  allowedMethods: string[]
+  allowedMethods: string[],
+  // Optional pre-parsed body. The verb-perms gate consumes the body to
+  // diff against current state; passing it back in here avoids a
+  // double-read (request bodies are one-shot streams).
+  parsedBody?: unknown
 ): Promise<Response> {
   if (!allowedMethods.includes(request.method)) {
     return errorResponse("Method not allowed", 405);
@@ -39,10 +71,14 @@ async function proxyToEngine(
   let body: string | undefined;
   if (request.method === "PUT" || request.method === "POST") {
     headers["Content-Type"] = "application/json";
-    try {
-      body = JSON.stringify(await request.json());
-    } catch {
-      return errorResponse("Invalid JSON", 400);
+    if (parsedBody !== undefined) {
+      body = JSON.stringify(parsedBody);
+    } else {
+      try {
+        body = JSON.stringify(await request.json());
+      } catch {
+        return errorResponse("Invalid JSON", 400);
+      }
     }
   }
 
@@ -60,6 +96,190 @@ async function proxyToEngine(
 }
 
 // ---------------------------------------------------------------------------
+// Verb-perms gate (#181) — language + mode PUT/DELETE authorization
+// ---------------------------------------------------------------------------
+
+// PUT body shape we diff against current state. Both languages and modes
+// share `document` and `published`; modes additionally carry `label` and
+// `description`. We treat any of those three editorial fields as an edit
+// signal so a future `{label: "new"}` PUT for languages stays on the edit
+// gate even though today's portal only sends `document`.
+interface ResourceShape {
+  document?: string;
+  label?: string;
+  description?: string;
+  published?: boolean;
+}
+
+async function fetchCurrentResource(
+  env: Env,
+  kind: ResourceKind,
+  org: string,
+  name: string
+): Promise<ResourceShape | null> {
+  const enginePath =
+    kind === "language"
+      ? `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(name)}`
+      : `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(name)}`;
+  const res = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
+    headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Engine fetch failed: ${res.status}`);
+  }
+  const data = (await res.json()) as Record<string, unknown>;
+  // Engine wraps in { org, language|mode: {...} } — mirror of the
+  // unwrap logic in src/lib/languages-api.ts + src/lib/config-api.ts.
+  const wrapped = kind === "language" ? data.language : data.mode;
+  if (wrapped && typeof wrapped === "object") {
+    return wrapped as ResourceShape;
+  }
+  return data as ResourceShape;
+}
+
+// Diff a PUT body against current engine state to determine which verb
+// rights the caller needs. The portal sends the full resource on every
+// PUT — document and published both present even for an autosave that
+// only changed the document — so naive presence-based intent doesn't
+// work. We compare values to compute the actual diff.
+//
+// Creation case (`current === null`): treat any editorial field as an
+// edit, and only require publish if `published: true` is being set
+// (since the engine's create-default is unpublished).
+function computeRequiredVerbsForPut(
+  body: ResourceShape,
+  current: ResourceShape | null
+): RightsVerb[] {
+  const isCreate = current === null;
+  const docChanged =
+    body.document !== undefined &&
+    (isCreate || body.document !== current.document);
+  const labelChanged =
+    body.label !== undefined && (isCreate || body.label !== current.label);
+  const descChanged =
+    body.description !== undefined &&
+    (isCreate || body.description !== current.description);
+  const publishChanged =
+    body.published !== undefined &&
+    (isCreate ? body.published === true : body.published !== current.published);
+
+  const verbs: RightsVerb[] = [];
+  if (docChanged || labelChanged || descChanged) verbs.push("edit");
+  if (publishChanged) verbs.push("publish");
+  return verbs;
+}
+
+// Authorization gate for PUT/DELETE on /api/config/{languages,modes}/{name}.
+// Returns `{ ok: true }` to proceed (with optional `parsedBody` when the
+// gate already consumed it), or `{ error: Response }` to reject.
+//
+// Order of checks (intentionally asymmetric language ↔ mode):
+//   1. crossOrg (super-admin viewing another org's config) — bypass
+//      per-row gates; shepherd rights are home-org-scoped and don't
+//      translate. Same carve-out as the pre-#181 language gate.
+//   2. hasAdminPowers — bypasses the gate FOR MODES ONLY. Pre-#181 the
+//      mode path was admin-only and languages were per-row for everyone
+//      (PR #185 review explicitly assertion: same-org super-admin with
+//      restricted `language_rights` still gets 403 on unauthorized
+//      langs). Preserve that asymmetry — admin doesn't trump per-row
+//      languages, only modes.
+//   3. Mode-baseline gate (modes only) — non-admin with both
+//      mode_*_rights unset → 403, preserving pre-#181 admin-only for
+//      legacy users. Escape by admin-granting at least one explicit
+//      mode verb in the new dialog.
+//   4. Early-deny — if the caller has zero rights on this row across
+//      both verbs, reject before consuming the body. Keeps bodyless
+//      probes (DELETE, GET-with-method-override, malformed PUTs) on
+//      the 403 path rather than a downstream 400.
+//   5. DELETE → requires BOTH edit + publish on the row. Deletion is
+//      strictly more destructive than either alone.
+//   6. PUT → diff body vs current and require the union of verbs the
+//      diff implies (`edit` if any editorial field changed, `publish`
+//      if the published flag flipped).
+async function gateConfigMutation(
+  request: Request,
+  env: Env,
+  session: SessionData,
+  org: string,
+  kind: ResourceKind,
+  name: string,
+  crossOrg: boolean
+): Promise<{ ok: true; parsedBody?: ResourceShape } | { error: Response }> {
+  if (crossOrg) return { ok: true };
+
+  // Admin trumps PER-MODE rights only. Pre-#181, modes were admin-only
+  // and languages were per-row for everyone — including super-admin
+  // shepherds with restricted same-org `language_rights` (PR #185
+  // review). Preserve that asymmetry: a same-org admin doesn't get a
+  // free pass on a language they don't shepherd, but does keep the
+  // legacy "admin can edit any mode" capability.
+  if (kind === "mode" && hasAdminPowers(session)) return { ok: true };
+
+  // Modes had no per-row rights pre-#181 — the gate was admin-only. The
+  // "undefined === legacy full access" rule that languages inherit from
+  // the original per-row `language_rights` field would silently widen
+  // mode access to every non-admin if applied here. Keep the pre-#181
+  // admin-only baseline for any non-admin without an explicit mode
+  // grant; the new dialog must set at least one of mode_edit_rights /
+  // mode_publish_rights to escape this baseline.
+  if (
+    kind === "mode" &&
+    session.mode_edit_rights === undefined &&
+    session.mode_publish_rights === undefined
+  ) {
+    return { error: errorResponse("Forbidden", 403) };
+  }
+
+  // Early-deny: if the caller has zero rights on this row across both
+  // verbs, no PUT diff can let them through. Rejecting before reading
+  // the body keeps the gate side-effect-free in the impossible case and
+  // preserves the pre-#181 same-org "restricted shepherd → 403 on any
+  // unauthorized row" behavior even for bodyless probes.
+  if (
+    !hasRights(rightsFor(session, kind, "edit"), name) &&
+    !hasRights(rightsFor(session, kind, "publish"), name)
+  ) {
+    return { error: errorResponse("Forbidden", 403) };
+  }
+
+  if (request.method === "DELETE") {
+    if (
+      !hasRights(rightsFor(session, kind, "edit"), name) ||
+      !hasRights(rightsFor(session, kind, "publish"), name)
+    ) {
+      return { error: errorResponse("Forbidden", 403) };
+    }
+    return { ok: true };
+  }
+
+  if (request.method === "PUT") {
+    let body: ResourceShape;
+    try {
+      body = (await request.json()) as ResourceShape;
+    } catch {
+      return { error: errorResponse("Invalid JSON", 400) };
+    }
+    let current: ResourceShape | null;
+    try {
+      current = await fetchCurrentResource(env, kind, org, name);
+    } catch {
+      return {
+        error: errorResponse("Upstream error fetching current state", 502),
+      };
+    }
+    for (const verb of computeRequiredVerbsForPut(body, current)) {
+      if (!hasRights(rightsFor(session, kind, verb), name)) {
+        return { error: errorResponse("Forbidden", 403) };
+      }
+    }
+    return { ok: true, parsedBody: body };
+  }
+
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
 // Config route handler
 // ---------------------------------------------------------------------------
 
@@ -73,14 +293,16 @@ function hasAdminPowers(session: SessionData): boolean {
   return session.isAdmin || (session.isSuperAdmin ?? false);
 }
 
-// Mutations on org-wide prompt configuration (modes + prompt-overrides) are
-// admin-only. The trusted-portal model (single shared ADMIN_API_TOKEN
-// upstream, no per-user identity on admin paths) means this worker is the
-// only enforcement point — without this gate, any authenticated user in the
-// org could rewrite or delete the org's modes via direct fetch. GET stays
-// open because non-admins need to read modes for the test-chat / trigger
-// lookup, and prompt-overrides GET carries no sensitive data beyond the
-// org's prompt configuration.
+// Mutations on org-wide prompt-overrides are admin-only. The trusted-portal
+// model (single shared ADMIN_API_TOKEN upstream, no per-user identity on
+// admin paths) means this worker is the only enforcement point — without
+// this gate, any authenticated user in the org could rewrite or delete the
+// org's prompt-overrides via direct fetch. GET stays open because the
+// payload carries no sensitive data beyond the org's prompt configuration.
+//
+// Modes used to share this gate but now have their own per-mode verb-perms
+// gate (gateConfigMutation), so non-admin mode shepherds can edit/publish
+// modes they hold rights on.
 function isAdminMutation(method: string, session: SessionData): boolean {
   return (method === "PUT" || method === "DELETE") && !hasAdminPowers(session);
 }
@@ -147,13 +369,30 @@ export async function handleConfig(
     );
   }
 
-  // /api/config/modes/{name} → GET (any session) / PUT/DELETE (admin)
+  // /api/config/modes/{name} → GET (any session) / PUT/DELETE (per-mode
+  // verb-perms, admin-trump)
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);
   if (modeMatch?.[1]) {
-    if (isAdminMutation(request.method, session)) {
-      return errorResponse("Forbidden", 403);
-    }
     const modeName = decodeURIComponent(modeMatch[1]);
+    if (request.method === "PUT" || request.method === "DELETE") {
+      const gate = await gateConfigMutation(
+        request,
+        env,
+        session,
+        resolved.org,
+        "mode",
+        modeName,
+        resolved.crossOrg
+      );
+      if ("error" in gate) return gate.error;
+      return proxyToEngine(
+        request,
+        env,
+        `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}`,
+        ["GET", "PUT", "DELETE"],
+        gate.parsedBody
+      );
+    }
     return proxyToEngine(
       request,
       env,
@@ -162,15 +401,29 @@ export async function handleConfig(
     );
   }
 
-  // /api/config/languages/{name} → GET/PUT/DELETE
+  // /api/config/languages/{name} → GET / PUT / DELETE
+  // (per-language verb-perms, admin-trump, super-admin cross-org bypass)
   const languageMatch = pathname.match(/^\/api\/config\/languages\/(.+)$/);
   if (languageMatch?.[1]) {
     const languageName = decodeURIComponent(languageMatch[1]);
-    if (
-      !resolved.crossOrg &&
-      !hasLanguageRights(session.language_rights, languageName)
-    ) {
-      return errorResponse("Forbidden", 403);
+    if (request.method === "PUT" || request.method === "DELETE") {
+      const gate = await gateConfigMutation(
+        request,
+        env,
+        session,
+        resolved.org,
+        "language",
+        languageName,
+        resolved.crossOrg
+      );
+      if ("error" in gate) return gate.error;
+      return proxyToEngine(
+        request,
+        env,
+        `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(languageName)}`,
+        ["GET", "PUT", "DELETE"],
+        gate.parsedBody
+      );
     }
     return proxyToEngine(
       request,
@@ -239,3 +492,12 @@ export async function handleConfig(
 
   return errorResponse("Not found", 404);
 }
+
+// Exported for unit tests in tests/config-verb-perms.test.ts. Internal use
+// of these helpers stays inside this module; no other production caller
+// should reach into them.
+export const __testInternals = {
+  computeRequiredVerbsForPut,
+  hasRights,
+  rightsFor,
+};

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { AdminUser, UpdateUserBody } from "@/types/admin-users";
 import type { LanguageRights } from "@/types/auth";
 import type { Language } from "@/types/language";
+import type { PromptMode } from "@/types/prompt-override";
 import {
   AdminUsersForbiddenError,
   AdminUsersRequestError,
@@ -20,7 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { LanguageRightsSelector } from "@/components/language-rights-selector";
+import { RightsSelector } from "@/components/rights-selector";
 
 interface EditUserDialogProps {
   user: AdminUser | null;
@@ -37,6 +38,28 @@ interface EditUserDialogProps {
   // org-admin shape exactly.
   callerIsSuperAdmin: boolean;
   availableLanguages: Language[] | undefined;
+  availableModes: PromptMode[] | undefined;
+}
+
+// Pre-PR-1 users have only the legacy `language_rights` bit; the worker
+// lazy-migrates it into both verb-perms fields on every request. The
+// dialog mirrors that fallback so the selector populates with the user's
+// effective rights rather than starting blank.
+function effectiveLangRights(
+  user: AdminUser,
+  fallback: LanguageRights | undefined
+) {
+  return fallback ?? user.language_rights;
+}
+
+// Send a verb-perms field only when the admin actually changed it. JSON
+// round-trip handles the `string[] | "*"` discriminated union without a
+// per-shape comparator.
+function diffRights(
+  current: LanguageRights | undefined,
+  next: LanguageRights | undefined
+): boolean {
+  return JSON.stringify(current ?? null) !== JSON.stringify(next ?? null);
 }
 
 export function AdminUserEditDialog({
@@ -46,6 +69,7 @@ export function AdminUserEditDialog({
   callerEmail,
   callerIsSuperAdmin,
   availableLanguages,
+  availableModes,
 }: EditUserDialogProps) {
   const updateUser = useUpdateAdminUser();
 
@@ -53,7 +77,18 @@ export function AdminUserEditDialog({
   const [org, setOrg] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
-  const [rights, setRights] = useState<LanguageRights | undefined>(undefined);
+  const [langEdit, setLangEdit] = useState<LanguageRights | undefined>(
+    undefined
+  );
+  const [langPublish, setLangPublish] = useState<LanguageRights | undefined>(
+    undefined
+  );
+  const [modeEdit, setModeEdit] = useState<LanguageRights | undefined>(
+    undefined
+  );
+  const [modePublish, setModePublish] = useState<LanguageRights | undefined>(
+    undefined
+  );
   const [password, setPassword] = useState("");
   const [errorText, setErrorText] = useState<string | null>(null);
 
@@ -65,7 +100,10 @@ export function AdminUserEditDialog({
     setOrg(user.org);
     setIsAdmin(user.isAdmin);
     setIsSuperAdmin(user.isSuperAdmin ?? false);
-    setRights(user.language_rights);
+    setLangEdit(effectiveLangRights(user, user.language_edit_rights));
+    setLangPublish(effectiveLangRights(user, user.language_publish_rights));
+    setModeEdit(user.mode_edit_rights);
+    setModePublish(user.mode_publish_rights);
     setPassword("");
     setErrorText(null);
     updateUser.reset();
@@ -105,13 +143,38 @@ export function AdminUserEditDialog({
     if (callerIsSuperAdmin && isSuperAdmin !== (user.isSuperAdmin ?? false)) {
       body.isSuperAdmin = isSuperAdmin;
     }
-    // Send language_rights when the value differs. Comparing arrays needs
-    // a deep compare; we serialize.
-    const currentSerialized = JSON.stringify(user.language_rights ?? null);
-    const nextSerialized = JSON.stringify(rights ?? null);
-    if (currentSerialized !== nextSerialized && rights !== undefined) {
-      body.language_rights = rights;
+
+    // Send each verb-perm field only when changed AND the new value is
+    // defined. Sending undefined would not flip the persisted state since
+    // worker-side parsing ignores undefined keys; but skipping the send
+    // entirely keeps PUT bodies minimal and the diff readable in logs.
+    const initialLangEdit = effectiveLangRights(
+      user,
+      user.language_edit_rights
+    );
+    const initialLangPublish = effectiveLangRights(
+      user,
+      user.language_publish_rights
+    );
+    if (diffRights(initialLangEdit, langEdit) && langEdit !== undefined) {
+      body.language_edit_rights = langEdit;
     }
+    if (
+      diffRights(initialLangPublish, langPublish) &&
+      langPublish !== undefined
+    ) {
+      body.language_publish_rights = langPublish;
+    }
+    if (diffRights(user.mode_edit_rights, modeEdit) && modeEdit !== undefined) {
+      body.mode_edit_rights = modeEdit;
+    }
+    if (
+      diffRights(user.mode_publish_rights, modePublish) &&
+      modePublish !== undefined
+    ) {
+      body.mode_publish_rights = modePublish;
+    }
+
     // Password is opt-in: only include when the admin actually typed
     // something. Empty = leave the existing hash alone. Mirror the
     // server's 8-char floor (worker rejects shorter with 400).
@@ -150,6 +213,17 @@ export function AdminUserEditDialog({
   };
 
   if (!user) return null;
+
+  // Legacy hint only fires for users who have no rights of any kind set —
+  // not for users whose verb-perm is being populated from the legacy
+  // `language_rights` fallback (which is the populated, intended value).
+  const showLegacyLang =
+    user.language_edit_rights === undefined &&
+    user.language_publish_rights === undefined &&
+    user.language_rights === undefined;
+  const showLegacyMode =
+    user.mode_edit_rights === undefined &&
+    user.mode_publish_rights === undefined;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -242,11 +316,37 @@ export function AdminUserEditDialog({
               </label>
             )}
 
-            <LanguageRightsSelector
-              value={rights}
-              onChange={setRights}
-              availableLanguages={availableLanguages}
-              showLegacyHint
+            <RightsSelector
+              kind="language"
+              verb="edit"
+              value={langEdit}
+              onChange={setLangEdit}
+              availableItems={availableLanguages}
+              showLegacyHint={showLegacyLang}
+            />
+            <RightsSelector
+              kind="language"
+              verb="publish"
+              value={langPublish}
+              onChange={setLangPublish}
+              availableItems={availableLanguages}
+              showLegacyHint={showLegacyLang}
+            />
+            <RightsSelector
+              kind="mode"
+              verb="edit"
+              value={modeEdit}
+              onChange={setModeEdit}
+              availableItems={availableModes}
+              showLegacyHint={showLegacyMode}
+            />
+            <RightsSelector
+              kind="mode"
+              verb="publish"
+              value={modePublish}
+              onChange={setModePublish}
+              availableItems={availableModes}
+              showLegacyHint={showLegacyMode}
             />
 
             <div className="space-y-2">

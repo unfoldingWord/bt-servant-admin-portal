@@ -12,6 +12,7 @@ import {
 import { useAuthStore } from "@/lib/auth-store";
 import { useAdminUsers, useDeleteAdminUser } from "@/hooks/use-admin-users";
 import { useLanguages } from "@/hooks/use-languages";
+import { useModes } from "@/hooks/use-prompt-config";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -41,6 +42,7 @@ export function AdminUsersPage() {
 
   const usersQuery = useAdminUsers();
   const languagesQuery = useLanguages();
+  const modesQuery = useModes();
   const deleteUser = useDeleteAdminUser();
 
   const [editingEmail, setEditingEmail] = useState<string | null>(null);
@@ -209,6 +211,7 @@ export function AdminUsersPage() {
         callerOrg={callerOrg}
         callerIsSuperAdmin={callerIsSuperAdmin}
         availableLanguages={languagesQuery.data?.languages}
+        availableModes={modesQuery.data?.modes}
       />
 
       <AdminUserEditDialog
@@ -220,6 +223,7 @@ export function AdminUsersPage() {
         callerEmail={callerEmail}
         callerIsSuperAdmin={callerIsSuperAdmin}
         availableLanguages={languagesQuery.data?.languages}
+        availableModes={modesQuery.data?.modes}
       />
 
       <AlertDialog

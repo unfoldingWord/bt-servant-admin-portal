@@ -2,6 +2,12 @@ import type { LanguageRights } from "@/types/auth";
 
 // Mirrors the worker `safeUser` response shape from /api/admin/users.
 // Password fields are deliberately not in the API response.
+//
+// `language_rights` is the pre-#181 single-bit field. Verb-perms (the four
+// `*_edit_rights` / `*_publish_rights` fields) layer on top: when absent on
+// a row, the worker lazy-migrates from `language_rights`. The dialog always
+// persists the verb-perms fields explicitly so newly-granted rights don't
+// leak full access via the `undefined === legacy` fallback.
 export interface AdminUser {
   id: string;
   email: string;
@@ -14,6 +20,10 @@ export interface AdminUser {
   // role, not the row's.
   isSuperAdmin?: boolean;
   language_rights?: LanguageRights;
+  language_edit_rights?: LanguageRights;
+  language_publish_rights?: LanguageRights;
+  mode_edit_rights?: LanguageRights;
+  mode_publish_rights?: LanguageRights;
 }
 
 export interface CreateUserBody {
@@ -26,6 +36,10 @@ export interface CreateUserBody {
   // super-by-session. Org admins sending this get a loud 403.
   isSuperAdmin?: boolean;
   language_rights?: LanguageRights;
+  language_edit_rights?: LanguageRights;
+  language_publish_rights?: LanguageRights;
+  mode_edit_rights?: LanguageRights;
+  mode_publish_rights?: LanguageRights;
 }
 
 export interface UpdateUserBody {
@@ -38,4 +52,8 @@ export interface UpdateUserBody {
   // within their own org).
   isSuperAdmin?: boolean;
   language_rights?: LanguageRights;
+  language_edit_rights?: LanguageRights;
+  language_publish_rights?: LanguageRights;
+  mode_edit_rights?: LanguageRights;
+  mode_publish_rights?: LanguageRights;
 }
