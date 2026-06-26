@@ -814,6 +814,112 @@ describe("config authz — #181 verb-perms (modes)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// #232 mode rename — POST /api/config/modes/{name}/_rename
+// ---------------------------------------------------------------------------
+//
+// Rename reslugs a mode's canonical identity in place (the engine keeps the
+// old slug as an alias so assigned users aren't stranded). The BFF restricts
+// it to admins + super-admin cross-org and proxies the POST (with its
+// `{ newName }` body) to the engine `_rename` op. Non-admin shepherds are
+// blocked even with full per-row rights: their mode rights are slug-scoped
+// and a rename would lock them out of the renamed slug (#238 review). The
+// dedicated route must be matched before the generic `modes/{name}` route,
+// which would otherwise swallow `{name}/_rename` and 405 the POST.
+
+function makeRenameRequest(name: string, newName: string): Request {
+  return new Request(
+    `https://portal.example.test/api/config/modes/${name}/_rename`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newName }),
+    }
+  );
+}
+
+describe("config authz — #232 mode rename (_rename)", () => {
+  it("admin → proxies POST to engine _rename path", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("POST");
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/acme/modes/spoken/_rename"
+    );
+  });
+
+  it("super admin without isAdmin → proxies (super trumps isAdmin)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ isAdmin: false, isSuperAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("non-admin without any explicit mode rights → 403 (baseline, no proxy)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ isAdmin: false }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("non-admin with BOTH edit+publish on the row → 403 (rename is admin-only)", async () => {
+    // The crux of the #238 review: full per-row rights are NOT enough.
+    // Mode rights are slug-scoped, so letting a shepherd rename would lock
+    // them out of the renamed slug. Only admins/cross-org may rename.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("super-admin cross-org via ?org=other → proxies to /orgs/other/.../_rename", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      new Request(
+        "https://portal.example.test/api/config/modes/spoken/_rename?org=word-collective",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ newName: "conversation" }),
+        }
+      ),
+      env,
+      makeSession({ org: "acme", isSuperAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/word-collective/modes/spoken/_rename"
+    );
+  });
+});
+
 describe("config authz — #181 verb diff (pure function)", () => {
   const { computeRequiredVerbsForPut } = __testInternals;
 

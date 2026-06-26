@@ -389,6 +389,35 @@ export async function handleConfig(
     );
   }
 
+  // /api/config/modes/{name}/_rename → POST. Matched BEFORE the generic
+  // mode route below — the `(.+)` there would otherwise capture
+  // `{name}/_rename` as the mode name and reject POST as 405. The engine
+  // (#232) reslugs the mode in place and keeps the old slug as an alias
+  // so existing user assignments aren't stranded.
+  //
+  // Restricted to admins + super-admin cross-org. Per-user mode rights
+  // are slug-scoped (`mode_edit_rights` / `mode_publish_rights`), so a
+  // non-admin shepherd who renamed a mode would keep rights on the OLD
+  // slug and lose access to the renamed mode — and the worker would 403
+  // their later `/modes/{newName}` calls (#238 review). Until rights
+  // migration exists, only admins (blanket mode access) and cross-org
+  // super-admins (per-row gate bypassed anyway) may rename.
+  const modeRenameMatch = pathname.match(
+    /^\/api\/config\/modes\/(.+)\/_rename$/
+  );
+  if (modeRenameMatch?.[1]) {
+    const modeName = decodeURIComponent(modeRenameMatch[1]);
+    if (!resolved.crossOrg && !hasAdminPowers(session)) {
+      return errorResponse("Forbidden", 403);
+    }
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_rename`,
+      ["POST"]
+    );
+  }
+
   // /api/config/modes/{name} → GET (any session) / PUT/DELETE (per-mode
   // verb-perms, admin-trump)
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);

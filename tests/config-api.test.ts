@@ -10,6 +10,7 @@ import {
   listModes,
   putMode,
   putOrgOverrides,
+  renameMode,
   setUserMode,
 } from "../src/lib/config-api";
 
@@ -316,6 +317,72 @@ describe("deleteMode", () => {
     mockFetchOnce(404, "Mode not found");
     await expect(deleteMode("missing")).rejects.toThrow(
       /Failed to delete mode \(404\): Mode not found/
+    );
+  });
+});
+
+describe("renameMode", () => {
+  it("POSTs `{ newName }` to the _rename endpoint and unwraps the envelope", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          org: "uw",
+          mode: { name: "conversation", document: "## Identity\n" },
+          message: "Mode renamed",
+        }),
+        { status: 200 }
+      )
+    );
+    const result = await renameMode("spoken", "conversation");
+    expect(spy.mock.calls[0]![0]).toBe("/api/config/modes/spoken/_rename");
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      newName: "conversation",
+    });
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/json"
+    );
+    // Returns the renamed mode (new canonical name), envelope unwrapped.
+    expect(result.name).toBe("conversation");
+  });
+
+  it("URL-encodes the source mode name in the path", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ mode: { name: "new", document: "" } }))
+      );
+    await renameMode("kids mode", "new");
+    expect(spy.mock.calls[0]![0]).toBe("/api/config/modes/kids%20mode/_rename");
+  });
+
+  it("surfaces the engine's JSON `{ error }` message on a slug collision", async () => {
+    // The engine rejects a colliding/invalid new slug with `{ error }` JSON
+    // (409/400). The dialog shows this inline, so the message must be the
+    // engine string — not the raw `{"error":"…"}` blob.
+    mockFetchOnce(409, { error: "Mode 'conversation' already exists" });
+    await expect(renameMode("spoken", "conversation")).rejects.toThrow(
+      /Failed to rename mode \(409\): Mode 'conversation' already exists/
+    );
+  });
+
+  it("falls back to raw text when the error body isn't JSON", async () => {
+    mockFetchOnce(500, "upstream boom");
+    await expect(renameMode("spoken", "conversation")).rejects.toThrow(
+      /Failed to rename mode \(500\): upstream boom/
+    );
+  });
+
+  it("threads org through as ?org=", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ mode: { name: "new", document: "" } }))
+      );
+    await renameMode("spoken", "new", undefined, "word-collective");
+    expect(spy.mock.calls[0]![0]).toBe(
+      "/api/config/modes/spoken/_rename?org=word-collective"
     );
   });
 });
