@@ -140,8 +140,8 @@ Test count 354 → 366 (+12 new; helper-coverage focused).
 | portal | #238   | `52e8894` | #232 partial (rename shipped; issue stays open for rights-migration follow-up) |
 | portal | n/a    | n/a       | Tag **v1.10.0** pushed alongside #238 merge                                    |
 
-**Issues closed today:** none (#232 deliberately stays open).
-**Issues filed today:** none.
+**Issues closed today:** web-client #42 (closed as wrong-framing; replaced by web-client #45).
+**Issues filed today:** web-client #45 (PR-time `opennextjs-cloudflare build` gate, correctly-framed replacement for #42).
 
 **In Progress:**
 
@@ -153,7 +153,7 @@ Test count 354 → 366 (+12 new; helper-coverage focused).
 - **#232 follow-up capabilities from Ian's plan** — clone (§2), alias display + retire-and-forward (§3), export aliases (§4) all deferred. Worth filing as a stub issue tracker so they don't drop on the floor; Ian's plan comment is the design source of truth.
 - **#230** — Elsy locked; Ian's worker #257 contract questions still pending.
 - **Track E phase 1 step 1 (#154 ↔ worker#94 reconciliation)** — still un-picked; foundational for #155/#156/#160/#183.
-- **web-client #42 disposition** — still open from 2026-06-13.
+- **web-client #45 — PR-time build gate** — filed 2026-06-26 as the correctly-framed replacement for closed #42. Adds an `opennextjs-cloudflare build` job to CI on Node 20, mirroring the deploy path; closes the PR-time gap where a build break currently only surfaces on post-merge deploy-staging. Small scope; unowned.
 - **Demo (June 9) retrospective** — 17 days stale.
 - **Track G #215 Path B Zulip draft** — unsent from 2026-05-28.
 - **Cascade design (Track B) implementation** — #170/#172 — gated on Ian's `ORG_CONFIG` vs new `SYSTEM_CONFIG` KV decision.
@@ -165,12 +165,17 @@ Test count 354 → 366 (+12 new; helper-coverage focused).
 - **Narrowing scope mid-implementation is a legitimate move when the unshipped pieces are genuinely follow-ups.** Ian's plan covered 4 capabilities; PR #238 shipped 1 (rename) plus §0. Clone, alias display, retire/forward, and export aliases each map cleanly to standalone follow-ups, none of which block users from the primary ask ("rename without stranding users"). The discipline that makes this work: each deferred capability needs an owner and a tracking issue, not just an "I'll get to it." None of Ian's three deferred capabilities are tracked yet — that's a gap.
 - **Ian's engine-first sequencing is fast.** Engine #284 plan posted same-day as Elsy filed (2026-06-24); engine implementation shipped + tagged 2026-06-25; portal half merged 2026-06-26. ~48 hours filed-to-shipped for a cross-repo high-priority ask. The structural enabler is that the engine side specifies the contract precisely enough that the portal side can implement against it the moment it merges, with the BFF doing pure pass-through (no business logic) — which is exactly what PR #238 looks like.
 
+**This session (2026-06-26 morning) also completed — disposition of web-client #42:**
+
+- **web-client #42 closed** with a comment explaining the framing was wrong: the `_global-error` prerender failure that justified removing the Build job in PR #41 only reproduces on Node 22; CI/deploys both run Node 20 and `opennextjs-cloudflare build` has shipped cleanly on Node 20 multiple times, most recently Ian's 2026-06-24 prod promotion. The "restore once upstream fixes `_global-error`" trigger in #42's body was waiting on a fix that doesn't need to happen for our build path to be green. Also: mechanically restoring the old job shape (`next build` + `.next` bundle upload) wouldn't gate the path that actually ships.
+- **web-client #45 filed** as the correctly-framed replacement: add an `opennextjs-cloudflare build` job to CI on Node 20 mirroring `deploy-staging.yml`'s build prelude minus the actual deploy, hard-fail on build error, no `continue-on-error`. Closes the PR-time gap where build breaks currently only surface post-merge on deploy-staging. Captured open questions on the wrangler-secrets-for-build-only question + bundle-size-reporting-as-followup.
+
 **Next session:**
 
-1. **web-client #42 disposition** — ~10 min cleanup, the original next-up from yesterday's plan.
-2. **File the #232 follow-up issues** — at minimum one for shepherd rights-migration (the active gap that keeps #232 open) and one umbrella for Ian's deferred §2/§3/§4 capabilities (clone, alias display + retire/forward, export aliases). Without tracking issues these will drop.
-3. **#230 — only if Ian has responded on worker #257.** Still gated.
-4. **Track E phase 1 step 1 (#154 ↔ worker#94 reconciliation)** — gated on Ian for KV namespace placement.
+1. **File the #232 follow-up issues** — at minimum one for shepherd rights-migration (the active gap that keeps #232 open) and one umbrella for Ian's deferred §2/§3/§4 capabilities (clone, alias display + retire/forward, export aliases). Without tracking issues these will drop.
+2. **#230 — only if Ian has responded on worker #257.** Still gated.
+3. **Track E phase 1 step 1 (#154 ↔ worker#94 reconciliation)** — gated on Ian for KV namespace placement.
+4. **web-client #45 implementation** — small workflow PR if no one else picks it up first.
 5. **Demo retrospective + Phase 1 plan refresh** — increasingly stale.
 
 ---
