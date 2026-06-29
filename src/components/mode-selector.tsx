@@ -254,13 +254,39 @@ export function ModeSelector({
         )}
 
         {selectedMode !== null && selectedModeData && (
-          <div className="border-border flex items-center gap-2 sm:border-l sm:pl-3">
+          <div className="border-border flex flex-wrap items-center gap-2 sm:border-l sm:pl-3">
             <Badge
               variant={selectedIsPublished ? "default" : "outline"}
               className="shrink-0"
             >
               {selectedIsPublished ? "Published" : "Draft"}
             </Badge>
+
+            {/* Alias badges (#232 / #241). A mode answers to its previous
+                slug(s) after rename, or to its merged-in slug(s) after a
+                retire-and-forward. Showing them is essential for trust —
+                otherwise the rerouting is invisible. Engine omits the
+                field when empty, so `aliases?.length` covers both cases. */}
+            {selectedModeData.aliases?.length ? (
+              <div
+                className="flex flex-wrap items-center gap-1"
+                role="list"
+                aria-label={`Also resolves to ${selectedModeData.aliases.length} previous ${selectedModeData.aliases.length === 1 ? "slug" : "slugs"}`}
+              >
+                <span className="text-muted-foreground text-xs">also:</span>
+                {selectedModeData.aliases.map((alias) => (
+                  <Badge
+                    key={alias}
+                    variant="outline"
+                    role="listitem"
+                    title={`Users referencing "${alias}" still resolve to this mode (alias from rename or retire-and-forward).`}
+                    className="text-muted-foreground font-mono text-[10px] font-normal"
+                  >
+                    {alias}
+                  </Badge>
+                ))}
+              </div>
+            ) : null}
 
             {canPublishSelected &&
               (selectedIsPublished ? (

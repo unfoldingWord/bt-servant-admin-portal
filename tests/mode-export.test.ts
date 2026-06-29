@@ -45,6 +45,38 @@ describe("buildModeExportContent — frontmatter", () => {
     expect(out).toContain("published: false");
   });
 
+  it("emits an aliases block when the mode carries aliases", () => {
+    const out = buildModeExportContent(
+      { ...baseMode, aliases: ["spoken-old", "spoken-legacy"] },
+      { org: "unfoldingWord", exportedAt: FIXED_DATE }
+    );
+    expect(out).toContain('aliases:\n  - "spoken-old"\n  - "spoken-legacy"');
+  });
+
+  it("omits the aliases key entirely when the mode has no aliases", () => {
+    const withoutKey = buildModeExportContent(baseMode, {
+      org: "uW",
+      exportedAt: FIXED_DATE,
+    });
+    const withEmpty = buildModeExportContent(
+      { ...baseMode, aliases: [] },
+      { org: "uW", exportedAt: FIXED_DATE }
+    );
+    // Engine omits `aliases` when empty; mirror that so round-tripped
+    // files don't sprout an empty key on subsequent exports.
+    expect(withoutKey).not.toContain("aliases");
+    expect(withEmpty).not.toContain("aliases");
+  });
+
+  it("escapes alias slugs through the same YAML scalar emitter as other strings", () => {
+    const out = buildModeExportContent(
+      { ...baseMode, aliases: ['weird "quoted"', "back\\slash"] },
+      { org: "uW", exportedAt: FIXED_DATE }
+    );
+    expect(out).toContain('  - "weird \\"quoted\\""');
+    expect(out).toContain('  - "back\\\\slash"');
+  });
+
   it("emits published as the literal boolean — false when undefined or false", () => {
     const undef = buildModeExportContent(
       { name: "x", document: "" },

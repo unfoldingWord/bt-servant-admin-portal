@@ -27,6 +27,14 @@ export function buildModeExportContent(
     lines.push(`description: ${yamlScalar(mode.description)}`);
   }
   lines.push(`published: ${mode.published === true ? "true" : "false"}`);
+  // Engine omits `aliases` when empty (#232 reconciliation §2); mirror
+  // that on export so round-tripped files don't sprout an empty key.
+  if (mode.aliases?.length) {
+    lines.push("aliases:");
+    for (const alias of mode.aliases) {
+      lines.push(`  - ${yamlScalar(alias)}`);
+    }
+  }
   lines.push(`org: ${yamlScalar(ctx.org)}`);
   lines.push(`exported_at: ${ctx.exportedAt.toISOString()}`);
   lines.push(`export_version: ${MODE_EXPORT_VERSION}`);
