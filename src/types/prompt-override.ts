@@ -55,6 +55,11 @@ export interface PromptMode {
   description?: string;
   document: string;
   published?: boolean;
+  // Previous slugs this mode also answers to (#232 alias mechanism).
+  // Engine omits the field when empty rather than returning []; mirror
+  // that on the wire by only sending the key when there are entries, and
+  // guard reads with `aliases?.length`.
+  aliases?: string[];
 }
 
 export interface OrgModes {

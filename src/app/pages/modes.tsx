@@ -229,11 +229,18 @@ export function ModesPage() {
     // Single `Date` instance so the frontmatter `exported_at` and the
     // filename timestamp can never drift by a second across the call.
     const ctx = { org: effectiveOrg, exportedAt: new Date() };
+    // Spread `modeQuery.data` so every PromptMode field (label,
+    // description, aliases, and anything added later) flows through
+    // without a per-field update here. The three overrides below are
+    // intentional: `name` follows the user's selection, `document`
+    // captures unsaved edits, `published` uses the locally-tracked
+    // toggle (not cache, which can be stale during a Publish race).
+    // Original inline construction dropped `aliases` silently — #241 PR A
+    // Frank review.
     const content = buildModeExportContent(
       {
+        ...modeQuery.data,
         name: selectedMode,
-        label: serverLabel,
-        description: serverDescription,
         document: draft,
         published: lastSyncedPublished,
       },
@@ -252,15 +259,7 @@ export function ModesPage() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [
-    draft,
-    effectiveOrg,
-    lastSyncedPublished,
-    modeQuery.data,
-    selectedMode,
-    serverDescription,
-    serverLabel,
-  ]);
+  }, [draft, effectiveOrg, lastSyncedPublished, modeQuery.data, selectedMode]);
 
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
