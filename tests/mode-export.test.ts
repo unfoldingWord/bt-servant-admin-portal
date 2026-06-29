@@ -68,6 +68,40 @@ describe("buildModeExportContent — frontmatter", () => {
     expect(withEmpty).not.toContain("aliases");
   });
 
+  it("preserves cached metadata when constructed via spread + draft/published overrides", () => {
+    // Pins the pattern used in src/app/pages/modes.tsx handleExport
+    // (`{ ...modeQuery.data, name, document, published }`). The
+    // original inline construction listed fields by hand and dropped
+    // `aliases` silently when the field was added to PromptMode — Frank
+    // P1 on #241 PR A. This test guards the spread shape so any
+    // future PromptMode field is captured on export by default.
+    const cachedMode: PromptMode = {
+      name: "spoken",
+      label: "Spoken Mode",
+      description: "Cached description",
+      document: "old-doc-from-cache",
+      published: true,
+      aliases: ["spoken-old", "spoken-legacy"],
+    };
+    const out = buildModeExportContent(
+      {
+        ...cachedMode,
+        name: "spoken",
+        document: "current-draft-with-edits",
+        published: false,
+      },
+      { org: "uW", exportedAt: FIXED_DATE }
+    );
+    // Cached metadata (especially aliases — the regression) survives.
+    expect(out).toContain('label: "Spoken Mode"');
+    expect(out).toContain('description: "Cached description"');
+    expect(out).toContain('aliases:\n  - "spoken-old"\n  - "spoken-legacy"');
+    // Overrides win for the three locally-tracked fields.
+    expect(out).toContain("current-draft-with-edits");
+    expect(out).not.toContain("old-doc-from-cache");
+    expect(out).toContain("published: false");
+  });
+
   it("escapes alias slugs through the same YAML scalar emitter as other strings", () => {
     const out = buildModeExportContent(
       { ...baseMode, aliases: ['weird "quoted"', "back\\slash"] },
