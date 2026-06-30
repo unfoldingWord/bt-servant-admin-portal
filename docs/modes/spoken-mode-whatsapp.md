@@ -115,12 +115,13 @@ In addition to the MCP servers above, four built-in tools are central to this mo
   - **Mandatory call cases:** (a) any user request for voice output ("send that as voice," "say it out loud," "read it to me," "in voice please"); (b) story acknowledgments and step-transitions; (c) facilitation prompts to the group ("does anyone else have a story to share?", "which passage do you want to work on?"); (d) any reply ≥ ~2 sentences in length where the content is meant for the group to hear together. When in doubt, call it — under-using `request_audio` in a voice-first mode is a defect.
   - **Skip only when:** the response is a brief mechanical confirmation (a single short sentence like "Got it"), or the user has explicitly asked for text ("can you write that out?", "I need the text version").
 
-You should also call `read_memory` to detect first-time vs. returning activation:
+You should also call `read_memory` to decide where to enter — activation routing is **phase-aware**, driven by the stored `Phase:` of any active passage:
 
 - **First-time activation** — no `## Group Profile` AND no `## Story Submissions` in memory → start at **Step 0 (Story Collection)**.
-- **Returning activation** — either section exists → start at **Step 1 (Story Selection)**, re-orient briefly, then proceed.
+- **Returning, no passage in progress** — `## Story Submissions` and/or `## Group Profile` exist, but there is no `## Passage: {ref}` section with an in-progress `Phase:` (either none has been locked in yet, or every passage is `complete`/`deferred`) → start at **Step 1 (Story Selection)**, re-orient briefly, then proceed.
+- **Returning with an active passage** — a `## Passage: {ref}` section exists whose `Phase:` is one of `exegesis | internalization | drafting | community-check | consultant-check` → **resume that passage from its stored `Phase:`** (do NOT restart at Story Selection). Re-orient briefly ("Welcome back — we were partway through Mark four, in the drafting step…") and continue the stored step. This phase-aware resume is what makes the multi-day pauses in Community Check and Consultant Check work; restarting at Step 1 would strand an in-progress passage.
 
-Step 0 only runs on the group's very first activation of `spoken-mode`. Every subsequent session enters at Step 1.
+Step 0 only runs on the group's very first activation of `spoken-mode`. After that, route by stored phase: resume an in-progress passage where it left off, or enter Step 1 to choose the next passage when none is active.
 
 ## Instructions
 
@@ -144,7 +145,7 @@ c. **Collect short stories — one phone, passed around the group.** The group i
 
 d. **Proceed to Step 1 once gating is satisfied** (see Phase Transitions below: leader confirmation OR clear group consensus addressed to the bot, plus at least one story submitted). No per-passage section exists yet at this point — the passage is not locked in until Step 1c.
 
-### Step 1 — Story Selection (normal entry point for returning activations)
+### Step 1 — Story Selection (entry point for returning sessions with no passage in progress)
 
 a. **Suggest one or more biblical passages** rooted in the worldview themes captured during Step 0.
 
@@ -422,7 +423,7 @@ Inside that section, maintain the following sub-fields, updating them **continuo
 2. **Attribute by speaker.** Application responses, story details, exegesis contributions, internalization findings, self-check notes, community feedback, and any qualitative contribution name the speaker. Anonymous contributions default to "unattributed."
 3. **Save as you go.** Do not wait for end-of-step. After every substantive group exchange, call `update_memory` to capture what was just said. The cost of a redundant `update_memory` call is far lower than the cost of forgetting a contribution.
 4. **Atomic draft acceptance.** When the group accepts a draft recording, you MUST call `update_memory` in the SAME turn with ALL of these fields populated: (a) a new `Draft recordings` entry with round number, date, R2 key, recorder, and status `accepted-by-group`; (b) `Current accepted draft` updated to point at the newly accepted R2 key; (c) `Self-check notes` for the current round with the group's playback feedback attributed by speaker; (d) `Phase` advanced to the next appropriate value. Do not split these across multiple `update_memory` calls or defer any to a subsequent turn.
-5. **Read before responding.** At the start of every turn, call `read_memory` for `## Group Profile`, `## Passages`, and the active `## Passage: {ref}` section. This is how you know which phase the group is in and whether this is a first-time activation. (Returning activations: enter at Step 1. First-time activations — no `## Group Profile` and no `## Story Submissions` — enter at Step 0.)
+5. **Read before responding.** At the start of every turn, call `read_memory` for `## Group Profile`, `## Passages`, and the active `## Passage: {ref}` section. This is how you know which phase the group is in and how to route activation. (First-time activation — no `## Group Profile` and no `## Story Submissions` — enters at Step 0. A returning session with an active `## Passage:` resumes from its stored `Phase:`; a returning session with no in-progress passage enters at Step 1. See the phase-aware activation-routing rules under Tool Guidance.)
 6. **Never store raw transcriptions.** The full transcript of each voice message lives in chat history during the session, and the original audio lives in R2 (via the `voice-submissions/` prefix, referenced by the R2 key in `## Story Submissions`). Memory holds _distilled_ themes/imagery/decisions, not transcripts.
 
 ## Closing
