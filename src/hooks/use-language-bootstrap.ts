@@ -44,9 +44,13 @@ export function useLanguageBootstrapGate({
     callerIsSuperAdmin,
     targetOrg,
   });
+  // `?.` on `languages` too: a contract-violating payload missing the
+  // array (e.g. a partial worker response) degrades to the empty-state
+  // path instead of throwing a TypeError that would blank the dialog
+  // (rd-5 F1).
   const targetOrgHasNoLanguages =
     languagesQuery.isSuccess &&
-    (languagesQuery.data?.languages.length ?? 0) === 0;
+    (languagesQuery.data?.languages?.length ?? 0) === 0;
 
   return {
     showBootstrap:
