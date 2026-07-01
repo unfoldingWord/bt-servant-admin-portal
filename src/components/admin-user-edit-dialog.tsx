@@ -7,6 +7,8 @@ import {
   AdminUsersRequestError,
   isReservedOrgSlug,
 } from "@/lib/admin-users-api";
+import { useAuthStore } from "@/lib/auth-store";
+import { canBootstrapLanguage } from "@/lib/language-bootstrap-gate";
 import { useUpdateAdminUser } from "@/hooks/use-admin-users";
 import { useLanguages } from "@/hooks/use-languages";
 import { useModes } from "@/hooks/use-prompt-config";
@@ -27,6 +29,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { addSlugToRights } from "@/lib/rights-merge";
+import { LanguageBootstrapPanel } from "@/components/language-bootstrap-panel";
 import { RightsSelector } from "@/components/rights-selector";
 
 interface EditUserDialogProps {
@@ -101,6 +105,31 @@ export function AdminUserEditDialog({
   const languagesQuery = useLanguages(orgForFetch);
   const modesQuery = useModes(orgForFetch);
 
+  // #247: same bootstrap panel as the create dialog — if the target
+  // user's org has zero language drafts, an admin trying to grant
+  // specific-language access here is blocked in the exact same way,
+  // just one dialog later. Shared component keeps the two surfaces
+  // in step.
+  const callerUser = useAuthStore((s) => s.user);
+  const canBootstrap = canBootstrapLanguage({
+    caller: callerUser,
+    // Anchor to the CALLER's home org — the edit dialog can't move a
+    // user to a different org and simultaneously bootstrap in that
+    // target, so "cross-org" here reads through the caller-home-vs-
+    // target-user-home axis, same as the create-dialog gate.
+    callerOrg: callerUser?.org ?? "",
+    callerIsSuperAdmin,
+    targetOrg: orgForFetch,
+  });
+  const targetOrgHasNoLanguages =
+    languagesQuery.isSuccess &&
+    (languagesQuery.data?.languages.length ?? 0) === 0;
+  const showBootstrap =
+    orgForFetch !== null && targetOrgHasNoLanguages && canBootstrap;
+
+  const [bootstrapPending, setBootstrapPending] = useState(false);
+  const anyPending = updateUser.isPending || bootstrapPending;
+
   // Re-sync form state from the user prop whenever the target changes
   // (or the dialog reopens with a different user).
   useEffect(() => {
@@ -126,9 +155,20 @@ export function AdminUserEditDialog({
 
   const isSelf = user?.email === callerEmail;
 
+  const handleBootstrapDraftCreated = (slug: string) => {
+    // Mirror the create-dialog behavior (review F4): auto-grant edit +
+    // publish on the just-bootstrapped slug so the admin doesn't have
+    // to remember the extra tick step. addSlugToRights preserves
+    // undefined (legacy full access) and "*" so a broader grant is
+    // never silently narrowed.
+    setLangEdit((prev) => addSlugToRights(prev, slug));
+    setLangPublish((prev) => addSlugToRights(prev, slug));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+    if (anyPending) return;
     setErrorText(null);
 
     const trimmedName = name.trim();
@@ -232,8 +272,16 @@ export function AdminUserEditDialog({
     user.language_publish_rights === undefined &&
     user.language_rights === undefined;
 
+  // Radix routes Escape / click-outside / X-button through onOpenChange.
+  // Refuse to close mid-bootstrap so the pending draft PUT can't
+  // resolve into an unmounted panel (review F1, close-path branch).
+  const handleOpenChange = (next: boolean) => {
+    if (!next && anyPending) return;
+    onOpenChange(next);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
@@ -323,6 +371,14 @@ export function AdminUserEditDialog({
               </label>
             )}
 
+            {showBootstrap && orgForFetch && (
+              <LanguageBootstrapPanel
+                org={orgForFetch}
+                onDraftCreated={handleBootstrapDraftCreated}
+                onPendingChange={setBootstrapPending}
+              />
+            )}
+
             <RightsSelector
               kind="language"
               verb="edit"
@@ -390,12 +446,17 @@ export function AdminUserEditDialog({
             <Button
               type="button"
               variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={updateUser.isPending}
+              onClick={() => {
+                // Refuse to close mid-bootstrap so a pending draft
+                // doesn't resolve into an unmounted panel.
+                if (anyPending) return;
+                onOpenChange(false);
+              }}
+              disabled={anyPending}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={updateUser.isPending}>
+            <Button type="submit" disabled={anyPending}>
               {updateUser.isPending ? "Saving…" : "Save changes"}
             </Button>
           </DialogFooter>

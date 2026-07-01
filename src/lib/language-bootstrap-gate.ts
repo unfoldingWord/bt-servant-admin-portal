@@ -35,8 +35,17 @@ export function canBootstrapLanguage({
   // is needed here — the intent is "caller has some grant," not "no
   // caller is treated as legacy full access."
   if (!caller) return false;
+  // Case-insensitive comparison: org slugs are lowercase-normalized
+  // by the worker, but the create-user dialog's Org field is free-text.
+  // A super-admin who types "Acme" (accidental capitalization) when
+  // their home org is "acme" would otherwise satisfy the cross-org
+  // branch and get an unearned trump on same-org bootstrap.
+  const normalizedTargetOrg = targetOrg?.toLowerCase() ?? null;
+  const normalizedCallerOrg = callerOrg.toLowerCase();
   const isCrossOrgTarget =
-    callerIsSuperAdmin && targetOrg !== null && targetOrg !== callerOrg;
+    callerIsSuperAdmin &&
+    normalizedTargetOrg !== null &&
+    normalizedTargetOrg !== normalizedCallerOrg;
   if (isCrossOrgTarget) return true;
   return hasAnyRights(effectiveLanguageEditRights(caller));
 }

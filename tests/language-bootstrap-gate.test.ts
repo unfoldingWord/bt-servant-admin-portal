@@ -145,4 +145,36 @@ describe("canBootstrapLanguage", () => {
       })
     ).toBe(true);
   });
+
+  it("case-insensitive org compare — 'Acme' vs 'acme' is same-org", () => {
+    // Super-admin typing their home org in a different case must NOT
+    // trip the cross-org trump. Worker normalizes org slugs to
+    // lowercase; this mirror keeps the UI gate honest even when the
+    // free-text Org input has stray capitalization.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "Acme",
+      })
+    ).toBe(false);
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "Acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+    // Genuine cross-org still crosses even under mixed casing.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "OTHER",
+      })
+    ).toBe(true);
+  });
 });
