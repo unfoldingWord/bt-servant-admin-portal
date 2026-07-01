@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Plus } from "lucide-react";
 
 import type { LanguageRights } from "@/types/auth";
 import {
@@ -6,8 +7,11 @@ import {
   AdminUsersRequestError,
   isReservedOrgSlug,
 } from "@/lib/admin-users-api";
+import { useAuthStore } from "@/lib/auth-store";
+import { canBootstrapLanguage } from "@/lib/language-bootstrap-gate";
 import { useCreateAdminUser } from "@/hooks/use-admin-users";
-import { useLanguages } from "@/hooks/use-languages";
+import { useLanguages, useSaveLanguage } from "@/hooks/use-languages";
+import { useLanguageScaffold } from "@/hooks/use-language-scaffold";
 import { useModes } from "@/hooks/use-prompt-config";
 import { Button } from "@/components/ui/button";
 import {
@@ -71,6 +75,33 @@ export function AdminUserCreateDialog({
   const languagesQuery = useLanguages(orgForFetch);
   const modesQuery = useModes(orgForFetch);
 
+  // #247: bootstrap the first language draft inline when the target org
+  // has none. Without this, "Specific languages" renders an empty chip
+  // list and "Full access" is the only non-empty option — an admin who
+  // wants to scope the new user to a not-yet-existing language draft is
+  // stuck (they can neither pick the language here nor let the new user
+  // create it themselves, since a scoped user with `[]` has no create
+  // rights on the languages page either).
+  const callerUser = useAuthStore((s) => s.user);
+  const scaffoldQuery = useLanguageScaffold(orgForFetch);
+  const saveLanguage = useSaveLanguage(orgForFetch);
+
+  const [bootstrapOpen, setBootstrapOpen] = useState(false);
+  const [bootstrapSlug, setBootstrapSlug] = useState("");
+  const [bootstrapLabel, setBootstrapLabel] = useState("");
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+
+  const canBootstrap = canBootstrapLanguage({
+    caller: callerUser,
+    callerOrg,
+    callerIsSuperAdmin,
+    targetOrg: orgForFetch,
+  });
+  const targetOrgHasNoLanguages =
+    languagesQuery.isSuccess &&
+    (languagesQuery.data?.languages.length ?? 0) === 0;
+  const showBootstrap = targetOrgHasNoLanguages && canBootstrap;
+
   // Re-sync the Org default if callerOrg changes while the dialog is
   // mounted (rare — only on auth changes). Without this, a stale org
   // would persist between dialog opens.
@@ -90,7 +121,67 @@ export function AdminUserCreateDialog({
     setModeEdit(EMPTY_RIGHTS);
     setModePublish(EMPTY_RIGHTS);
     setErrorText(null);
+    setBootstrapOpen(false);
+    setBootstrapSlug("");
+    setBootstrapLabel("");
+    setBootstrapError(null);
     createUser.reset();
+    saveLanguage.reset();
+  };
+
+  // Slugify identically to LanguageSelector's handleCreate so a bootstrap
+  // draft created here is indistinguishable from one created on the
+  // Languages page. The scaffold-readiness gate on the Create button
+  // guards against saving a blank doc (Frank P2 on #74).
+  const handleBootstrapSubmit = () => {
+    setBootstrapError(null);
+    const slug = bootstrapSlug
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9\-_]/g, "")
+      .replace(/^-+|-+$/g, "");
+    if (!slug) {
+      setBootstrapError("Enter a slug for the language.");
+      return;
+    }
+    const scaffold = scaffoldQuery.data;
+    if (!scaffold) return;
+    const label = bootstrapLabel.trim();
+    saveLanguage.mutate(
+      {
+        name: slug,
+        body: {
+          label: label || undefined,
+          document: scaffold.document,
+          published: false,
+        },
+      },
+      {
+        onSuccess: () => {
+          setBootstrapOpen(false);
+          setBootstrapSlug("");
+          setBootstrapLabel("");
+          setBootstrapError(null);
+          // Note: no auto-selection of the new slug in the chip list.
+          // The admin is deliberately in the middle of a rights matrix
+          // and may want to bootstrap two languages before granting
+          // either one, or bootstrap without granting at all.
+        },
+        onError: (err) => setBootstrapError(err.message),
+      }
+    );
+  };
+
+  // Enter inside the bootstrap inputs would otherwise submit the OUTER
+  // <form onSubmit={handleSubmit}> and create a half-configured user
+  // before the language draft even exists. Intercept and route Enter to
+  // the bootstrap submit instead.
+  const handleBootstrapKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleBootstrapSubmit();
+    }
   };
 
   const handleClose = (next: boolean) => {
@@ -288,6 +379,126 @@ export function AdminUserCreateDialog({
                   </div>
                 </div>
               </label>
+            )}
+
+            {showBootstrap && (
+              <div className="bg-muted/40 space-y-3 rounded-md border border-dashed p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-medium">
+                      No language drafts in{" "}
+                      <span className="font-mono text-xs">{orgForFetch}</span>{" "}
+                      yet
+                    </p>
+                    <p className="text-muted-foreground text-xs">
+                      Create the first draft to grant specific-language access
+                      below. You can leave the rights matrix on &ldquo;No
+                      access&rdquo; and grant it later.
+                    </p>
+                  </div>
+                  {!bootstrapOpen && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setBootstrapOpen(true);
+                        setBootstrapError(null);
+                      }}
+                    >
+                      <Plus className="mr-1.5 size-3.5" />
+                      Create draft
+                    </Button>
+                  )}
+                </div>
+
+                {bootstrapOpen && (
+                  <div className="space-y-3 pt-1">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor="bootstrap-lang-slug"
+                          className="text-xs"
+                        >
+                          Name (slug)
+                        </Label>
+                        <Input
+                          id="bootstrap-lang-slug"
+                          value={bootstrapSlug}
+                          onChange={(e) => setBootstrapSlug(e.target.value)}
+                          onKeyDown={handleBootstrapKeyDown}
+                          placeholder="e.g. indonesian"
+                          className="h-8 text-sm"
+                          autoComplete="off"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor="bootstrap-lang-label"
+                          className="text-xs"
+                        >
+                          Display label
+                        </Label>
+                        <Input
+                          id="bootstrap-lang-label"
+                          value={bootstrapLabel}
+                          onChange={(e) => setBootstrapLabel(e.target.value)}
+                          onKeyDown={handleBootstrapKeyDown}
+                          placeholder="e.g. Indonesian"
+                          className="h-8 text-sm"
+                          autoComplete="off"
+                        />
+                      </div>
+                    </div>
+                    {!scaffoldQuery.isSuccess && (
+                      <p
+                        className={
+                          scaffoldQuery.isError
+                            ? "text-destructive text-xs"
+                            : "text-muted-foreground text-xs"
+                        }
+                        role={scaffoldQuery.isError ? "alert" : undefined}
+                        aria-live="polite"
+                      >
+                        {scaffoldQuery.isError
+                          ? "Couldn't load the language template. Close and reopen the dialog to try again."
+                          : "Loading language template…"}
+                      </p>
+                    )}
+                    {bootstrapError && (
+                      <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-xs">
+                        {bootstrapError}
+                      </p>
+                    )}
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setBootstrapOpen(false);
+                          setBootstrapError(null);
+                        }}
+                        disabled={saveLanguage.isPending}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleBootstrapSubmit}
+                        disabled={
+                          !bootstrapSlug.trim() ||
+                          saveLanguage.isPending ||
+                          !scaffoldQuery.isSuccess
+                        }
+                      >
+                        {saveLanguage.isPending ? "Creating…" : "Create draft"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
 
             <RightsSelector
