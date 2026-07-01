@@ -318,6 +318,13 @@ export function AdminUserEditDialog({
                   onChange={(e) => setOrg(e.target.value)}
                   placeholder="org-slug"
                   required
+                  // Locked during any in-flight mutation (Frank rd-1
+                  // P1). The panel's save is bound to `user.org`, but
+                  // retyping the Org field mid-save queues a move to a
+                  // different org on the outer Save — the auto-added
+                  // rights would then reference a slug that only
+                  // exists in the previous org.
+                  disabled={anyPending}
                 />
                 <p className="text-muted-foreground text-xs">
                   Changing this moves the user to a different org. Typing a new
