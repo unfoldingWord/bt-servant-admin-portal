@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { faLayerGroup } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
+  Copy,
   Eye,
   EyeOff,
   Pencil,
@@ -11,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 
+import { pickCloneDefaultSlug } from "@/lib/mode-clone-defaults";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import type { OrgModes, PromptMode } from "@/types/prompt-override";
 import {
@@ -49,9 +51,17 @@ interface ModeSelectorProps {
   /** Reslug a mode in place (#232). Like onDeleteMode, must reject on
       error so the rename dialog can surface it inline and stay open. */
   onRenameMode: (name: string, newName: string) => Promise<void>;
+  /** Clone a mode via the engine's `_clone` op (#241 PR B). Must reject
+      on error so the clone dialog can surface it inline and stay open. */
+  onCloneMode: (
+    name: string,
+    newName: string,
+    newLabel: string
+  ) => Promise<void>;
   isCreating: boolean;
   isDeleting: boolean;
   isRenaming: boolean;
+  isCloning: boolean;
   isSettingPublished: boolean;
   showDrafts: boolean;
   onToggleShowDrafts: (showDrafts: boolean) => void;
@@ -64,10 +74,21 @@ interface ModeSelectorProps {
   canPublishSelected: boolean;
   canDeleteSelected: boolean;
   canRenameSelected: boolean;
+  /** Clone rides the same admin/cross-org gate as rename today: fresh
+      mode has no per-user rights assigned, so a non-admin cloning would
+      end up with a mode they can't edit. Kept as a separate flag so the
+      restriction can loosen independently once rights-migration lands. */
+  canCloneSelected: boolean;
   /** Non-null disables the Rename trigger and shows the string as its
       tooltip — used to block rename while the editor has unsaved edits
       (renaming re-syncs the doc under the new slug and would drop them). */
   renameDisabledReason: string | null;
+  /** Non-null disables the Clone trigger and shows the string as its
+      tooltip. Same shape as `renameDisabledReason` and used for the
+      same reason: cloning switches selection to the fresh clone, which
+      silently re-syncs the editor from the clone's document and drops
+      any unsaved edits to the source (#241 PR B Frank F1). */
+  cloneDisabledReason: string | null;
 }
 
 function isPublished(mode: Pick<PromptMode, "published">): boolean {
@@ -95,9 +116,11 @@ export function ModeSelector({
   onDeleteMode,
   onSetPublished,
   onRenameMode,
+  onCloneMode,
   isCreating,
   isDeleting,
   isRenaming,
+  isCloning,
   isSettingPublished,
   showDrafts,
   onToggleShowDrafts,
@@ -105,7 +128,9 @@ export function ModeSelector({
   canPublishSelected,
   canDeleteSelected,
   canRenameSelected,
+  canCloneSelected,
   renameDisabledReason,
+  cloneDisabledReason,
 }: ModeSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -123,6 +148,10 @@ export function ModeSelector({
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloneError, setCloneError] = useState<string | null>(null);
+  const [cloneName, setCloneName] = useState("");
+  const [cloneLabel, setCloneLabel] = useState("");
 
   const handleConfirmUnpublish = useCallback(() => {
     if (selectedMode === null) return;
@@ -143,6 +172,31 @@ export function ModeSelector({
       "Failed to delete mode."
     );
   }, [onDeleteMode, selectedMode]);
+
+  const handleConfirmClone = useCallback(() => {
+    if (selectedMode === null) return;
+    const slug = slugify(cloneName);
+    if (!slug) {
+      setCloneError("Enter a valid name (letters, numbers, hyphens).");
+      return;
+    }
+    if (slug === selectedMode) {
+      setCloneError(
+        "New name must differ from the source. (Rename instead if you want to reslug in place.)"
+      );
+      return;
+    }
+    return runConfirmedAction(
+      () => onCloneMode(selectedMode, slug, cloneLabel.trim()),
+      setCloneError,
+      () => {
+        setCloneOpen(false);
+        setCloneName("");
+        setCloneLabel("");
+      },
+      "Failed to clone mode."
+    );
+  }, [cloneLabel, cloneName, onCloneMode, selectedMode]);
 
   const handleConfirmRename = useCallback(() => {
     if (selectedMode === null) return;
@@ -423,6 +477,112 @@ export function ModeSelector({
                       disabled={isRenaming || !renameValue.trim()}
                     >
                       {isRenaming ? "Renaming…" : "Rename"}
+                    </Button>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+
+            {canCloneSelected && (
+              <AlertDialog
+                open={cloneOpen}
+                onOpenChange={(next) => {
+                  setCloneOpen(next);
+                  if (next) {
+                    // Prefill the slug with a dedup'd default so the
+                    // first click doesn't guarantee a 409 on the second
+                    // clone (#241 PR B Frank F5). Leave the label
+                    // BLANK: prefilling with the source's label made
+                    // "user cleared" and "user left prefilled" both
+                    // send the same wire value, hiding the intent
+                    // difference; the engine's inherit-vs-set-empty
+                    // behavior for an omitted vs empty `newLabel` is
+                    // unspecified in Ian's plan (#241 PR B Frank F7).
+                    setCloneName(
+                      selectedMode !== null
+                        ? pickCloneDefaultSlug(
+                            selectedMode,
+                            modes.map((m) => m.name)
+                          )
+                        : ""
+                    );
+                    setCloneLabel("");
+                    setCloneError(null);
+                  } else {
+                    setCloneError(null);
+                    setCloneName("");
+                    setCloneLabel("");
+                  }
+                }}
+              >
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isCloning || cloneDisabledReason !== null}
+                    title={cloneDisabledReason ?? undefined}
+                  >
+                    <Copy className="mr-1.5 size-3.5" />
+                    Clone
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Clone mode</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Create a copy of{" "}
+                      <span className="text-foreground font-medium">
+                        &ldquo;{selectedMode}&rdquo;
+                      </span>{" "}
+                      under a new slug. The clone starts as a draft &mdash; the
+                      source mode is untouched and no users are moved.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="mode-clone-name" className="text-xs">
+                        New name (slug)
+                      </Label>
+                      <Input
+                        id="mode-clone-name"
+                        value={cloneName}
+                        onChange={(e) => setCloneName(e.target.value)}
+                        placeholder="e.g. conversation-v2"
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="mode-clone-label" className="text-xs">
+                        Display name (optional)
+                      </Label>
+                      <Input
+                        id="mode-clone-label"
+                        value={cloneLabel}
+                        onChange={(e) => setCloneLabel(e.target.value)}
+                        placeholder="Leave blank to skip"
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                  </div>
+                  {cloneError && (
+                    <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+                      {cloneError}
+                    </p>
+                  )}
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isCloning}>
+                      Cancel
+                    </AlertDialogCancel>
+                    {/* Plain Button — see comment in Unpublish dialog above.
+                        Gate matches handleConfirmClone's slug validation
+                        so the affordance can't say "clickable" while the
+                        confirm action always inline-fails (#241 PR B
+                        Frank F4). */}
+                    <Button
+                      onClick={handleConfirmClone}
+                      disabled={isCloning || !slugify(cloneName)}
+                    >
+                      {isCloning ? "Cloning…" : "Clone"}
                     </Button>
                   </AlertDialogFooter>
                 </AlertDialogContent>

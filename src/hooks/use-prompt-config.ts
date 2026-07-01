@@ -112,6 +112,29 @@ export function useDeleteMode(org?: string | null) {
   });
 }
 
+// Append (or replace) the cloned mode in a cached modes list. Exported
+// for unit tests. Returns `prev` untouched when nothing is cached yet
+// (`undefined`) so an optimistic write never fabricates a list. If the
+// new slug already exists in the cache (a rare tab-race with an
+// overlapping refetch, or a stale entry from a concurrent write), the
+// entry is replaced in-place rather than duplicated — the modes-list
+// selector keys on `m.name` and a duplicate would surface as a React
+// key collision.
+export function applyCloneToModeList(
+  prev: OrgModes | undefined,
+  cloned: PromptMode
+): OrgModes | undefined {
+  if (!prev) return prev;
+  const existingIdx = prev.modes.findIndex((m) => m.name === cloned.name);
+  if (existingIdx >= 0) {
+    return {
+      ...prev,
+      modes: prev.modes.map((m, i) => (i === existingIdx ? cloned : m)),
+    };
+  }
+  return { ...prev, modes: [...prev.modes, cloned] };
+}
+
 // Swap the old-slug entry for the renamed mode in a cached modes list.
 // Exported for unit tests. Returns `prev` untouched when nothing is cached
 // yet (`undefined`) or the old slug isn't present, so an optimistic write
@@ -154,6 +177,45 @@ export function useRenameMode(org?: string | null) {
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
       void qc.invalidateQueries({ queryKey: keys.mode(newName, key) });
+    },
+  });
+}
+
+// Clone a mode (#241 PR B). Three-part cache update mirroring the shape
+// of `useRenameMode` — needed because the page follows selection to the
+// new slug on success (`setSelectedMode(data.name)` in modes.tsx) and
+// the stale-selection guard there wipes the selection if the list cache
+// hasn't caught up:
+//
+//  1. Synchronously append the returned clone to the LIST cache via
+//     `applyCloneToModeList`. Without this optimistic write the list
+//     still holds the pre-clone snapshot in the render gap before the
+//     refetch lands; the guard sees the new slug missing and drops the
+//     user to no selection (#241 PR B Frank F2).
+//  2. Pre-write the returned clone into the per-mode cache so the page
+//     renders the fresh mode without a loading spinner.
+//  3. Invalidate the list and the per-mode cache so the optimistic
+//     writes reconcile with server truth.
+export function useCloneMode(org?: string | null) {
+  const qc = useQueryClient();
+  const key = normalize(org);
+  return useMutation({
+    mutationFn: ({
+      name,
+      newName,
+      newLabel,
+    }: {
+      name: string;
+      newName: string;
+      newLabel?: string;
+    }) => configApi.cloneMode(name, { newName, newLabel }, undefined, key),
+    onSuccess: (data) => {
+      qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
+        applyCloneToModeList(prev, data)
+      );
+      qc.setQueryData(keys.mode(data.name, key), data);
+      void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
     },
   });
 }

@@ -23,6 +23,7 @@ import { useUiStore } from "@/lib/ui-store";
 import { OrgContextSelector } from "@/components/org-context-selector";
 import { useDebounced } from "@/hooks/use-debounced";
 import {
+  useCloneMode,
   useDeleteMode,
   useMode,
   useModes,
@@ -81,6 +82,7 @@ export function ModesPage() {
   const saveMode = useSaveMode(contextOrg);
   const deleteMode = useDeleteMode(contextOrg);
   const renameMode = useRenameMode(contextOrg);
+  const cloneMode = useCloneMode(contextOrg);
 
   // Filter modes to those the user has any verb on (admin/cross-org
   // sees everything via the `*` short-circuit above). Mirrors
@@ -111,6 +113,11 @@ export function ModesPage() {
   // themselves out of the renamed slug. Mirror the worker gate, which
   // 403s any non-admin same-org rename.
   const canRenameSelected = isAdmin || isCrossOrg;
+  // Clone rides the same gate as rename today (#241 PR B). The clone
+  // has no rights pre-assigned, so a non-admin cloning would land on a
+  // mode they can't edit. Kept as a separate boolean so the gate can
+  // loosen independently once rights-migration lands (#240).
+  const canCloneSelected = isAdmin || isCrossOrg;
 
   // Local document draft (auto-save target).
   //
@@ -388,6 +395,37 @@ export function ModesPage() {
     [deleteMode, selectedMode, setSelectedMode]
   );
 
+  const handleCloneMode = useCallback(
+    async (name: string, newName: string, newLabel: string) => {
+      // Only send `newLabel` when the user typed one — the dialog
+      // starts blank (no prefill) so blank always means "unset". This
+      // sidesteps the empty-vs-inherit ambiguity flagged in the F7
+      // review comment: the engine never sees a bare `""` that could
+      // be interpreted as either "user cleared" or "unset".
+      const trimmedLabel = newLabel.trim();
+      const data = await cloneMode.mutateAsync({
+        name,
+        newName,
+        newLabel: trimmedLabel ? trimmedLabel : undefined,
+      });
+      // Route through handleSelectMode (not raw setSelectedMode) so
+      // the switch-guard fires if the source draft dirtied while the
+      // modal was open. The Clone button is disabled up-front by
+      // `cloneDisabledReason` when isDirty || isSaving, but that only
+      // gates the trigger — once the dialog is open, focus can leak
+      // (click outside the modal, tab out, blur-and-refocus), the
+      // user can type in the editor, and `isDirty` can flip to true
+      // by the time they confirm. `handleSelectMode` inspects the
+      // live isDirty and either switches (clean → setSelectedMode) or
+      // queues a `pendingSwitch` confirmation dialog (dirty → user
+      // picks discard-or-cancel). Uses data.name so an engine slug
+      // canonicalization is picked up too. Belt-and-suspenders for
+      // Frank F1 on #241 PR B.
+      handleSelectMode(data.name);
+    },
+    [cloneMode, handleSelectMode]
+  );
+
   const handleRenameMode = useCallback(
     async (name: string, newName: string) => {
       await renameMode.mutateAsync({ name, newName });
@@ -408,6 +446,10 @@ export function ModesPage() {
 
   const error =
     modesQuery.error || (selectedMode !== null ? modeQuery.error : null);
+  // Clone errors are NOT folded in here — the clone dialog surfaces
+  // engine 400/404/409 messages inline via `runConfirmedAction`, so a
+  // page-level "Save failed:" banner would be both redundant AND
+  // misleading (clone isn't a save). #241 PR B Frank F3.
   const saveError = saveMode.error ?? deleteMode.error ?? renameMode.error;
 
   const saveStatus = useMemo(() => {
@@ -437,9 +479,11 @@ export function ModesPage() {
               onDeleteMode={handleDeleteMode}
               onSetPublished={handleSetPublished}
               onRenameMode={handleRenameMode}
+              onCloneMode={handleCloneMode}
               isCreating={saveMode.isPending}
               isDeleting={deleteMode.isPending}
               isRenaming={renameMode.isPending}
+              isCloning={cloneMode.isPending}
               isSettingPublished={saveMode.isPending}
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
@@ -447,10 +491,14 @@ export function ModesPage() {
               canPublishSelected={canPublishSelected}
               canDeleteSelected={canDeleteSelected}
               canRenameSelected={canRenameSelected}
+              canCloneSelected={canCloneSelected}
               renameDisabledReason={
                 isDirty || isSaving
                   ? "Save your changes before renaming."
                   : null
+              }
+              cloneDisabledReason={
+                isDirty || isSaving ? "Save your changes before cloning." : null
               }
             />
           </div>

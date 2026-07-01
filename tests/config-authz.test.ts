@@ -920,6 +920,137 @@ describe("config authz — #232 mode rename (_rename)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// #241 PR B mode clone — POST /api/config/modes/{name}/_clone
+// ---------------------------------------------------------------------------
+//
+// Clone creates a new mode (draft, distinct slug + optional label) via the
+// engine `_clone` op. The BFF proxies POST + `{ newName, newLabel? }` to
+// the engine, admin-gated on the same basis as _rename: per-user
+// mode_edit_rights / mode_publish_rights are slug-scoped, and the clone's
+// fresh slug has no rights pre-assigned, so a non-admin cloner would land
+// on a mode they can't edit. Matched before the generic `modes/{name}` arm
+// for the same regex-ordering reason as _rename.
+
+function makeCloneRequest(name: string, body: object): Request {
+  return new Request(
+    `https://portal.example.test/api/config/modes/${name}/_clone`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+}
+
+describe("config authz — #241 PR B mode clone (_clone)", () => {
+  it("admin → proxies POST to engine _clone path", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("POST");
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/acme/modes/spoken/_clone"
+    );
+  });
+
+  it("super admin without isAdmin → proxies (super trumps isAdmin)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({ isAdmin: false, isSuperAdmin: true }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("non-admin without any explicit mode rights → 403 (baseline, no proxy)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({ isAdmin: false }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("non-admin with BOTH edit+publish on the source row → 403 (clone is admin-only, same reasoning as rename)", async () => {
+    // Clone's new slug carries no per-user rights, so a shepherd cloning
+    // would produce a mode they can't edit. Gating this to admins/cross-
+    // org avoids that trap; loosen when rights-migration exists (#240).
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("super-admin cross-org via ?org=other → proxies to /orgs/other/.../_clone", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      new Request(
+        "https://portal.example.test/api/config/modes/spoken/_clone?org=word-collective",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ newName: "spoken-v2" }),
+        }
+      ),
+      env,
+      makeSession({ org: "acme", isSuperAdmin: true }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/word-collective/modes/spoken/_clone"
+    );
+  });
+
+  // #241 PR B Frank F8: the arm's regex was greedy (`(.+)`), so a path like
+  // /api/config/modes/foo/_clone/_clone would capture `foo/_clone` as the
+  // mode name and forward a guaranteed-404 request to the engine. Anchored
+  // to `[^/]+` (mode names are always single URL segments), the crafted
+  // path falls through to the generic modes/{name} arm — which is only
+  // wired for GET/PUT/DELETE, so a POST gets 405 at the BFF without any
+  // engine round-trip.
+  it("does not match a duplicated /_clone suffix (regex is segment-anchored, not greedy)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      new Request(
+        "https://portal.example.test/api/config/modes/foo/_clone/_clone",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ newName: "bar" }),
+        }
+      ),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/foo/_clone/_clone"
+    );
+    expect(res.status).toBe(405);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("config authz — #181 verb diff (pure function)", () => {
   const { computeRequiredVerbsForPut } = __testInternals;
 
