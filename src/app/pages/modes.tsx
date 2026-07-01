@@ -397,15 +397,24 @@ export function ModesPage() {
 
   const handleCloneMode = useCallback(
     async (name: string, newName: string, newLabel: string) => {
-      await cloneMode.mutateAsync({
+      // Only send `newLabel` when the user typed one — the dialog
+      // starts blank (no prefill) so blank always means "unset". This
+      // sidesteps the empty-vs-inherit ambiguity flagged in the F7
+      // review comment: the engine never sees a bare `""` that could
+      // be interpreted as either "user cleared" or "unset".
+      const trimmedLabel = newLabel.trim();
+      const data = await cloneMode.mutateAsync({
         name,
         newName,
-        newLabel: newLabel || undefined,
+        newLabel: trimmedLabel ? trimmedLabel : undefined,
       });
-      // Follow the selection to the freshly-cloned slug so the editor
-      // opens the clone as a draft instead of leaving the user on the
-      // source. Mirrors handleCreateMode's `setSelectedMode(name)`.
-      setSelectedMode(newName);
+      // Follow the selection to the engine-canonical slug (not the
+      // client-side `newName`). If the engine re-canonicalizes the
+      // slug and returns a different `data.name`, using `newName`
+      // would land the user on a slug that doesn't exist in the list
+      // and the stale-selection guard would wipe the selection.
+      // Mirrors handleCreateMode's `setSelectedMode(name)`.
+      setSelectedMode(data.name);
     },
     [cloneMode, setSelectedMode]
   );
@@ -430,8 +439,11 @@ export function ModesPage() {
 
   const error =
     modesQuery.error || (selectedMode !== null ? modeQuery.error : null);
-  const saveError =
-    saveMode.error ?? deleteMode.error ?? renameMode.error ?? cloneMode.error;
+  // Clone errors are NOT folded in here — the clone dialog surfaces
+  // engine 400/404/409 messages inline via `runConfirmedAction`, so a
+  // page-level "Save failed:" banner would be both redundant AND
+  // misleading (clone isn't a save). #241 PR B Frank F3.
+  const saveError = saveMode.error ?? deleteMode.error ?? renameMode.error;
 
   const saveStatus = useMemo(() => {
     if (isSaving) return "Saving…";
@@ -477,6 +489,9 @@ export function ModesPage() {
                 isDirty || isSaving
                   ? "Save your changes before renaming."
                   : null
+              }
+              cloneDisabledReason={
+                isDirty || isSaving ? "Save your changes before cloning." : null
               }
             />
           </div>

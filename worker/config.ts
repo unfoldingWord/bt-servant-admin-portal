@@ -402,8 +402,12 @@ export async function handleConfig(
   // their later `/modes/{newName}` calls (#238 review). Until rights
   // migration exists, only admins (blanket mode access) and cross-org
   // super-admins (per-row gate bypassed anyway) may rename.
+  // `[^/]+` (not `.+`) so `.../foo/_rename/_rename` doesn't slip past
+  // with modeName = "foo/_rename" and waste an engine round-trip on a
+  // guaranteed 404. Mode names are always single URL segments — the
+  // portal URL-encodes any slashes upstream.
   const modeRenameMatch = pathname.match(
-    /^\/api\/config\/modes\/(.+)\/_rename$/
+    /^\/api\/config\/modes\/([^/]+)\/_rename$/
   );
   if (modeRenameMatch?.[1]) {
     const modeName = decodeURIComponent(modeRenameMatch[1]);
@@ -426,7 +430,10 @@ export async function handleConfig(
   // gating this to admin/cross-org avoids handing a non-admin a mode
   // they can't edit. Matched above the catch-all for the same regex-
   // ordering reason as _rename.
-  const modeCloneMatch = pathname.match(/^\/api\/config\/modes\/(.+)\/_clone$/);
+  // `[^/]+` for the same reason as _rename above.
+  const modeCloneMatch = pathname.match(
+    /^\/api\/config\/modes\/([^/]+)\/_clone$/
+  );
   if (modeCloneMatch?.[1]) {
     const modeName = decodeURIComponent(modeCloneMatch[1]);
     if (!resolved.crossOrg && !hasAdminPowers(session)) {

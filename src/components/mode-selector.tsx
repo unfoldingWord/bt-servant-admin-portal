@@ -12,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 
+import { pickCloneDefaultSlug } from "@/lib/mode-clone-defaults";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import type { OrgModes, PromptMode } from "@/types/prompt-override";
 import {
@@ -82,6 +83,12 @@ interface ModeSelectorProps {
       tooltip — used to block rename while the editor has unsaved edits
       (renaming re-syncs the doc under the new slug and would drop them). */
   renameDisabledReason: string | null;
+  /** Non-null disables the Clone trigger and shows the string as its
+      tooltip. Same shape as `renameDisabledReason` and used for the
+      same reason: cloning switches selection to the fresh clone, which
+      silently re-syncs the editor from the clone's document and drops
+      any unsaved edits to the source (#241 PR B Frank F1). */
+  cloneDisabledReason: string | null;
 }
 
 function isPublished(mode: Pick<PromptMode, "published">): boolean {
@@ -123,6 +130,7 @@ export function ModeSelector({
   canRenameSelected,
   canCloneSelected,
   renameDisabledReason,
+  cloneDisabledReason,
 }: ModeSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -481,12 +489,24 @@ export function ModeSelector({
                 onOpenChange={(next) => {
                   setCloneOpen(next);
                   if (next) {
-                    // Prefill with the source's slug + "-copy" so the
-                    // user edits from a sensible default rather than a
-                    // blank input; also seed the label with the source's
-                    // label if any. Clear stale errors.
-                    setCloneName(`${selectedMode}-copy`);
-                    setCloneLabel(selectedModeData?.label ?? "");
+                    // Prefill the slug with a dedup'd default so the
+                    // first click doesn't guarantee a 409 on the second
+                    // clone (#241 PR B Frank F5). Leave the label
+                    // BLANK: prefilling with the source's label made
+                    // "user cleared" and "user left prefilled" both
+                    // send the same wire value, hiding the intent
+                    // difference; the engine's inherit-vs-set-empty
+                    // behavior for an omitted vs empty `newLabel` is
+                    // unspecified in Ian's plan (#241 PR B Frank F7).
+                    setCloneName(
+                      selectedMode !== null
+                        ? pickCloneDefaultSlug(
+                            selectedMode,
+                            modes.map((m) => m.name)
+                          )
+                        : ""
+                    );
+                    setCloneLabel("");
                     setCloneError(null);
                   } else {
                     setCloneError(null);
@@ -496,7 +516,12 @@ export function ModeSelector({
                 }}
               >
                 <AlertDialogTrigger asChild>
-                  <Button variant="ghost" size="sm" disabled={isCloning}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isCloning || cloneDisabledReason !== null}
+                    title={cloneDisabledReason ?? undefined}
+                  >
                     <Copy className="mr-1.5 size-3.5" />
                     Clone
                   </Button>
@@ -534,7 +559,7 @@ export function ModeSelector({
                         id="mode-clone-label"
                         value={cloneLabel}
                         onChange={(e) => setCloneLabel(e.target.value)}
-                        placeholder="Human-readable label"
+                        placeholder="Leave blank to skip"
                         className="h-8 text-sm"
                       />
                     </div>
@@ -548,10 +573,14 @@ export function ModeSelector({
                     <AlertDialogCancel disabled={isCloning}>
                       Cancel
                     </AlertDialogCancel>
-                    {/* Plain Button — see comment in Unpublish dialog above. */}
+                    {/* Plain Button — see comment in Unpublish dialog above.
+                        Gate matches handleConfirmClone's slug validation
+                        so the affordance can't say "clickable" while the
+                        confirm action always inline-fails (#241 PR B
+                        Frank F4). */}
                     <Button
                       onClick={handleConfirmClone}
-                      disabled={isCloning || !cloneName.trim()}
+                      disabled={isCloning || !slugify(cloneName)}
                     >
                       {isCloning ? "Cloning…" : "Clone"}
                     </Button>
