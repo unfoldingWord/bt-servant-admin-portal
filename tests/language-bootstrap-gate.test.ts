@@ -177,4 +177,46 @@ describe("canBootstrapLanguage", () => {
       })
     ).toBe(true);
   });
+
+  it("trims whitespace before comparing orgs (rd-2 F15)", () => {
+    // Free-text Org field can carry a stray trailing space; it must not
+    // trip the cross-org trump against the caller's own home org.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "acme ",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "  acme  ",
+      })
+    ).toBe(false);
+  });
+
+  it("empty callerOrg does not grant the cross-org trump (rd-2 F14)", () => {
+    // A missing/blank home org (bad /me payload) must not read as
+    // "different from every target" and silently hand out access.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "   ",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+  });
 });

@@ -22,8 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { addSlugToRights } from "@/lib/rights-merge";
-import { LanguageBootstrapPanel } from "@/components/language-bootstrap-panel";
+import { LanguageBootstrapCta } from "@/components/language-bootstrap-cta";
 import { RightsSelector } from "@/components/rights-selector";
 
 interface CreateUserDialogProps {
@@ -75,13 +74,12 @@ export function AdminUserCreateDialog({
   const languagesQuery = useLanguages(orgForFetch);
   const modesQuery = useModes(orgForFetch);
 
-  // #247: bootstrap the first language draft inline when the target org
-  // has none. Without this, "Specific languages" renders an empty chip
-  // list and "Full access" is the only non-empty option — an admin who
-  // wants to scope the new user to a not-yet-existing language draft is
-  // stuck (they can neither pick the language here nor let the new user
-  // create it themselves, since a scoped user with `[]` has no create
-  // rights on the languages page either).
+  // #247: when the target org has no language drafts, specific-language
+  // scope can't be granted here (empty chip list). Rather than create a
+  // draft inline, point the admin at the Languages page — the purpose-
+  // built home for draft creation — provided they can actually create
+  // one there (mirrors the Languages page `canCreate` gate). orgForFetch
+  // !== null guards against a super-admin clearing the Org field.
   const callerUser = useAuthStore((s) => s.user);
   const canBootstrap = canBootstrapLanguage({
     caller: callerUser,
@@ -92,20 +90,16 @@ export function AdminUserCreateDialog({
   const targetOrgHasNoLanguages =
     languagesQuery.isSuccess &&
     (languagesQuery.data?.languages.length ?? 0) === 0;
-  // orgForFetch !== null is load-bearing: without it, a super-admin
-  // clearing the Org field silently binds the bootstrap panel's save
-  // mutation to the caller's home org (useSaveLanguage(null) === same-
-  // org), which would write the draft into the wrong org (review F0).
   const showBootstrap =
     orgForFetch !== null && targetOrgHasNoLanguages && canBootstrap;
-
-  // Tracked separately from createUser.isPending so the outer submit,
-  // Cancel, and Org input can gate on either mutation being in flight —
-  // otherwise the outer form races the bootstrap PUT and the dialog can
-  // close with the new language existing but the user having no rights
-  // on it (review F1: reproduces the exact deadlock #247 targets).
-  const [bootstrapPending, setBootstrapPending] = useState(false);
-  const anyPending = createUser.isPending || bootstrapPending;
+  // The org-context the Languages page should adopt: the target org for a
+  // cross-org super-admin, else null (home org).
+  const bootstrapContextOrg =
+    callerIsSuperAdmin &&
+    orgForFetch !== null &&
+    orgForFetch.trim().toLowerCase() !== callerOrg.trim().toLowerCase()
+      ? orgForFetch
+      : null;
 
   // Re-sync the Org default if callerOrg changes while the dialog is
   // mounted (rare — only on auth changes). Without this, a stale org
@@ -130,22 +124,12 @@ export function AdminUserCreateDialog({
   };
 
   const handleClose = (next: boolean) => {
-    // Refuse to close mid-bootstrap — the panel's save mutation would
-    // resolve into an unmounted component, leaving an orphan draft with
-    // no auto-select. Radix routes Escape / click-outside / Cancel all
-    // through this handler.
-    if (!next && anyPending) return;
     if (!next) reset();
     onOpenChange(next);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Refuse to submit while a bootstrap PUT is in flight — the outer
-    // form would create the user with the pre-bootstrap rights and the
-    // dialog would close, silently detaching the new draft from the
-    // user's grant.
-    if (anyPending) return;
     setErrorText(null);
     const trimmedEmail = email.trim().toLowerCase();
     const trimmedName = name.trim();
@@ -215,16 +199,6 @@ export function AdminUserCreateDialog({
     );
   };
 
-  const handleBootstrapDraftCreated = (slug: string) => {
-    // Auto-grant edit + publish on the just-bootstrapped slug (review
-    // F4). addSlugToRights preserves undefined (legacy full access) and
-    // "*" so a broader grant isn't silently narrowed. The `?? prev`
-    // is a safety-net for the undefined branch, which the create
-    // dialog never actually hits (both fields are seeded to `[]`).
-    setLangEdit((prev) => addSlugToRights(prev, slug) ?? prev);
-    setLangPublish((prev) => addSlugToRights(prev, slug) ?? prev);
-  };
-
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
@@ -285,9 +259,6 @@ export function AdminUserCreateDialog({
                   onChange={(e) => setOrg(e.target.value)}
                   placeholder="org-slug"
                   required
-                  // Locked during any in-flight mutation so a super-admin
-                  // can't retarget the bootstrap panel mid-save.
-                  disabled={anyPending}
                 />
                 <p className="text-muted-foreground text-xs">
                   Free-text slug. Type the name of an existing org to add the
@@ -350,10 +321,10 @@ export function AdminUserCreateDialog({
             )}
 
             {showBootstrap && orgForFetch && (
-              <LanguageBootstrapPanel
+              <LanguageBootstrapCta
                 org={orgForFetch}
-                onDraftCreated={handleBootstrapDraftCreated}
-                onPendingChange={setBootstrapPending}
+                contextOrg={bootstrapContextOrg}
+                onNavigateAway={() => handleClose(false)}
               />
             )}
 
@@ -398,11 +369,11 @@ export function AdminUserCreateDialog({
               type="button"
               variant="outline"
               onClick={() => handleClose(false)}
-              disabled={anyPending}
+              disabled={createUser.isPending}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={anyPending}>
+            <Button type="submit" disabled={createUser.isPending}>
               {createUser.isPending ? "Creating…" : "Create user"}
             </Button>
           </DialogFooter>
