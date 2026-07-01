@@ -6,12 +6,8 @@ import {
   AdminUsersRequestError,
   isReservedOrgSlug,
 } from "@/lib/admin-users-api";
-import { useAuthStore } from "@/lib/auth-store";
-import {
-  canBootstrapLanguage,
-  isCrossOrgTarget,
-} from "@/lib/language-bootstrap-gate";
 import { useCreateAdminUser } from "@/hooks/use-admin-users";
+import { useLanguageBootstrapGate } from "@/hooks/use-language-bootstrap";
 import { useLanguages } from "@/hooks/use-languages";
 import { useModes } from "@/hooks/use-prompt-config";
 import { Button } from "@/components/ui/button";
@@ -79,26 +75,12 @@ export function AdminUserCreateDialog({
 
   // #247: when the target org has no language drafts, specific-language
   // scope can't be granted here (empty chip list). Rather than create a
-  // draft inline, point the admin at the Languages page — the purpose-
-  // built home for draft creation — provided they can actually create
-  // one there (mirrors the Languages page `canCreate` gate). orgForFetch
-  // !== null guards against a super-admin clearing the Org field.
-  const callerUser = useAuthStore((s) => s.user);
-  const canBootstrap = canBootstrapLanguage({
-    caller: callerUser,
-    callerOrg,
-    callerIsSuperAdmin,
-    targetOrg: orgForFetch,
-  });
-  const targetOrgHasNoLanguages =
-    languagesQuery.isSuccess &&
-    (languagesQuery.data?.languages.length ?? 0) === 0;
-  const showBootstrap =
-    orgForFetch !== null && targetOrgHasNoLanguages && canBootstrap;
-  // Only affects the CTA copy: a fresh Languages tab boots in home
-  // context, so a cross-org super-admin is told to switch the org
-  // selector there. Reuses the gate's normalized comparison.
-  const crossOrg = isCrossOrgTarget({
+  // draft inline, point the admin at the Languages page. A cross-org
+  // super-admin here may be provisioning a brand-new org (unsaved, so
+  // not yet reachable via the Languages org selector), so that case gets
+  // "save the user first" guidance rather than an impossible switch-
+  // selector instruction (rd-4 F1).
+  const { showBootstrap, isCrossOrg } = useLanguageBootstrapGate({
     callerOrg,
     callerIsSuperAdmin,
     targetOrg: orgForFetch,
@@ -324,7 +306,10 @@ export function AdminUserCreateDialog({
             )}
 
             {showBootstrap && orgForFetch && (
-              <LanguageBootstrapCta org={orgForFetch} isCrossOrg={crossOrg} />
+              <LanguageBootstrapCta
+                org={orgForFetch}
+                mode={isCrossOrg ? "save-user-first" : "direct"}
+              />
             )}
 
             <RightsSelector
