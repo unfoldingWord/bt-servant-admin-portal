@@ -447,6 +447,34 @@ export async function handleConfig(
     );
   }
 
+  // /api/config/modes/{name}/_retire → POST. Retires the source mode
+  // by moving its canonical slug (+ its own existing aliases) onto the
+  // target mode's aliases array, then deleting the source. Users
+  // assigned to the source slug (or any of its previous aliases)
+  // silently resolve to the target — the "bring FIA Coach users over
+  // silently" flow from Ian's #232 plan §3.
+  //
+  // Same admin/cross-org gate as _rename and _clone. Retire deletes a
+  // mode + widens the target's alias set, both of which are org-wide
+  // config changes; per-user mode rights are slug-scoped, so gating
+  // to admin/cross-org matches the trust bar of PUT/DELETE-modes
+  // today. `[^/]+` for the same reason as _rename and _clone above.
+  const modeRetireMatch = pathname.match(
+    /^\/api\/config\/modes\/([^/]+)\/_retire$/
+  );
+  if (modeRetireMatch?.[1]) {
+    const modeName = decodeURIComponent(modeRetireMatch[1]);
+    if (!resolved.crossOrg && !hasAdminPowers(session)) {
+      return errorResponse("Forbidden", 403);
+    }
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_retire`,
+      ["POST"]
+    );
+  }
+
   // /api/config/modes/{name} → GET (any session) / PUT/DELETE (per-mode
   // verb-perms, admin-trump)
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);

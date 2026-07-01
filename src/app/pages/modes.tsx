@@ -28,6 +28,7 @@ import {
   useMode,
   useModes,
   useRenameMode,
+  useRetireMode,
   useSaveMode,
 } from "@/hooks/use-prompt-config";
 import type { MarkdownHeading } from "@/types/markdown";
@@ -83,6 +84,7 @@ export function ModesPage() {
   const deleteMode = useDeleteMode(contextOrg);
   const renameMode = useRenameMode(contextOrg);
   const cloneMode = useCloneMode(contextOrg);
+  const retireMode = useRetireMode(contextOrg);
 
   // Filter modes to those the user has any verb on (admin/cross-org
   // sees everything via the `*` short-circuit above). Mirrors
@@ -118,6 +120,11 @@ export function ModesPage() {
   // mode they can't edit. Kept as a separate boolean so the gate can
   // loosen independently once rights-migration lands (#240).
   const canCloneSelected = isAdmin || isCrossOrg;
+  // Retire rides the same gate (#241 PR C). Deleting a mode + widening
+  // the target's alias set are org-wide config changes at the same
+  // trust bar as rename. Loosen independently when rights-migration
+  // (#240) exists.
+  const canRetireSelected = isAdmin || isCrossOrg;
 
   // Local document draft (auto-save target).
   //
@@ -426,6 +433,19 @@ export function ModesPage() {
     [cloneMode, handleSelectMode]
   );
 
+  const handleRetireMode = useCallback(
+    async (name: string, forwardTo: string) => {
+      const data = await retireMode.mutateAsync({ name, forwardTo });
+      // Route through handleSelectMode so the switch-guard fires if
+      // the source draft dirtied while the modal was open (same
+      // reasoning as handleCloneMode — leaky focus race). Selection
+      // moves to the TARGET because the source is gone; `data.name`
+      // is the engine-canonical target slug.
+      handleSelectMode(data.name);
+    },
+    [handleSelectMode, retireMode]
+  );
+
   const handleRenameMode = useCallback(
     async (name: string, newName: string) => {
       await renameMode.mutateAsync({ name, newName });
@@ -446,10 +466,11 @@ export function ModesPage() {
 
   const error =
     modesQuery.error || (selectedMode !== null ? modeQuery.error : null);
-  // Clone errors are NOT folded in here — the clone dialog surfaces
-  // engine 400/404/409 messages inline via `runConfirmedAction`, so a
-  // page-level "Save failed:" banner would be both redundant AND
-  // misleading (clone isn't a save). #241 PR B Frank F3.
+  // Clone AND retire errors are NOT folded in here — both dialogs
+  // surface engine 400/404/409 messages inline via `runConfirmedAction`,
+  // so a page-level "Save failed:" banner would be both redundant AND
+  // misleading (neither is a save). #241 PR B Frank F3; retire matches
+  // the same policy on introduction (#241 PR C).
   const saveError = saveMode.error ?? deleteMode.error ?? renameMode.error;
 
   const saveStatus = useMemo(() => {
@@ -480,10 +501,12 @@ export function ModesPage() {
               onSetPublished={handleSetPublished}
               onRenameMode={handleRenameMode}
               onCloneMode={handleCloneMode}
+              onRetireMode={handleRetireMode}
               isCreating={saveMode.isPending}
               isDeleting={deleteMode.isPending}
               isRenaming={renameMode.isPending}
               isCloning={cloneMode.isPending}
+              isRetiring={retireMode.isPending}
               isSettingPublished={saveMode.isPending}
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
@@ -492,6 +515,7 @@ export function ModesPage() {
               canDeleteSelected={canDeleteSelected}
               canRenameSelected={canRenameSelected}
               canCloneSelected={canCloneSelected}
+              canRetireSelected={canRetireSelected}
               renameDisabledReason={
                 isDirty || isSaving
                   ? "Save your changes before renaming."
@@ -499,6 +523,11 @@ export function ModesPage() {
               }
               cloneDisabledReason={
                 isDirty || isSaving ? "Save your changes before cloning." : null
+              }
+              retireDisabledReason={
+                isDirty || isSaving
+                  ? "Save your changes before retiring."
+                  : null
               }
             />
           </div>

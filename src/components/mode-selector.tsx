@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { faLayerGroup } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
+  ArrowRightLeft,
   Copy,
   Eye,
   EyeOff,
@@ -58,10 +59,15 @@ interface ModeSelectorProps {
     newName: string,
     newLabel: string
   ) => Promise<void>;
+  /** Retire a mode and forward its users to `forwardTo` via the engine's
+      `_retire` op (#241 PR C). Same reject-on-error contract as delete
+      and clone. */
+  onRetireMode: (name: string, forwardTo: string) => Promise<void>;
   isCreating: boolean;
   isDeleting: boolean;
   isRenaming: boolean;
   isCloning: boolean;
+  isRetiring: boolean;
   isSettingPublished: boolean;
   showDrafts: boolean;
   onToggleShowDrafts: (showDrafts: boolean) => void;
@@ -79,6 +85,11 @@ interface ModeSelectorProps {
       end up with a mode they can't edit. Kept as a separate flag so the
       restriction can loosen independently once rights-migration lands. */
   canCloneSelected: boolean;
+  /** Retire rides the same admin/cross-org gate — deleting a mode +
+      widening the target's alias set is an org-wide config change
+      identical in trust bar to rename. Kept as its own flag so the
+      restriction can loosen independently. */
+  canRetireSelected: boolean;
   /** Non-null disables the Rename trigger and shows the string as its
       tooltip — used to block rename while the editor has unsaved edits
       (renaming re-syncs the doc under the new slug and would drop them). */
@@ -89,6 +100,13 @@ interface ModeSelectorProps {
       silently re-syncs the editor from the clone's document and drops
       any unsaved edits to the source (#241 PR B Frank F1). */
   cloneDisabledReason: string | null;
+  /** Non-null disables the Retire trigger and shows the string as its
+      tooltip. Same shape as `renameDisabledReason` / `cloneDisabledReason`
+      — retire deletes the source and shifts selection to the target,
+      which would silently drop any unsaved edits. Belt-and-suspenders
+      route through `handleSelectMode` in modes.tsx defends the race
+      window when focus escapes the modal. */
+  retireDisabledReason: string | null;
 }
 
 function isPublished(mode: Pick<PromptMode, "published">): boolean {
@@ -117,10 +135,12 @@ export function ModeSelector({
   onSetPublished,
   onRenameMode,
   onCloneMode,
+  onRetireMode,
   isCreating,
   isDeleting,
   isRenaming,
   isCloning,
+  isRetiring,
   isSettingPublished,
   showDrafts,
   onToggleShowDrafts,
@@ -129,8 +149,10 @@ export function ModeSelector({
   canDeleteSelected,
   canRenameSelected,
   canCloneSelected,
+  canRetireSelected,
   renameDisabledReason,
   cloneDisabledReason,
+  retireDisabledReason,
 }: ModeSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -152,6 +174,9 @@ export function ModeSelector({
   const [cloneError, setCloneError] = useState<string | null>(null);
   const [cloneName, setCloneName] = useState("");
   const [cloneLabel, setCloneLabel] = useState("");
+  const [retireOpen, setRetireOpen] = useState(false);
+  const [retireError, setRetireError] = useState<string | null>(null);
+  const [retireTarget, setRetireTarget] = useState<string>("");
 
   const handleConfirmUnpublish = useCallback(() => {
     if (selectedMode === null) return;
@@ -172,6 +197,30 @@ export function ModeSelector({
       "Failed to delete mode."
     );
   }, [onDeleteMode, selectedMode]);
+
+  const handleConfirmRetire = useCallback(() => {
+    if (selectedMode === null) return;
+    if (!retireTarget) {
+      setRetireError("Pick a mode to forward users to.");
+      return;
+    }
+    if (retireTarget === selectedMode) {
+      // Belt-and-suspenders — the Select excludes self, but the engine
+      // also 400s a retire-to-self and this catches any wire-shape
+      // slip. Keeps the affordance ↔ action gate consistent.
+      setRetireError("Forward target must differ from the source.");
+      return;
+    }
+    return runConfirmedAction(
+      () => onRetireMode(selectedMode, retireTarget),
+      setRetireError,
+      () => {
+        setRetireOpen(false);
+        setRetireTarget("");
+      },
+      "Failed to retire mode."
+    );
+  }, [onRetireMode, retireTarget, selectedMode]);
 
   const handleConfirmClone = useCallback(() => {
     if (selectedMode === null) return;
@@ -583,6 +632,113 @@ export function ModeSelector({
                       disabled={isCloning || !slugify(cloneName)}
                     >
                       {isCloning ? "Cloning…" : "Clone"}
+                    </Button>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+
+            {canRetireSelected && (
+              <AlertDialog
+                open={retireOpen}
+                onOpenChange={(next) => {
+                  setRetireOpen(next);
+                  if (next) {
+                    setRetireTarget("");
+                    setRetireError(null);
+                  } else {
+                    setRetireError(null);
+                    setRetireTarget("");
+                  }
+                }}
+              >
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isRetiring || retireDisabledReason !== null}
+                    title={retireDisabledReason ?? undefined}
+                    className="text-amber-600 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500"
+                  >
+                    <ArrowRightLeft className="mr-1.5 size-3.5" />
+                    Retire
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Retire and forward</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Delete{" "}
+                      <span className="text-foreground font-medium">
+                        &ldquo;{selectedMode}&rdquo;
+                      </span>{" "}
+                      and forward every user assigned to it (plus anyone still
+                      resolving via one of its previous aliases) onto the target
+                      mode below. The target inherits the source&rsquo;s slug as
+                      a new alias, so nobody is left without a mode &mdash; but
+                      the source itself is permanently removed.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="mode-retire-target" className="text-xs">
+                      Forward to
+                    </Label>
+                    <Select
+                      value={retireTarget}
+                      onValueChange={setRetireTarget}
+                    >
+                      <SelectTrigger id="mode-retire-target" className="h-8">
+                        <SelectValue placeholder="Pick a target mode" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {modes
+                          .filter((m) => m.name !== selectedMode)
+                          .map((m) => (
+                            <SelectItem key={m.name} value={m.name}>
+                              <span className="flex items-center gap-2">
+                                <span className="truncate">
+                                  {m.label || m.name}
+                                </span>
+                                {!isPublished(m) && (
+                                  <Badge
+                                    variant="outline"
+                                    className="px-1.5 py-0 text-[10px]"
+                                  >
+                                    Draft
+                                  </Badge>
+                                )}
+                              </span>
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    {modes.filter((m) => m.name !== selectedMode).length ===
+                      0 && (
+                      <p className="text-muted-foreground text-xs">
+                        No other modes exist to forward to. Create one first.
+                      </p>
+                    )}
+                  </div>
+                  {retireError && (
+                    <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+                      {retireError}
+                    </p>
+                  )}
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isRetiring}>
+                      Cancel
+                    </AlertDialogCancel>
+                    {/* Plain Button — see comment in Unpublish dialog above.
+                        Retire is destructive-styled to signal the source
+                        goes away, but amber-not-red because users
+                        aren't stranded (the alias route keeps them
+                        resolving on the target). */}
+                    <Button
+                      variant="destructive"
+                      onClick={handleConfirmRetire}
+                      disabled={isRetiring || !retireTarget}
+                    >
+                      {isRetiring ? "Retiring…" : "Retire & forward"}
                     </Button>
                   </AlertDialogFooter>
                 </AlertDialogContent>

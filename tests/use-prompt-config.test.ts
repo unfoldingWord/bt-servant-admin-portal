@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyCloneToModeList,
   applyRenameToModeList,
+  applyRetireToModeList,
 } from "../src/hooks/use-prompt-config";
 import type { OrgModes, PromptMode } from "../src/types/prompt-override";
 
@@ -128,5 +129,85 @@ describe("applyCloneToModeList", () => {
     // payload (label + document from the mutation response).
     expect(next!.modes[1]).toBe(cloned);
     expect(next!.modes[1]).not.toBe(stale);
+  });
+});
+
+// Regression + spec for the #241 PR C retire-and-forward cache
+// surgery. The engine returns the TARGET mode (widened aliases) and the
+// source is deleted. The list cache must drop the source AND replace
+// the target with the response payload — the page's post-retire
+// `handleSelectMode(target.name)` reads from `modesQuery.data` and the
+// stale-selection guard would fire on either half being out of sync.
+
+const retireTarget: PromptMode = {
+  name: "conversation",
+  label: "Conversation",
+  document: "## Identity\n",
+  published: true,
+  aliases: ["spoken", "spoken-old"],
+};
+
+describe("applyRetireToModeList", () => {
+  it("drops the source and replaces the target with the response payload", () => {
+    const prev: OrgModes = {
+      modes: [
+        { name: "spoken", document: "## src\n", published: true },
+        {
+          name: "conversation",
+          document: "## tgt-old\n",
+          published: true,
+          aliases: ["conv-old"],
+        },
+        { name: "written", document: "## other\n", published: false },
+      ],
+    };
+
+    const next = applyRetireToModeList(prev, "spoken", retireTarget);
+
+    expect(next!.modes.map((m) => m.name)).toEqual(["conversation", "written"]);
+    // Target's entry is the response payload verbatim (aliases now
+    // include the source's slug + its own prior aliases).
+    const target = next!.modes.find((m) => m.name === "conversation");
+    expect(target).toBe(retireTarget);
+    expect(target?.aliases).toEqual(["spoken", "spoken-old"]);
+  });
+
+  it("returns undefined unchanged when nothing is cached yet", () => {
+    expect(
+      applyRetireToModeList(undefined, "spoken", retireTarget)
+    ).toBeUndefined();
+  });
+
+  it("is a no-op on source removal when the source isn't in the list (no fabrication)", () => {
+    // Concurrent tab already saw the retire and refetched, or the
+    // source was never in this cache. The target still gets its
+    // replace; nothing is fabricated on the source side.
+    const prev: OrgModes = {
+      modes: [
+        {
+          name: "conversation",
+          document: "## tgt-old\n",
+          published: true,
+        },
+      ],
+    };
+
+    const next = applyRetireToModeList(prev, "spoken", retireTarget);
+
+    expect(next!.modes.map((m) => m.name)).toEqual(["conversation"]);
+    expect(next!.modes[0]).toBe(retireTarget);
+  });
+
+  it("leaves target replace as a no-op when the target isn't in the list yet either", () => {
+    // Edge case: neither source nor target in the cache. The source
+    // filter is a no-op (source not there), the target map is a no-op
+    // (target not there). Cache stays effectively unchanged.
+    const prev: OrgModes = {
+      modes: [{ name: "written", document: "x", published: false }],
+    };
+
+    const next = applyRetireToModeList(prev, "spoken", retireTarget);
+
+    expect(next!.modes.map((m) => m.name)).toEqual(["written"]);
   });
 });

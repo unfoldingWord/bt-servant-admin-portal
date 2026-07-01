@@ -1051,6 +1051,131 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// #241 PR C mode retire — POST /api/config/modes/{name}/_retire
+// ---------------------------------------------------------------------------
+//
+// Retire moves the source mode's canonical slug (+ its own aliases) onto the
+// target mode's aliases array, then deletes the source. Users assigned to
+// the source (or resolving via one of its previous aliases) silently
+// resolve to the target. Same admin/cross-org gate as _rename and _clone —
+// deleting a mode is an org-wide config change at the same trust bar as
+// today's PUT/DELETE modes. Regex is segment-anchored so a duplicated
+// suffix falls through to the generic arm and 405s at the BFF.
+
+function makeRetireRequest(name: string, body: object): Request {
+  return new Request(
+    `https://portal.example.test/api/config/modes/${name}/_retire`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+}
+
+describe("config authz — #241 PR C mode retire (_retire)", () => {
+  it("admin → proxies POST to engine _retire path", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRetireRequest("spoken", { forwardTo: "conversation" }),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("POST");
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/acme/modes/spoken/_retire"
+    );
+  });
+
+  it("super admin without isAdmin → proxies (super trumps isAdmin)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRetireRequest("spoken", { forwardTo: "conversation" }),
+      env,
+      makeSession({ isAdmin: false, isSuperAdmin: true }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("non-admin without any explicit mode rights → 403 (baseline, no proxy)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRetireRequest("spoken", { forwardTo: "conversation" }),
+      env,
+      makeSession({ isAdmin: false }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("non-admin with BOTH edit+publish on the source row → 403 (retire is admin-only)", async () => {
+    // Same reasoning as rename/clone: retire deletes a mode + widens the
+    // target's alias set (org-wide change), and the target's rights
+    // aren't necessarily aligned with the source's — a shepherd who
+    // could edit the source might have no rights on the target.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRetireRequest("spoken", { forwardTo: "conversation" }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken", "conversation"],
+        mode_publish_rights: ["spoken", "conversation"],
+      }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("super-admin cross-org via ?org=other → proxies to /orgs/other/.../_retire", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      new Request(
+        "https://portal.example.test/api/config/modes/spoken/_retire?org=word-collective",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ forwardTo: "conversation" }),
+        }
+      ),
+      env,
+      makeSession({ org: "acme", isSuperAdmin: true }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/word-collective/modes/spoken/_retire"
+    );
+  });
+
+  it("does not match a duplicated /_retire suffix (regex is segment-anchored, not greedy)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      new Request(
+        "https://portal.example.test/api/config/modes/foo/_retire/_retire",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ forwardTo: "bar" }),
+        }
+      ),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/foo/_retire/_retire"
+    );
+    expect(res.status).toBe(405);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("config authz — #181 verb diff (pure function)", () => {
   const { computeRequiredVerbsForPut } = __testInternals;
 

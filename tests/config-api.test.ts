@@ -12,6 +12,7 @@ import {
   putMode,
   putOrgOverrides,
   renameMode,
+  retireMode,
   setUserMode,
 } from "../src/lib/config-api";
 
@@ -475,6 +476,90 @@ describe("cloneMode", () => {
     await cloneMode("spoken", { newName: "new" }, undefined, "word-collective");
     expect(spy.mock.calls[0]![0]).toBe(
       "/api/config/modes/spoken/_clone?org=word-collective"
+    );
+  });
+});
+
+describe("retireMode", () => {
+  it("POSTs `{ forwardTo }` to the _retire endpoint and unwraps the TARGET envelope", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          org: "uw",
+          // Engine returns the TARGET (with widened aliases), not the
+          // source. Client passes it through so the page can pre-write
+          // the target's per-mode cache and re-point selection.
+          mode: {
+            name: "conversation",
+            label: "Conversation",
+            document: "## Identity\n",
+            published: true,
+            aliases: ["spoken", "spoken-old"],
+          },
+          message: "Mode retired",
+        }),
+        { status: 200 }
+      )
+    );
+    const result = await retireMode("spoken", "conversation");
+    expect(spy.mock.calls[0]![0]).toBe("/api/config/modes/spoken/_retire");
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      forwardTo: "conversation",
+    });
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/json"
+    );
+    expect(result.name).toBe("conversation");
+    expect(result.aliases).toEqual(["spoken", "spoken-old"]);
+  });
+
+  it("URL-encodes the source mode name in the path", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ mode: { name: "target", document: "" } }))
+      );
+    await retireMode("kids mode", "target");
+    expect(spy.mock.calls[0]![0]).toBe("/api/config/modes/kids%20mode/_retire");
+  });
+
+  it("surfaces the engine's JSON `{ error }` message on retire-to-self / missing target", async () => {
+    // Engine returns 400 for retire-to-self, 404 for missing forwardTo
+    // target. Both should surface inline; strip the outer JSON blob so
+    // the dialog shows the engine's message, not the raw wire body.
+    mockFetchOnce(400, { error: "Cannot retire a mode to itself" });
+    await expect(retireMode("spoken", "spoken")).rejects.toThrow(
+      /Failed to retire mode \(400\): Cannot retire a mode to itself/
+    );
+  });
+
+  it("surfaces the engine's 404 message when the forward target is missing", async () => {
+    mockFetchOnce(404, {
+      error: 'Target mode "does-not-exist" not found in org',
+    });
+    await expect(retireMode("spoken", "does-not-exist")).rejects.toThrow(
+      /Failed to retire mode \(404\): Target mode "does-not-exist" not found/
+    );
+  });
+
+  it("falls back to raw text when the error body isn't JSON", async () => {
+    mockFetchOnce(500, "upstream boom");
+    await expect(retireMode("spoken", "target")).rejects.toThrow(
+      /Failed to retire mode \(500\): upstream boom/
+    );
+  });
+
+  it("threads org through as ?org=", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ mode: { name: "target", document: "" } }))
+      );
+    await retireMode("spoken", "target", undefined, "word-collective");
+    expect(spy.mock.calls[0]![0]).toBe(
+      "/api/config/modes/spoken/_retire?org=word-collective"
     );
   });
 });
