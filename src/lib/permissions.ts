@@ -1,5 +1,14 @@
 import type { LanguageRights } from "@/types/auth";
 
+// Shape of the language-rights fields carried on a user/session, shared
+// by the effective-rights helpers below and the language-bootstrap gate
+// so the structural type has a single definition.
+export interface LanguageRightsCarrier {
+  language_edit_rights?: LanguageRights;
+  language_publish_rights?: LanguageRights;
+  language_rights?: LanguageRights;
+}
+
 // Mirror of worker/config.ts hasAdminPowers — true for org admins OR
 // super admins. The "super trumps isAdmin" rule lives in worker/admin.ts:
 // a super-admin who self-demotes isAdmin (allowed; they retain cross-org
@@ -64,14 +73,7 @@ export function hasAnyLanguageRights(
 //     `language_rights` for languages, or undefined for modes (which
 //     have no legacy fallback).
 export function effectiveLanguageEditRights(
-  user:
-    | {
-        language_edit_rights?: LanguageRights;
-        language_publish_rights?: LanguageRights;
-        language_rights?: LanguageRights;
-      }
-    | null
-    | undefined
+  user: LanguageRightsCarrier | null | undefined
 ): LanguageRights | undefined {
   if (!user) return undefined;
   if (user.language_edit_rights !== undefined) return user.language_edit_rights;
@@ -80,14 +82,7 @@ export function effectiveLanguageEditRights(
 }
 
 export function effectiveLanguagePublishRights(
-  user:
-    | {
-        language_edit_rights?: LanguageRights;
-        language_publish_rights?: LanguageRights;
-        language_rights?: LanguageRights;
-      }
-    | null
-    | undefined
+  user: LanguageRightsCarrier | null | undefined
 ): LanguageRights | undefined {
   if (!user) return undefined;
   if (user.language_publish_rights !== undefined)
@@ -136,14 +131,7 @@ export function effectiveModePublishRights(
 // predates the rights system and gets default full access. Same as the
 // worker's rightsFor language path.
 export function hasAnyLanguageAccess(
-  user:
-    | {
-        language_edit_rights?: LanguageRights;
-        language_publish_rights?: LanguageRights;
-        language_rights?: LanguageRights;
-      }
-    | null
-    | undefined
+  user: LanguageRightsCarrier | null | undefined
 ): boolean {
   if (!user) return false;
   return (
