@@ -238,6 +238,37 @@ export async function renameMode(
   return unwrapModeResponse((await res.json()) as Record<string, unknown>);
 }
 
+// Clone a mode via the engine's `_clone` op (#232 / #241 PR B). The engine
+// creates a new mode with the given slug (+ optional label); document is
+// copied verbatim from the source and `published` is reset to false so the
+// clone lands as a draft. Rejects with 409 if the new slug collides with any
+// existing mode's canonical name OR alias in the org (Ian's #232
+// reconciliation §4).
+export async function cloneMode(
+  name: string,
+  body: { newName: string; newLabel?: string },
+  signal?: AbortSignal,
+  org?: string | null
+): Promise<PromptMode> {
+  const res = await fetch(
+    buildConfigUrl(`/api/config/modes/${encodeURIComponent(name)}/_clone`, org),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
+      body: JSON.stringify(body),
+      signal,
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(
+      `Failed to clone mode (${res.status}): ${await readModeOpError(res)}`
+    );
+  }
+
+  return unwrapModeResponse((await res.json()) as Record<string, unknown>);
+}
+
 // ---------------------------------------------------------------------------
 // Per-user memory
 // ---------------------------------------------------------------------------

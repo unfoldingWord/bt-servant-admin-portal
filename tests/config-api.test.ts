@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   clearUserMode,
+  cloneMode,
   deleteMode,
   deleteUserMemory,
   getMode,
@@ -383,6 +384,97 @@ describe("renameMode", () => {
     await renameMode("spoken", "new", undefined, "word-collective");
     expect(spy.mock.calls[0]![0]).toBe(
       "/api/config/modes/spoken/_rename?org=word-collective"
+    );
+  });
+});
+
+describe("cloneMode", () => {
+  it("POSTs `{ newName, newLabel? }` to the _clone endpoint and unwraps the envelope", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          org: "uw",
+          mode: {
+            name: "spoken-v2",
+            label: "Spoken v2",
+            document: "## Identity\n",
+            published: false,
+          },
+          message: "Mode cloned",
+        }),
+        { status: 200 }
+      )
+    );
+    const result = await cloneMode("spoken", {
+      newName: "spoken-v2",
+      newLabel: "Spoken v2",
+    });
+    expect(spy.mock.calls[0]![0]).toBe("/api/config/modes/spoken/_clone");
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      newName: "spoken-v2",
+      newLabel: "Spoken v2",
+    });
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/json"
+    );
+    // Returns the cloned mode (new canonical name, draft), envelope unwrapped.
+    expect(result.name).toBe("spoken-v2");
+    expect(result.published).toBe(false);
+  });
+
+  it("omits newLabel from the body when not provided (engine treats as unset)", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ mode: { name: "new", document: "" } }))
+      );
+    await cloneMode("spoken", { newName: "new" });
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toEqual({ newName: "new" });
+  });
+
+  it("URL-encodes the source mode name in the path", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ mode: { name: "new", document: "" } }))
+      );
+    await cloneMode("kids mode", { newName: "new" });
+    expect(spy.mock.calls[0]![0]).toBe("/api/config/modes/kids%20mode/_clone");
+  });
+
+  it("surfaces the engine's JSON `{ error }` message on a slug collision", async () => {
+    // Engine returns 409 for a collision against another mode's name OR
+    // alias. Dialog shows this inline; the message must be the engine
+    // string, not the raw JSON blob.
+    mockFetchOnce(409, {
+      error: 'Slug "conversation" already belongs to another mode in this org',
+    });
+    await expect(
+      cloneMode("spoken", { newName: "conversation" })
+    ).rejects.toThrow(
+      /Failed to clone mode \(409\): Slug "conversation" already belongs/
+    );
+  });
+
+  it("falls back to raw text when the error body isn't JSON", async () => {
+    mockFetchOnce(500, "upstream boom");
+    await expect(cloneMode("spoken", { newName: "new" })).rejects.toThrow(
+      /Failed to clone mode \(500\): upstream boom/
+    );
+  });
+
+  it("threads org through as ?org=", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ mode: { name: "new", document: "" } }))
+      );
+    await cloneMode("spoken", { newName: "new" }, undefined, "word-collective");
+    expect(spy.mock.calls[0]![0]).toBe(
+      "/api/config/modes/spoken/_clone?org=word-collective"
     );
   });
 });

@@ -23,6 +23,7 @@ import { useUiStore } from "@/lib/ui-store";
 import { OrgContextSelector } from "@/components/org-context-selector";
 import { useDebounced } from "@/hooks/use-debounced";
 import {
+  useCloneMode,
   useDeleteMode,
   useMode,
   useModes,
@@ -81,6 +82,7 @@ export function ModesPage() {
   const saveMode = useSaveMode(contextOrg);
   const deleteMode = useDeleteMode(contextOrg);
   const renameMode = useRenameMode(contextOrg);
+  const cloneMode = useCloneMode(contextOrg);
 
   // Filter modes to those the user has any verb on (admin/cross-org
   // sees everything via the `*` short-circuit above). Mirrors
@@ -111,6 +113,11 @@ export function ModesPage() {
   // themselves out of the renamed slug. Mirror the worker gate, which
   // 403s any non-admin same-org rename.
   const canRenameSelected = isAdmin || isCrossOrg;
+  // Clone rides the same gate as rename today (#241 PR B). The clone
+  // has no rights pre-assigned, so a non-admin cloning would land on a
+  // mode they can't edit. Kept as a separate boolean so the gate can
+  // loosen independently once rights-migration lands (#240).
+  const canCloneSelected = isAdmin || isCrossOrg;
 
   // Local document draft (auto-save target).
   //
@@ -388,6 +395,21 @@ export function ModesPage() {
     [deleteMode, selectedMode, setSelectedMode]
   );
 
+  const handleCloneMode = useCallback(
+    async (name: string, newName: string, newLabel: string) => {
+      await cloneMode.mutateAsync({
+        name,
+        newName,
+        newLabel: newLabel || undefined,
+      });
+      // Follow the selection to the freshly-cloned slug so the editor
+      // opens the clone as a draft instead of leaving the user on the
+      // source. Mirrors handleCreateMode's `setSelectedMode(name)`.
+      setSelectedMode(newName);
+    },
+    [cloneMode, setSelectedMode]
+  );
+
   const handleRenameMode = useCallback(
     async (name: string, newName: string) => {
       await renameMode.mutateAsync({ name, newName });
@@ -408,7 +430,8 @@ export function ModesPage() {
 
   const error =
     modesQuery.error || (selectedMode !== null ? modeQuery.error : null);
-  const saveError = saveMode.error ?? deleteMode.error ?? renameMode.error;
+  const saveError =
+    saveMode.error ?? deleteMode.error ?? renameMode.error ?? cloneMode.error;
 
   const saveStatus = useMemo(() => {
     if (isSaving) return "Saving…";
@@ -437,9 +460,11 @@ export function ModesPage() {
               onDeleteMode={handleDeleteMode}
               onSetPublished={handleSetPublished}
               onRenameMode={handleRenameMode}
+              onCloneMode={handleCloneMode}
               isCreating={saveMode.isPending}
               isDeleting={deleteMode.isPending}
               isRenaming={renameMode.isPending}
+              isCloning={cloneMode.isPending}
               isSettingPublished={saveMode.isPending}
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
@@ -447,6 +472,7 @@ export function ModesPage() {
               canPublishSelected={canPublishSelected}
               canDeleteSelected={canDeleteSelected}
               canRenameSelected={canRenameSelected}
+              canCloneSelected={canCloneSelected}
               renameDisabledReason={
                 isDirty || isSaving
                   ? "Save your changes before renaming."

@@ -158,6 +158,32 @@ export function useRenameMode(org?: string | null) {
   });
 }
 
+// Clone a mode (#241 PR B). Unlike rename this is additive — the source is
+// untouched, a new mode appears — so no optimistic list surgery is needed.
+// Two touches on the cache: (1) pre-write the returned clone into the per-
+// mode cache so the page's `setSelectedMode(newName)` renders the fresh
+// mode immediately instead of showing a loading gap; (2) invalidate the
+// modes list so the new entry surfaces on the next tick.
+export function useCloneMode(org?: string | null) {
+  const qc = useQueryClient();
+  const key = normalize(org);
+  return useMutation({
+    mutationFn: ({
+      name,
+      newName,
+      newLabel,
+    }: {
+      name: string;
+      newName: string;
+      newLabel?: string;
+    }) => configApi.cloneMode(name, { newName, newLabel }, undefined, key),
+    onSuccess: (data, { newName }) => {
+      qc.setQueryData(keys.mode(newName, key), data);
+      void qc.invalidateQueries({ queryKey: keys.modes(key) });
+    },
+  });
+}
+
 export function useSetUserMode(org?: string | null) {
   const key = normalize(org);
   return useMutation({
