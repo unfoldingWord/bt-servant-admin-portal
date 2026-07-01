@@ -7,7 +7,10 @@ import {
   isReservedOrgSlug,
 } from "@/lib/admin-users-api";
 import { useAuthStore } from "@/lib/auth-store";
-import { canBootstrapLanguage } from "@/lib/language-bootstrap-gate";
+import {
+  canBootstrapLanguage,
+  isCrossOrgTarget,
+} from "@/lib/language-bootstrap-gate";
 import { useCreateAdminUser } from "@/hooks/use-admin-users";
 import { useLanguages } from "@/hooks/use-languages";
 import { useModes } from "@/hooks/use-prompt-config";
@@ -92,14 +95,14 @@ export function AdminUserCreateDialog({
     (languagesQuery.data?.languages.length ?? 0) === 0;
   const showBootstrap =
     orgForFetch !== null && targetOrgHasNoLanguages && canBootstrap;
-  // The org-context the Languages page should adopt: the target org for a
-  // cross-org super-admin, else null (home org).
-  const bootstrapContextOrg =
-    callerIsSuperAdmin &&
-    orgForFetch !== null &&
-    orgForFetch.trim().toLowerCase() !== callerOrg.trim().toLowerCase()
-      ? orgForFetch
-      : null;
+  // Only affects the CTA copy: a fresh Languages tab boots in home
+  // context, so a cross-org super-admin is told to switch the org
+  // selector there. Reuses the gate's normalized comparison.
+  const crossOrg = isCrossOrgTarget({
+    callerOrg,
+    callerIsSuperAdmin,
+    targetOrg: orgForFetch,
+  });
 
   // Re-sync the Org default if callerOrg changes while the dialog is
   // mounted (rare — only on auth changes). Without this, a stale org
@@ -321,11 +324,7 @@ export function AdminUserCreateDialog({
             )}
 
             {showBootstrap && orgForFetch && (
-              <LanguageBootstrapCta
-                org={orgForFetch}
-                contextOrg={bootstrapContextOrg}
-                onNavigateAway={() => handleClose(false)}
-              />
+              <LanguageBootstrapCta org={orgForFetch} isCrossOrg={crossOrg} />
             )}
 
             <RightsSelector

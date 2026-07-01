@@ -8,7 +8,10 @@ import {
   isReservedOrgSlug,
 } from "@/lib/admin-users-api";
 import { useAuthStore } from "@/lib/auth-store";
-import { canBootstrapLanguage } from "@/lib/language-bootstrap-gate";
+import {
+  canBootstrapLanguage,
+  isCrossOrgTarget,
+} from "@/lib/language-bootstrap-gate";
 import { useUpdateAdminUser } from "@/hooks/use-admin-users";
 import { useLanguages } from "@/hooks/use-languages";
 import { useModes } from "@/hooks/use-prompt-config";
@@ -125,15 +128,16 @@ export function AdminUserEditDialog({
     (languagesQuery.data?.languages.length ?? 0) === 0;
   const showBootstrap =
     orgForFetch !== null && targetOrgHasNoLanguages && canBootstrap;
-  // Cross-org super-admin lands the Languages page in the target org's
-  // context; same-org (org admin, or super-admin editing a home-org
-  // user) uses null (home).
-  const bootstrapContextOrg =
-    callerIsSuperAdmin &&
-    orgForFetch !== null &&
-    orgForFetch.trim().toLowerCase() !== callerHomeOrg.trim().toLowerCase()
-      ? orgForFetch
-      : null;
+  // CTA copy only — reuses the gate's normalized cross-org comparison so
+  // the two never diverge. `orgForFetch` is the target user's own org
+  // (the org whose empty language list is shown here), which is what the
+  // CTA names; a super-admin mid-move-org edit is a pre-existing wrinkle
+  // the rights selectors already inherit.
+  const crossOrg = isCrossOrgTarget({
+    callerOrg: callerHomeOrg,
+    callerIsSuperAdmin,
+    targetOrg: orgForFetch,
+  });
 
   // Re-sync form state from the user prop whenever the target changes
   // (or the dialog reopens with a different user).
@@ -358,11 +362,7 @@ export function AdminUserEditDialog({
             )}
 
             {showBootstrap && orgForFetch && (
-              <LanguageBootstrapCta
-                org={orgForFetch}
-                contextOrg={bootstrapContextOrg}
-                onNavigateAway={() => onOpenChange(false)}
-              />
+              <LanguageBootstrapCta org={orgForFetch} isCrossOrg={crossOrg} />
             )}
 
             <RightsSelector

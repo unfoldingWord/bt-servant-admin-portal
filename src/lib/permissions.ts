@@ -1,5 +1,14 @@
 import type { LanguageRights } from "@/types/auth";
 
+// Shape of the language-rights fields carried on a user/session, shared
+// by the effective-rights helpers below and the language-bootstrap gate
+// so the structural type has a single definition.
+export interface LanguageRightsCarrier {
+  language_edit_rights?: LanguageRights;
+  language_publish_rights?: LanguageRights;
+  language_rights?: LanguageRights;
+}
+
 // Mirror of worker/config.ts hasAdminPowers — true for org admins OR
 // super admins. The "super trumps isAdmin" rule lives in worker/admin.ts:
 // a super-admin who self-demotes isAdmin (allowed; they retain cross-org

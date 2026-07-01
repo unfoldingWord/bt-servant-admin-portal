@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { canBootstrapLanguage } from "../src/lib/language-bootstrap-gate";
+import {
+  canBootstrapLanguage,
+  isCrossOrgTarget,
+} from "../src/lib/language-bootstrap-gate";
 
 // #247 mirrors the Languages page `canCreate` gate — these cases lock in
 // the parity so a refactor to either side has to touch both together.
@@ -214,6 +217,85 @@ describe("canBootstrapLanguage", () => {
       canBootstrapLanguage({
         caller: { language_edit_rights: [] },
         callerOrg: "   ",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+  });
+});
+
+// isCrossOrgTarget is the single normalized comparison shared by the
+// gate and the CTA copy (rd-3 F1/F3) — locking it down independently so
+// the two callers can't drift.
+describe("isCrossOrgTarget", () => {
+  it("non-super-admin is never cross-org", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: false,
+        targetOrg: "other",
+      })
+    ).toBe(false);
+  });
+
+  it("super-admin, target differs from home → true", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "other",
+      })
+    ).toBe(true);
+  });
+
+  it("super-admin, target equals home → false", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+  });
+
+  it("normalizes case and whitespace on both sides", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "  ACME ",
+      })
+    ).toBe(false);
+    expect(
+      isCrossOrgTarget({
+        callerOrg: " Acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+  });
+
+  it("null / whitespace-only target → false", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: null,
+      })
+    ).toBe(false);
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "   ",
+      })
+    ).toBe(false);
+  });
+
+  it("empty caller home org → false (no unearned cross-org)", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "",
         callerIsSuperAdmin: true,
         targetOrg: "acme",
       })
