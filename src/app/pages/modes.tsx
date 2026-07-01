@@ -408,15 +408,22 @@ export function ModesPage() {
         newName,
         newLabel: trimmedLabel ? trimmedLabel : undefined,
       });
-      // Follow the selection to the engine-canonical slug (not the
-      // client-side `newName`). If the engine re-canonicalizes the
-      // slug and returns a different `data.name`, using `newName`
-      // would land the user on a slug that doesn't exist in the list
-      // and the stale-selection guard would wipe the selection.
-      // Mirrors handleCreateMode's `setSelectedMode(name)`.
-      setSelectedMode(data.name);
+      // Route through handleSelectMode (not raw setSelectedMode) so
+      // the switch-guard fires if the source draft dirtied while the
+      // modal was open. The Clone button is disabled up-front by
+      // `cloneDisabledReason` when isDirty || isSaving, but that only
+      // gates the trigger — once the dialog is open, focus can leak
+      // (click outside the modal, tab out, blur-and-refocus), the
+      // user can type in the editor, and `isDirty` can flip to true
+      // by the time they confirm. `handleSelectMode` inspects the
+      // live isDirty and either switches (clean → setSelectedMode) or
+      // queues a `pendingSwitch` confirmation dialog (dirty → user
+      // picks discard-or-cancel). Uses data.name so an engine slug
+      // canonicalization is picked up too. Belt-and-suspenders for
+      // Frank F1 on #241 PR B.
+      handleSelectMode(data.name);
     },
-    [cloneMode, setSelectedMode]
+    [cloneMode, handleSelectMode]
   );
 
   const handleRenameMode = useCallback(
