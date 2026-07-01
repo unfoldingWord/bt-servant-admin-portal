@@ -220,6 +220,60 @@ export function useCloneMode(org?: string | null) {
   });
 }
 
+// Apply a retire-and-forward to the cached modes list. Exported for
+// unit tests. Removes the SOURCE (`sourceName`) entry and replaces the
+// TARGET entry with the response's `target` (which now carries the
+// source's slug + the source's own aliases in its own `aliases`
+// array). Returns `prev` untouched when nothing is cached yet so an
+// optimistic write never fabricates a list. If either the source or
+// target isn't present, that individual step is a no-op — the source
+// removal is idempotent, the target replace matches on name.
+export function applyRetireToModeList(
+  prev: OrgModes | undefined,
+  sourceName: string,
+  target: PromptMode
+): OrgModes | undefined {
+  if (!prev) return prev;
+  return {
+    ...prev,
+    modes: prev.modes
+      .filter((m) => m.name !== sourceName)
+      .map((m) => (m.name === target.name ? target : m)),
+  };
+}
+
+// Retire a mode and forward its users to another mode via the engine's
+// `_retire` op (#241 PR C). Three-part cache update:
+//
+//  1. Synchronously rewrite the LIST cache via `applyRetireToModeList`
+//     — the source is removed, the target's entry is replaced with the
+//     response (now widened aliases). Without the optimistic write the
+//     page's stale-selection guard would fire on the source's slug in
+//     the render gap after the page's `handleSelectMode(target.name)`.
+//  2. Overwrite the target's per-mode cache with the response so the
+//     editor renders the updated alias set without a loading gap. Drop
+//     the source's per-mode cache entry so a subsequent stale read
+//     doesn't resurrect it.
+//  3. Invalidate the list + both per-mode caches so the optimistic
+//     writes reconcile with server truth.
+export function useRetireMode(org?: string | null) {
+  const qc = useQueryClient();
+  const key = normalize(org);
+  return useMutation({
+    mutationFn: ({ name, forwardTo }: { name: string; forwardTo: string }) =>
+      configApi.retireMode(name, forwardTo, undefined, key),
+    onSuccess: (data, { name }) => {
+      qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
+        applyRetireToModeList(prev, name, data)
+      );
+      qc.setQueryData(keys.mode(data.name, key), data);
+      qc.removeQueries({ queryKey: keys.mode(name, key) });
+      void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
+    },
+  });
+}
+
 export function useSetUserMode(org?: string | null) {
   const key = normalize(org);
   return useMutation({

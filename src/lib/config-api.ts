@@ -269,6 +269,41 @@ export async function cloneMode(
   return unwrapModeResponse((await res.json()) as Record<string, unknown>);
 }
 
+// Retire the source mode and forward users onto `forwardTo` via the
+// engine's `_retire` op (#232 / #241 PR C). The engine moves the
+// source's canonical slug AND its own existing aliases onto the
+// target's aliases array (Ian's #232 reconciliation §3), then deletes
+// the source. Returns the TARGET mode (widened aliases). Rejects with
+// 400 (retire-to-self, missing body), 404 (missing source or missing
+// `forwardTo` target).
+export async function retireMode(
+  name: string,
+  forwardTo: string,
+  signal?: AbortSignal,
+  org?: string | null
+): Promise<PromptMode> {
+  const res = await fetch(
+    buildConfigUrl(
+      `/api/config/modes/${encodeURIComponent(name)}/_retire`,
+      org
+    ),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
+      body: JSON.stringify({ forwardTo }),
+      signal,
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(
+      `Failed to retire mode (${res.status}): ${await readModeOpError(res)}`
+    );
+  }
+
+  return unwrapModeResponse((await res.json()) as Record<string, unknown>);
+}
+
 // ---------------------------------------------------------------------------
 // Per-user memory
 // ---------------------------------------------------------------------------
