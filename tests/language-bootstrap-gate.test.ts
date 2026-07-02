@@ -1,0 +1,304 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  canBootstrapLanguage,
+  isCrossOrgTarget,
+} from "../src/lib/language-bootstrap-gate";
+
+// #247 mirrors the Languages page `canCreate` gate — these cases lock in
+// the parity so a refactor to either side has to touch both together.
+
+describe("canBootstrapLanguage", () => {
+  const org = "acme";
+
+  it("null / undefined caller → false", () => {
+    expect(
+      canBootstrapLanguage({
+        caller: null,
+        callerOrg: org,
+        callerIsSuperAdmin: false,
+        targetOrg: org,
+      })
+    ).toBe(false);
+    expect(
+      canBootstrapLanguage({
+        caller: undefined,
+        callerOrg: org,
+        callerIsSuperAdmin: false,
+        targetOrg: org,
+      })
+    ).toBe(false);
+  });
+
+  it("home-org caller with legacy undefined rights → true (back-compat)", () => {
+    // Predates verb-perms; language_rights === undefined → full access.
+    expect(
+      canBootstrapLanguage({
+        caller: {},
+        callerOrg: org,
+        callerIsSuperAdmin: false,
+        targetOrg: org,
+      })
+    ).toBe(true);
+  });
+
+  it("home-org caller with explicit language_edit_rights → true", () => {
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: ["spanish"] },
+        callerOrg: org,
+        callerIsSuperAdmin: false,
+        targetOrg: org,
+      })
+    ).toBe(true);
+  });
+
+  it("home-org caller with language_edit_rights: '*' → true", () => {
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: "*" },
+        callerOrg: org,
+        callerIsSuperAdmin: false,
+        targetOrg: org,
+      })
+    ).toBe(true);
+  });
+
+  it("home-org caller with empty language_edit_rights → false", () => {
+    // Elsy's reproduction: new user created with [] can't bootstrap.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: org,
+        callerIsSuperAdmin: false,
+        targetOrg: org,
+      })
+    ).toBe(false);
+  });
+
+  it("home-org caller with only publish-rights set → false", () => {
+    // Partner-aware rule: setting publish but not edit is a deliberate
+    // gap, NOT legacy full access. Bootstrap needs edit, not publish.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_publish_rights: ["spanish"] },
+        callerOrg: org,
+        callerIsSuperAdmin: false,
+        targetOrg: org,
+      })
+    ).toBe(false);
+  });
+
+  it("home-org caller with legacy `language_rights` fallback → true", () => {
+    // Both verb-perms unset, legacy field grants full → falls through.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_rights: "*" },
+        callerOrg: org,
+        callerIsSuperAdmin: false,
+        targetOrg: org,
+      })
+    ).toBe(true);
+  });
+
+  it("cross-org super-admin → true regardless of per-row rights", () => {
+    // Worker's PR A carve-out: super-admins bypass per-row rights when
+    // editing a different org.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "home",
+        callerIsSuperAdmin: true,
+        targetOrg: "other",
+      })
+    ).toBe(true);
+  });
+
+  it("same-org super-admin without edit rights → false", () => {
+    // Same-org super-admins fall through to per-row check — the
+    // cross-org carve-out doesn't fire when target === home org.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: org,
+        callerIsSuperAdmin: true,
+        targetOrg: org,
+      })
+    ).toBe(false);
+  });
+
+  it("super-admin with null targetOrg → falls through to per-row", () => {
+    // If the Org input is blank the dialog can't fetch; the gate should
+    // treat it as "not cross-org" rather than granting bootstrap by
+    // default.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: org,
+        callerIsSuperAdmin: true,
+        targetOrg: null,
+      })
+    ).toBe(false);
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: "*" },
+        callerOrg: org,
+        callerIsSuperAdmin: true,
+        targetOrg: null,
+      })
+    ).toBe(true);
+  });
+
+  it("case-insensitive org compare — 'Acme' vs 'acme' is same-org", () => {
+    // Super-admin typing their home org in a different case must NOT
+    // trip the cross-org trump. Worker normalizes org slugs to
+    // lowercase; this mirror keeps the UI gate honest even when the
+    // free-text Org input has stray capitalization.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "Acme",
+      })
+    ).toBe(false);
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "Acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+    // Genuine cross-org still crosses even under mixed casing.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "OTHER",
+      })
+    ).toBe(true);
+  });
+
+  it("trims whitespace before comparing orgs (rd-2 F15)", () => {
+    // Free-text Org field can carry a stray trailing space; it must not
+    // trip the cross-org trump against the caller's own home org.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "acme ",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "  acme  ",
+      })
+    ).toBe(false);
+  });
+
+  it("empty callerOrg does not grant the cross-org trump (rd-2 F14)", () => {
+    // A missing/blank home org (bad /me payload) must not read as
+    // "different from every target" and silently hand out access.
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+    expect(
+      canBootstrapLanguage({
+        caller: { language_edit_rights: [] },
+        callerOrg: "   ",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+  });
+});
+
+// isCrossOrgTarget is the single normalized comparison shared by the
+// gate and the CTA copy (rd-3 F1/F3) — locking it down independently so
+// the two callers can't drift.
+describe("isCrossOrgTarget", () => {
+  it("non-super-admin is never cross-org", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: false,
+        targetOrg: "other",
+      })
+    ).toBe(false);
+  });
+
+  it("super-admin, target differs from home → true", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "other",
+      })
+    ).toBe(true);
+  });
+
+  it("super-admin, target equals home → false", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+  });
+
+  it("normalizes case and whitespace on both sides", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "  ACME ",
+      })
+    ).toBe(false);
+    expect(
+      isCrossOrgTarget({
+        callerOrg: " Acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+  });
+
+  it("null / whitespace-only target → false", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: null,
+      })
+    ).toBe(false);
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "   ",
+      })
+    ).toBe(false);
+  });
+
+  it("empty caller home org → false (no unearned cross-org)", () => {
+    expect(
+      isCrossOrgTarget({
+        callerOrg: "",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+  });
+});

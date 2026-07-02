@@ -7,6 +7,7 @@ import {
   isReservedOrgSlug,
 } from "@/lib/admin-users-api";
 import { useCreateAdminUser } from "@/hooks/use-admin-users";
+import { useLanguageBootstrapGate } from "@/hooks/use-language-bootstrap";
 import { useLanguages } from "@/hooks/use-languages";
 import { useModes } from "@/hooks/use-prompt-config";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LanguageBootstrapCta } from "@/components/language-bootstrap-cta";
 import { RightsSelector } from "@/components/rights-selector";
 
 interface CreateUserDialogProps {
@@ -70,6 +72,19 @@ export function AdminUserCreateDialog({
   const orgForFetch = (callerIsSuperAdmin ? org : callerOrg).trim() || null;
   const languagesQuery = useLanguages(orgForFetch);
   const modesQuery = useModes(orgForFetch);
+
+  // #247: when the target org has no language drafts, specific-language
+  // scope can't be granted here (empty chip list). Rather than create a
+  // draft inline, point the admin at the Languages page. A cross-org
+  // super-admin here may be provisioning a brand-new org (unsaved, so
+  // not yet reachable via the Languages org selector), so that case gets
+  // "save the user first" guidance rather than an impossible switch-
+  // selector instruction (rd-4 F1).
+  const { showBootstrap, isCrossOrg } = useLanguageBootstrapGate({
+    callerOrg,
+    callerIsSuperAdmin,
+    targetOrg: orgForFetch,
+  });
 
   // Re-sync the Org default if callerOrg changes while the dialog is
   // mounted (rare — only on auth changes). Without this, a stale org
@@ -288,6 +303,13 @@ export function AdminUserCreateDialog({
                   </div>
                 </div>
               </label>
+            )}
+
+            {showBootstrap && orgForFetch && (
+              <LanguageBootstrapCta
+                org={orgForFetch}
+                mode={isCrossOrg ? "save-user-first" : "direct"}
+              />
             )}
 
             <RightsSelector

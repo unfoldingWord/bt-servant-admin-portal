@@ -7,7 +7,9 @@ import {
   AdminUsersRequestError,
   isReservedOrgSlug,
 } from "@/lib/admin-users-api";
+import { useAuthStore } from "@/lib/auth-store";
 import { useUpdateAdminUser } from "@/hooks/use-admin-users";
+import { useLanguageBootstrapGate } from "@/hooks/use-language-bootstrap";
 import { useLanguages } from "@/hooks/use-languages";
 import { useModes } from "@/hooks/use-prompt-config";
 import {
@@ -27,6 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LanguageBootstrapCta } from "@/components/language-bootstrap-cta";
 import { RightsSelector } from "@/components/rights-selector";
 
 interface EditUserDialogProps {
@@ -100,6 +103,25 @@ export function AdminUserEditDialog({
   const orgForFetch = user?.org ?? null;
   const languagesQuery = useLanguages(orgForFetch);
   const modesQuery = useModes(orgForFetch);
+
+  // #247: same empty-drafts CTA as the create dialog — if the target
+  // user's org has zero language drafts, an admin trying to grant
+  // specific-language access here hits the same wall, just one dialog
+  // later. Point them at the Languages page rather than creating a draft
+  // inline (the shared hook keeps both surfaces in step — rd-4 F3).
+  //
+  // Anchor the gate to the CALLER's home org: the CTA targets the user's
+  // current org (`orgForFetch = user.org`), and only a cross-org super-
+  // admin can create there without per-row rights. `orgForFetch` is what
+  // the CTA names; a super-admin mid-move-org edit is a pre-existing
+  // wrinkle the rights selectors already inherit (they too scope to
+  // user.org, not the edited Org field) — rd-4 F2, out of #247 scope.
+  const callerHomeOrg = useAuthStore((s) => s.user?.org ?? "");
+  const { showBootstrap, isCrossOrg } = useLanguageBootstrapGate({
+    callerOrg: callerHomeOrg,
+    callerIsSuperAdmin,
+    targetOrg: orgForFetch,
+  });
 
   // Re-sync form state from the user prop whenever the target changes
   // (or the dialog reopens with a different user).
@@ -321,6 +343,13 @@ export function AdminUserEditDialog({
                   </div>
                 </div>
               </label>
+            )}
+
+            {showBootstrap && orgForFetch && (
+              <LanguageBootstrapCta
+                org={orgForFetch}
+                mode={isCrossOrg ? "switch-org" : "direct"}
+              />
             )}
 
             <RightsSelector
