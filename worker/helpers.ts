@@ -50,3 +50,13 @@ export async function listKvKeys(
   } while (cursor);
   return keys;
 }
+
+// Traversal-capable org names — the one shape encodeURIComponent can't
+// neutralize (/orgs/../x URL-normalizes past the org scope). Single copy
+// because it's enforced at multiple choke points (admin.ts create/move,
+// auth.ts login + session validation, config.ts resolveOrg): a hardening
+// applied to one inline copy would silently miss the others (#253
+// review round 6).
+export function isPathShapedOrg(org: string): boolean {
+  return org === "." || org === "..";
+}

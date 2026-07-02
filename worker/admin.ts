@@ -1,7 +1,12 @@
 import { getSessionId, invalidateUserSessions, validateSession } from "./auth";
 import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
-import { errorResponse, jsonResponse, listKvKeys } from "./helpers";
+import {
+  errorResponse,
+  isPathShapedOrg,
+  jsonResponse,
+  listKvKeys,
+} from "./helpers";
 import type { LanguageRights, StoredUser } from "./types";
 
 // Org names are free-text — slashes included: every upstream URL builder
@@ -9,14 +14,8 @@ import type { LanguageRights, StoredUser } from "./types";
 // neutralizes "/". An earlier draft rejected slashes here too, which
 // stranded existing slash-named orgs' own admins from creating users in
 // their org (#253 review P2 — the shape guard ran before the own-org
-// equality check). The ONLY shapes rejected are bare "." / "..":
-// encoding can't neutralize them (/orgs/../x URL-normalizes past the
-// org scope) and no legitimate org carries those names. Stored values
-// predating this guard fail closed at validateSession.
-function isPathShapedOrg(org: string): boolean {
-  return org === "." || org === "..";
-}
-
+// equality check). Only isPathShapedOrg's bare "." / ".." are rejected;
+// stored values predating this guard fail closed at validateSession.
 const ORG_SHAPE_ERROR = 'org cannot be "." or ".."';
 
 // Accepts `"*"` or an array of non-empty trimmed strings. Returns `undefined`

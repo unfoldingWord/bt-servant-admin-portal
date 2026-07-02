@@ -1,6 +1,11 @@
 import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
-import { errorResponse, jsonResponse, listKvKeys } from "./helpers";
+import {
+  errorResponse,
+  jsonResponse,
+  listKvKeys,
+  isPathShapedOrg,
+} from "./helpers";
 import type { LanguageRights, SessionData, StoredUser } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -126,7 +131,7 @@ export async function validateSession(
   // scope. No legitimate org is named "." or ".." — locking the
   // account out (recoverable via an admin org-move) beats letting its
   // every request escape its org prefix.
-  if (user.org === "." || user.org === "..") {
+  if (isPathShapedOrg(user.org)) {
     return null;
   }
 
@@ -224,7 +229,7 @@ export async function handleLogin(
   // login-then-logged-out loop plus an orphaned KV session per attempt.
   // Reject at login with a real message instead. Runs AFTER the password
   // check so it can't be used to probe which emails exist.
-  if (user.org === "." || user.org === "..") {
+  if (isPathShapedOrg(user.org)) {
     return errorResponse(
       "This account's organization is invalid; ask an admin to move it to a valid org",
       403

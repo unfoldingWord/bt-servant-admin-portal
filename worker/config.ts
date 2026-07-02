@@ -1,5 +1,5 @@
 import type { Env } from "./helpers";
-import { errorResponse } from "./helpers";
+import { errorResponse, isPathShapedOrg } from "./helpers";
 import {
   contractOrgModeRights,
   expandOrgModeRights,
@@ -484,7 +484,7 @@ function resolveOrg(
   // session.org (#253 review P2). admin.ts rejects these at user
   // create/move, but stored values predating that guard must still be
   // stopped here.
-  if (resolved.org === "." || resolved.org === "..") {
+  if (isPathShapedOrg(resolved.org)) {
     return { error: errorResponse("Invalid org", 400) };
   }
 

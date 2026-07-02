@@ -92,6 +92,24 @@ describe("chat user_id override — real-user IDOR guard (#253)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("UPPERCASED victim UUID → still 403 (guard compares case-insensitively)", async () => {
+    // UUID_V4_RE accepts uppercase hex; stored ids are lowercase. A
+    // case-sensitive compare would let an uppercased copy of the
+    // victim's id slip past the scan (#253 review round 6).
+    const victim = await seedStoredUser("victim@acme.com");
+    const fetchSpy = spyFetch();
+    const res = await handleDeleteHistory(
+      new Request(
+        `https://portal.example.test/api/chat/history?user_id=${victim.id.toUpperCase()}`,
+        { method: "DELETE" }
+      ),
+      env,
+      makeSession()
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("synthetic UUID override (matches no stored user) → proxies as before", async () => {
     await seedStoredUser("someone@acme.com");
     const synthetic = crypto.randomUUID();

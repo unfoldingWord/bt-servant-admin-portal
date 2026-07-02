@@ -29,19 +29,38 @@ async function resolveUserId(
   if (!override || !UUID_V4_RE.test(override)) {
     return { userId: session.userId };
   }
-  if (override === session.userId) {
-    return { userId: override };
+  // Compare lowercased: UUID_V4_RE accepts uppercase hex, and stored ids
+  // (crypto.randomUUID) are lowercase — a case-sensitive compare would
+  // let an uppercased copy of a victim's id slip past both checks and
+  // reach the engine (#253 review round 6). The resolved id keeps the
+  // canonical lowercase form for the same reason.
+  const normalized = override.toLowerCase();
+  if (normalized === session.userId.toLowerCase()) {
+    return { userId: session.userId };
   }
-  const keys = await listKvKeys(env.AUTH_KV, "user:");
-  for (const key of keys) {
-    const user = await env.AUTH_KV.get<StoredUser>(key, { type: "json" });
-    if (user?.id === override) {
+  // Fail CLOSED on a KV blip: this is a security guard, and failing open
+  // would let an induced storage error bypass it. The 503 is retryable
+  // and scoped to overridden requests (test-chat panel); non-overridden
+  // traffic never enters this branch.
+  try {
+    const keys = await listKvKeys(env.AUTH_KV, "user:");
+    // Parallel like admin.ts listUsers — the common case (synthetic
+    // test-chat id) matches nobody, so a serial loop would put N
+    // round-trips on the chat hot path.
+    const users = await Promise.all(
+      keys.map((key) => env.AUTH_KV.get<StoredUser>(key, { type: "json" }))
+    );
+    if (users.some((user) => user?.id.toLowerCase() === normalized)) {
       return {
         error: errorResponse("user_id may not target another user", 403),
       };
     }
+  } catch {
+    return {
+      error: errorResponse("Could not verify user_id; try again", 503),
+    };
   }
-  return { userId: override };
+  return { userId: normalized };
 }
 
 export async function handleStream(
