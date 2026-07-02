@@ -95,12 +95,26 @@ export function RightsSelector({
   const isFull = value === "*";
   const isLegacy = value === undefined;
   // Legacy language rights convert to "Specific" by seeding the full
-  // item list (see the onChange below). With the list unavailable
-  // (loading or errored) that seed would be [], silently collapsing the
-  // user's legacy full access to an explicit no-access grant — so the
-  // Specific option is unclickable until the list actually loads.
+  // item list (see the onChange below). While the list is UNAVAILABLE
+  // (loading or errored) that seed would be [] by accident, silently
+  // collapsing the user's legacy full access to an explicit no-access
+  // grant — so the Specific option is unclickable until the fetch
+  // settles. A loaded-EMPTY list is different: seeding [] is then the
+  // only truthful conversion and deliberately stays clickable — it's
+  // the admin's only way to revoke a legacy grant (which also covers
+  // every FUTURE language) before an org has content. The status line
+  // below the options spells out that consequence (#253 review: an
+  // earlier draft disabled the empty case too, making legacy access
+  // irrevocable in a zero-language org).
   const specificNeedsItems =
     isLegacy && kind === "language" && availableItems === undefined;
+  // Shared by the chip-area suppression and the sibling error line so
+  // the two can't drift (they must flip together — showing the error
+  // AND the stale "Loading…" chip area reads as two states at once).
+  const listUnavailable = loadError && availableItems === undefined;
+  const listLoaded = availableItems !== undefined;
+  const loadingLabel = `Loading ${kind}s…`;
+  const emptyLabel = `No ${kind}s defined yet.`;
   const selected = useMemo<Set<string>>(
     () => (Array.isArray(value) ? new Set(value) : new Set()),
     [value]
@@ -192,66 +206,80 @@ export function RightsSelector({
               </div>
             </div>
 
-            {/* The error line renders regardless of which option is
-                selected — it also explains why the Specific radio is
-                disabled for legacy-language users while the list is
-                unavailable. */}
-            {loadError && availableItems === undefined && (
-              <span className="text-destructive text-xs">
-                Couldn't load {kind}s.
-                {onRetry && (
-                  <button
-                    type="button"
-                    onClick={onRetry}
-                    className="ml-1.5 underline underline-offset-2"
-                  >
-                    Retry
-                  </button>
+            {!isFull && !isLegacy && !listUnavailable && (
+              <div className="flex flex-wrap gap-1.5">
+                {availableItems === undefined ? (
+                  <span className="text-muted-foreground text-xs">
+                    {loadingLabel}
+                  </span>
+                ) : availableItems.length === 0 ? (
+                  <span className="text-muted-foreground text-xs">
+                    {emptyLabel}
+                  </span>
+                ) : (
+                  availableItems.map((item) => {
+                    const checked = selected.has(item.name);
+                    return (
+                      <button
+                        key={item.name}
+                        type="button"
+                        onClick={() => toggleItem(item.name)}
+                        className={cn(
+                          "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                          checked
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-background hover:bg-accent"
+                        )}
+                      >
+                        {checked && (
+                          <span className="mr-1" aria-hidden="true">
+                            ✓
+                          </span>
+                        )}
+                        {item.label || item.name}
+                      </button>
+                    );
+                  })
                 )}
-              </span>
+              </div>
             )}
-
-            {!isFull &&
-              !isLegacy &&
-              !(loadError && availableItems === undefined) && (
-                <div className="flex flex-wrap gap-1.5">
-                  {availableItems === undefined ? (
-                    <span className="text-muted-foreground text-xs">
-                      Loading {kind}s…
-                    </span>
-                  ) : availableItems.length === 0 ? (
-                    <span className="text-muted-foreground text-xs">
-                      No {kind}s defined yet.
-                    </span>
-                  ) : (
-                    availableItems.map((item) => {
-                      const checked = selected.has(item.name);
-                      return (
-                        <button
-                          key={item.name}
-                          type="button"
-                          onClick={() => toggleItem(item.name)}
-                          className={cn(
-                            "rounded-full border px-2.5 py-1 text-xs transition-colors",
-                            checked
-                              ? "bg-primary text-primary-foreground border-primary"
-                              : "bg-background hover:bg-accent"
-                          )}
-                        >
-                          {checked && (
-                            <span className="mr-1" aria-hidden="true">
-                              ✓
-                            </span>
-                          )}
-                          {item.label || item.name}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              )}
           </div>
         </label>
+
+        {/* Status lines live OUTSIDE the radio's <label>: an interactive
+            Retry button inside it would depend on label activation not
+            forwarding to the radio — spec-compliant, but not worth
+            relying on when a forwarded click would rewrite the rights
+            value. Rendered in every radio state, these also explain the
+            disabled Specific option for legacy-language users. */}
+        {listUnavailable && (
+          <span className="text-destructive block text-xs">
+            Couldn't load {kind}s.
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="ml-1.5 underline underline-offset-2"
+              >
+                Retry
+              </button>
+            )}
+          </span>
+        )}
+        {specificNeedsItems && !loadError && (
+          <span className="text-muted-foreground block text-xs">
+            {loadingLabel}
+          </span>
+        )}
+        {isLegacy &&
+          kind === "language" &&
+          listLoaded &&
+          availableItems.length === 0 && (
+            <span className="text-muted-foreground block text-xs">
+              {emptyLabel} Choosing "Specific {kind}s" locks in no access —
+              including {kind}s created later.
+            </span>
+          )}
       </fieldset>
 
       {Array.isArray(value) && value.length > 0 && (

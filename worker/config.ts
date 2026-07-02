@@ -1,5 +1,5 @@
 import type { Env } from "./helpers";
-import { errorResponse } from "./helpers";
+import { errorResponse, isPathShapedOrg } from "./helpers";
 import {
   contractOrgModeRights,
   expandOrgModeRights,
@@ -175,10 +175,15 @@ async function fetchResourceState(
   org: string,
   name: string
 ): Promise<ResourceState> {
+  // Takes the RAW org and encodes here (#253 review): callers used to
+  // disagree — the rename preflights passed the pre-encoded handleConfig
+  // local while gateConfigMutation passed raw resolved.org, so a
+  // slash-named org's PUT gate looked up /orgs/team/alpha/... and the
+  // engine's 404 silently rerouted the mutation to creation semantics.
   const enginePath =
     kind === "language"
-      ? `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(name)}`
-      : `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(name)}`;
+      ? `/api/v1/admin/orgs/${encodeURIComponent(org)}/languages/${encodeURIComponent(name)}`
+      : `/api/v1/admin/orgs/${encodeURIComponent(org)}/modes/${encodeURIComponent(name)}`;
   const res = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
     headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
   });
@@ -435,29 +440,55 @@ function resolveOrg(
   session: SessionData
 ): { crossOrg: boolean; org: string } | { error: Response } {
   const orgParam = new URL(request.url).searchParams.get("org");
+
+  // Slash-named orgs are addressable: org names are free-text (stored
+  // values may predate admin.ts's shape guard), and every engine-URL
+  // interpolation of the resolved org is encodeURIComponent'd (the
+  // handleConfig local for proxy paths, fetchResourceState internally
+  // for the gate's lookups), which neutralizes "/". Rejecting the shape
+  // here would re-break the dialogs' list fetches (the #247 symptom)
+  // for anyone operating on such an org.
+  let resolved: { crossOrg: boolean; org: string };
   if (orgParam === null) {
-    return { crossOrg: false, org: session.org };
+    resolved = { crossOrg: false, org: session.org };
+  } else {
+    const trimmed = orgParam.trim();
+    if (!trimmed) {
+      return { error: errorResponse("Invalid org parameter", 400) };
+    }
+    if (trimmed === session.org.trim()) {
+      // Trim BOTH sides: buildConfigUrl trims the param before sending,
+      // so a legacy whitespace-padded stored org (" team") would never
+      // equal its own trimmed echo and its admin would land in the
+      // cross-org 403 — the #247 symptom again (#253 review). Resolve
+      // to the RAW session.org so the engine path matches what the
+      // no-param branch produces for the same caller.
+      resolved = { crossOrg: false, org: session.org };
+    } else if (session.isSuperAdmin !== true) {
+      return {
+        error: errorResponse(
+          "Cross-org config access requires isSuperAdmin",
+          403
+        ),
+      };
+    } else {
+      resolved = { crossOrg: true, org: trimmed };
+    }
   }
 
-  const trimmed = orgParam.trim();
-  if (!trimmed || trimmed.includes("/")) {
-    return { error: errorResponse("Invalid org parameter", 400) };
+  // The one shape encoding can't neutralize: bare "." / ".." survive
+  // encodeURIComponent and URL parsers normalize the dot segment into
+  // traversal (/orgs/../x → /x). Validated on the RESOLVED org — the
+  // no-param session default included — because a param-only check
+  // misses an org literally named "." reaching engine paths through
+  // session.org (#253 review P2). admin.ts rejects these at user
+  // create/move, but stored values predating that guard must still be
+  // stopped here.
+  if (isPathShapedOrg(resolved.org)) {
+    return { error: errorResponse("Invalid org", 400) };
   }
 
-  if (trimmed === session.org) {
-    return { crossOrg: false, org: session.org };
-  }
-
-  if (session.isSuperAdmin !== true) {
-    return {
-      error: errorResponse(
-        "Cross-org config access requires isSuperAdmin",
-        403
-      ),
-    };
-  }
-
-  return { crossOrg: true, org: trimmed };
+  return resolved;
 }
 
 export async function handleConfig(
@@ -470,7 +501,13 @@ export async function handleConfig(
   if ("error" in resolved) {
     return resolved.error;
   }
-  const org = encodeURIComponent(resolved.org);
+  // Named so the raw-vs-encoded distinction travels with the variable:
+  // the round-3 double-encoding bug happened because a pre-encoded local
+  // called `org` was passed where raw resolved.org was expected. Helpers
+  // that take an org (fetchResourceState, preflightMode,
+  // gateConfigMutation, the rights migration) take RAW resolved.org;
+  // path templates below take this.
+  const encodedOrg = encodeURIComponent(resolved.org);
 
   // /api/config/prompt-overrides → GET (any session) / PUT/DELETE (admin)
   if (pathname === "/api/config/prompt-overrides") {
@@ -480,7 +517,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/prompt-overrides`,
+      `/api/v1/admin/orgs/${encodedOrg}/prompt-overrides`,
       ["GET", "PUT", "DELETE"]
     );
   }
@@ -571,9 +608,11 @@ export async function handleConfig(
     // newName that is THIS mode's own alias returns the same mode and
     // falls through — that's the engine's valid promote-own-alias
     // un-rename.
+    // Raw resolved.org — fetchResourceState encodes internally; passing
+    // the pre-encoded `org` local would double-encode (#253 review).
     const [source, target] = await Promise.all([
-      preflightMode(env, org, modeName),
-      preflightMode(env, org, newName),
+      preflightMode(env, resolved.org, modeName),
+      preflightMode(env, resolved.org, newName),
     ]);
     // Source-first evaluation, FULLY: the source's definitive answers
     // (missing → 404, alias-addressed → 409) take precedence over a
@@ -639,7 +678,7 @@ export async function handleConfig(
       engineRes = await proxyToEngine(
         request,
         env,
-        `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_rename`,
+        `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_rename`,
         ["POST"],
         // Forward the TRIMMED newName — the same value the migration
         // used (Frank rd-1 P2).
@@ -682,7 +721,7 @@ export async function handleConfig(
     } else if (engineRes.status >= 400 && engineRes.status < 500) {
       await contractOrgModeRights(env, migrationRecords, newName, modeName);
     } else {
-      const probe = await preflightMode(env, org, modeName);
+      const probe = await preflightMode(env, resolved.org, modeName);
       if (probe.status === "found" && probe.mode.name === newName) {
         await contractOrgModeRights(env, migrationRecords, modeName, newName);
       } else {
@@ -716,7 +755,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_clone`,
+      `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_clone`,
       ["POST"]
     );
   }
@@ -746,7 +785,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_retire`,
+      `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_retire`,
       ["POST"]
     );
   }
@@ -770,7 +809,7 @@ export async function handleConfig(
       return proxyToEngine(
         request,
         env,
-        `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}`,
+        `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}`,
         ["GET", "PUT", "DELETE"],
         gate.parsedBody
       );
@@ -778,7 +817,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}`,
+      `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}`,
       ["GET", "PUT", "DELETE"]
     );
   }
@@ -802,7 +841,7 @@ export async function handleConfig(
       return proxyToEngine(
         request,
         env,
-        `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(languageName)}`,
+        `/api/v1/admin/orgs/${encodedOrg}/languages/${encodeURIComponent(languageName)}`,
         ["GET", "PUT", "DELETE"],
         gate.parsedBody
       );
@@ -810,7 +849,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(languageName)}`,
+      `/api/v1/admin/orgs/${encodedOrg}/languages/${encodeURIComponent(languageName)}`,
       ["GET", "PUT", "DELETE"]
     );
   }
@@ -825,7 +864,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/users/${encodeURIComponent(userId)}/mode`,
+      `/api/v1/admin/orgs/${encodedOrg}/users/${encodeURIComponent(userId)}/mode`,
       ["PUT", "DELETE"]
     );
   }
@@ -840,23 +879,29 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/users/${encodeURIComponent(userId)}/memory`,
+      `/api/v1/admin/orgs/${encodedOrg}/users/${encodeURIComponent(userId)}/memory`,
       ["GET", "DELETE"]
     );
   }
 
   // /api/config/modes → GET
   if (pathname === "/api/config/modes") {
-    return proxyToEngine(request, env, `/api/v1/admin/orgs/${org}/modes`, [
-      "GET",
-    ]);
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${encodedOrg}/modes`,
+      ["GET"]
+    );
   }
 
   // /api/config/languages → GET
   if (pathname === "/api/config/languages") {
-    return proxyToEngine(request, env, `/api/v1/admin/orgs/${org}/languages`, [
-      "GET",
-    ]);
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${encodedOrg}/languages`,
+      ["GET"]
+    );
   }
 
   // /api/config/language-scaffold → GET (org-scope; worker returns
@@ -867,7 +912,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/language-scaffold`,
+      `/api/v1/admin/orgs/${encodedOrg}/language-scaffold`,
       ["GET"]
     );
   }

@@ -1,8 +1,22 @@
 import { getSessionId, invalidateUserSessions, validateSession } from "./auth";
 import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
-import { errorResponse, jsonResponse, listKvKeys } from "./helpers";
+import {
+  errorResponse,
+  isPathShapedOrg,
+  jsonResponse,
+  listKvKeys,
+} from "./helpers";
 import type { LanguageRights, StoredUser } from "./types";
+
+// Org names are free-text — slashes included: every upstream URL builder
+// encodeURIComponent's the org (config.ts, chat.ts, baruch.ts), which
+// neutralizes "/". An earlier draft rejected slashes here too, which
+// stranded existing slash-named orgs' own admins from creating users in
+// their org (#253 review P2 — the shape guard ran before the own-org
+// equality check). Only isPathShapedOrg's bare "." / ".." are rejected;
+// stored values predating this guard fail closed at validateSession.
+const ORG_SHAPE_ERROR = 'org cannot be "." or ".."';
 
 // Accepts `"*"` or an array of non-empty trimmed strings. Returns `undefined`
 // when the input is unset so the caller can treat that as "leave existing
@@ -218,13 +232,25 @@ async function createUser(
     return errorResponse("Invalid JSON", 400);
   }
 
-  const email = body.email?.trim().toLowerCase();
-  const password = body.password;
-  const name = body.name?.trim();
-  const org = body.org?.trim();
+  // typeof guards, not just `?.`: a non-string field (client bug,
+  // curl typo like org: 123) would reach .trim() and throw an uncaught
+  // TypeError — an opaque 500 instead of the 400 every other malformed
+  // field gets, and it would bypass the shape checks below entirely
+  // (#253 review).
+  const email =
+    typeof body.email === "string"
+      ? body.email.trim().toLowerCase()
+      : undefined;
+  const password =
+    typeof body.password === "string" ? body.password : undefined;
+  const name = typeof body.name === "string" ? body.name.trim() : undefined;
+  const org = typeof body.org === "string" ? body.org.trim() : undefined;
 
   if (!email || !password || !name || !org) {
     return errorResponse("email, password, name, and org are required", 400);
+  }
+  if (isPathShapedOrg(org)) {
+    return errorResponse(ORG_SHAPE_ERROR, 400);
   }
 
   // Org-scoped admins can only create users in their own org.
@@ -357,6 +383,15 @@ async function updateUser(
     return errorResponse("Invalid JSON", 400);
   }
 
+  // Same typeof rationale as createUser: reject non-string name/org
+  // before any .trim() below can throw into an opaque 500 (#253 review).
+  if (body.name !== undefined && typeof body.name !== "string") {
+    return errorResponse("name must be a string", 400);
+  }
+  if (body.org !== undefined && typeof body.org !== "string") {
+    return errorResponse("org must be a string", 400);
+  }
+
   // Only cross-org scopes may grant or revoke isSuperAdmin. Reject loud
   // (don't drop silently) so UI bugs surface and so an org admin trying to
   // self-escalate or strip another's super gets a clear failure.
@@ -408,6 +443,9 @@ async function updateUser(
     const trimmed = body.org.trim();
     if (!trimmed) {
       return errorResponse("org cannot be empty", 400);
+    }
+    if (isPathShapedOrg(trimmed)) {
+      return errorResponse(ORG_SHAPE_ERROR, 400);
     }
     user.org = trimmed;
   }

@@ -1,20 +1,82 @@
 import type { Env } from "./helpers";
-import { errorResponse, jsonResponse } from "./helpers";
-import type { SessionData } from "./types";
+import { errorResponse, jsonResponse, listKvKeys } from "./helpers";
+import type { SessionData, StoredUser } from "./types";
 
 const CLIENT_ID = "admin-portal";
 
-// Only accept user_id overrides that are valid UUID v4 (from crypto.randomUUID).
-// This prevents IDOR — real user IDs from the auth system are not UUIDs.
 const UUID_V4_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function resolveUserId(
+// The user_id override exists for the test-chat panel: the portal mints a
+// synthetic UUID per session (ui-store testChatUserId) so test
+// conversations don't touch the caller's own history. Synthetic and real
+// IDs are indistinguishable by shape — portal user IDs are ALSO
+// crypto.randomUUID() (worker/admin.ts) — so shape alone was an IDOR:
+// any authenticated user could read or delete a colleague's history/
+// memory by passing their user ID, and under the trusted-portal model
+// (single shared engine key) this worker is the only enforcement point
+// (#253 review). An override is therefore rejected when it matches any
+// OTHER portal user's stored id; synthetic test IDs match nobody and
+// pass. Residual: engine-side IDs the portal doesn't store (e.g.
+// messaging end-users) can't be checked here.
+//
+// Deliberately NO caching of scan verdicts: KV list/get are eventually
+// consistent, so a no-match verdict raced against user creation can be
+// stale — memoizing it would convert that transient window into a
+// durable per-isolate bypass for the new user's id (#253 review round
+// 8; an earlier draft did exactly that). The per-request scan cost is
+// the accepted price until the session-carried allow-list follow-up.
+async function resolveUserId(
+  env: Env,
   override: string | null | undefined,
   session: SessionData
-): string {
-  if (override && UUID_V4_RE.test(override)) return override;
-  return session.userId;
+): Promise<{ userId: string } | { error: Response }> {
+  if (!override || !UUID_V4_RE.test(override)) {
+    return { userId: session.userId };
+  }
+  // Compare lowercased: UUID_V4_RE accepts uppercase hex, and stored ids
+  // (crypto.randomUUID) are lowercase — a case-sensitive compare would
+  // let an uppercased copy of a victim's id slip past both checks and
+  // reach the engine (#253 review round 6). Comparisons only: the
+  // FORWARDED id stays verbatim, because a non-matching override may be
+  // an engine-side id the portal doesn't store, and case-folding one of
+  // those would silently retarget the request (round 7).
+  const normalized = override.toLowerCase();
+  if (normalized === session.userId.toLowerCase()) {
+    return { userId: session.userId };
+  }
+  // Fail CLOSED on a KV blip: this is a security guard, and failing open
+  // would let an induced storage error bypass it. The 503 is retryable
+  // and scoped to overridden requests (test-chat panel); non-overridden
+  // traffic never enters this branch.
+  try {
+    const keys = await listKvKeys(env.AUTH_KV, "user:");
+    // Parallel like admin.ts listUsers — a serial loop would put N
+    // round-trips on the chat hot path.
+    const users = await Promise.all(
+      keys.map((key) => env.AUTH_KV.get<StoredUser>(key, { type: "json" }))
+    );
+    if (
+      users.some(
+        // typeof guard: a malformed record whose id is absent must scan
+        // past, not throw into the catch below — one corrupt KV entry
+        // would otherwise turn every overridden request into a
+        // permanent 'retryable' 503 (round 7).
+        (user) =>
+          typeof user?.id === "string" && user.id.toLowerCase() === normalized
+      )
+    ) {
+      return {
+        error: errorResponse("user_id may not target another user", 403),
+      };
+    }
+  } catch (error) {
+    console.error("user_id verification scan failed:", error);
+    return {
+      error: errorResponse("Could not verify user_id; try again", 503),
+    };
+  }
+  return { userId: override };
 }
 
 export async function handleStream(
@@ -37,11 +99,14 @@ export async function handleStream(
     return errorResponse("Missing 'message' field", 400);
   }
 
+  const resolvedUser = await resolveUserId(env, body.user_id, session);
+  if ("error" in resolvedUser) return resolvedUser.error;
+
   const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/chat/stream`;
   const engineBody = {
     message: body.message,
     message_type: body.message_type || "text",
-    user_id: resolveUserId(body.user_id, session),
+    user_id: resolvedUser.userId,
     org: session.org,
     client_id: CLIENT_ID,
   };
@@ -91,9 +156,15 @@ export async function handleHistory(
     Math.max(parseInt(url.searchParams.get("offset") || "0", 10) || 0, 0)
   );
 
-  const userId = resolveUserId(url.searchParams.get("user_id"), session);
+  const resolvedUser = await resolveUserId(
+    env,
+    url.searchParams.get("user_id"),
+    session
+  );
+  if ("error" in resolvedUser) return resolvedUser.error;
+  const userId = resolvedUser.userId;
   const params = new URLSearchParams({ limit, offset });
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${session.org}/users/${userId}/history?${params.toString()}`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${encodeURIComponent(session.org)}/users/${userId}/history?${params.toString()}`;
 
   const engineRes = await fetch(engineUrl, {
     headers: {
@@ -131,8 +202,14 @@ export async function handleDeleteHistory(
   }
 
   const url = new URL(request.url);
-  const userId = resolveUserId(url.searchParams.get("user_id"), session);
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${session.org}/users/${userId}/history`;
+  const resolvedUser = await resolveUserId(
+    env,
+    url.searchParams.get("user_id"),
+    session
+  );
+  if ("error" in resolvedUser) return resolvedUser.error;
+  const userId = resolvedUser.userId;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(session.org)}/users/${userId}/history`;
 
   const engineRes = await fetch(engineUrl, {
     method: "DELETE",
@@ -162,8 +239,14 @@ export async function handleDeleteMemory(
   }
 
   const url = new URL(request.url);
-  const userId = resolveUserId(url.searchParams.get("user_id"), session);
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${session.org}/users/${userId}/memory`;
+  const resolvedUser = await resolveUserId(
+    env,
+    url.searchParams.get("user_id"),
+    session
+  );
+  if ("error" in resolvedUser) return resolvedUser.error;
+  const userId = resolvedUser.userId;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(session.org)}/users/${userId}/memory`;
 
   const engineRes = await fetch(engineUrl, {
     method: "DELETE",

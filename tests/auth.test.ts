@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { handleMe } from "../worker/auth";
+import { handleLogin, handleMe } from "../worker/auth";
 import { generateSalt, hashPassword } from "../worker/crypto";
 import type { LanguageRights, SessionData, StoredUser } from "../worker/types";
 
@@ -232,4 +232,64 @@ describe("validateSession lazy-mapping (#181) — via handleMe", () => {
     expect(me.mode_edit_rights).toEqual(["bible-study", "trainer"]);
     expect(me.mode_publish_rights).toBe("*");
   });
+});
+
+// ---------------------------------------------------------------------------
+// Dot-segment org names fail closed at session validation (#253 review P1)
+// ---------------------------------------------------------------------------
+//
+// admin.ts rejects "." / ".." at user create/move, but a stored value
+// predating that guard hydrates into session.org and reaches upstream
+// URL builders where dots survive encodeURIComponent and /orgs/../x
+// normalizes past the org scope. validateSession is the single choke
+// point every authenticated request crosses.
+
+describe("validateSession — dot-segment org fails closed (#253)", () => {
+  it.each([".", ".."])(
+    "user stored with org %j → session invalid (401 from /api/me)",
+    async (dotOrg) => {
+      const user = await seedUser({
+        email: "dot@acme.com",
+        name: "Dot",
+        org: dotOrg,
+      });
+      const session = await seedLegacySession(user);
+
+      const res = await handleMe(
+        new Request("https://portal.example.test/api/me", {
+          method: "GET",
+          headers: { Cookie: `session=${session}` },
+        }),
+        env
+      );
+      expect(res.status).toBe(401);
+    }
+  );
+});
+
+describe("handleLogin — dot-segment org fails closed (#253)", () => {
+  it.each([".", ".."])(
+    "correct credentials against org %j → 403 with a real message, no session minted",
+    async (dotOrg) => {
+      // Without the login-side mirror of validateSession's guard, login
+      // 200s and every later request 401s — an unexplained loop that
+      // also orphans a session record per attempt.
+      await seedUser({ email: "dot@acme.com", name: "Dot", org: dotOrg });
+
+      const res = await handleLogin(
+        new Request("https://portal.example.test/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: "dot@acme.com",
+            password: "test-password",
+          }),
+        }),
+        env
+      );
+      expect(res.status).toBe(403);
+      const sessions = await env.AUTH_KV.list({ prefix: "session:" });
+      expect(sessions.keys).toHaveLength(0);
+    }
+  );
 });

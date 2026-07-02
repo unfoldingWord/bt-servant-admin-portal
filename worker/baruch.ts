@@ -108,7 +108,7 @@ export async function handleBaruchHistory(
   );
 
   const params = new URLSearchParams({ limit, offset });
-  const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/orgs/${session.org}/users/${session.userId}/history?${params.toString()}`;
+  const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/orgs/${encodeURIComponent(session.org)}/users/${session.userId}/history?${params.toString()}`;
 
   const baruchRes = await baruchFetch(env, baruchUrl, {
     headers: {
@@ -199,7 +199,7 @@ export async function handleBaruchDeleteHistory(
     return errorResponse("Method not allowed", 405);
   }
 
-  const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/orgs/${session.org}/users/${session.userId}/history`;
+  const baruchUrl = `${env.BARUCH_BASE_URL}/api/v1/orgs/${encodeURIComponent(session.org)}/users/${session.userId}/history`;
 
   const baruchRes = await baruchFetch(env, baruchUrl, {
     method: "DELETE",

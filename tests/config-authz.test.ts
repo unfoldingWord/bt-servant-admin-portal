@@ -2082,9 +2082,9 @@ describe("config authz — #181 verb diff (pure function)", () => {
 // Super admins need to edit modes/languages/prompt-overrides in orgs they
 // don't sit in (Tim's 2026-05-21 Zoom — Elsy as super-admin couldn't see
 // Word Collective from her uW session). Closing the gap with an explicit
-// `?org=<slug>` query param: super-admin only, loud 403 for non-super,
-// 400 on empty/path-traversal shapes. No behavior change when the param
-// is absent — that's the everyday org-admin path.
+// `?org=<slug>` query param: cross-org is super-admin only (loud 403
+// for non-super), 400 on empty/dot-segment shapes. No behavior change
+// when the param is absent — that's the everyday org-admin path.
 
 function makeRequestWithQuery(
   method: string,
@@ -2150,17 +2150,41 @@ describe("config authz — cross-org via ?org= (#166)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("?org=foo/bar (path-traversal shape) → 400 even for super-admin", async () => {
+  it("?org=foo/bar (slash-named org) → proxies with the slash encoded (#253 review P2)", async () => {
+    // Slash-named orgs are creatable (admin.ts only trims), so they must
+    // be addressable; path safety comes from handleConfig's
+    // encodeURIComponent, not from rejecting the shape.
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeRequestWithQuery("GET", "/api/config/modes", "org=foo%2Fbar"),
       env,
-      makeSession({ isSuperAdmin: true }),
+      makeSession({ org: "acme", isSuperAdmin: true }),
       "/api/config/modes"
     );
-    expect(res.status).toBe(400);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/foo%2Fbar/modes"
+    );
   });
+
+  it.each([".", ".."])(
+    "?org=%j → 400 even for super-admin (dot segments survive encoding)",
+    async (dots) => {
+      // encodeURIComponent leaves dots alone and the URL parser
+      // normalizes /orgs/../x into a traversal — bare dot orgs stay
+      // rejected.
+      const fetchSpy = spyFetch();
+      const res = await handleConfig(
+        makeRequestWithQuery("GET", "/api/config/modes", `org=${dots}`),
+        env,
+        makeSession({ org: "acme", isSuperAdmin: true }),
+        "/api/config/modes"
+      );
+      expect(res.status).toBe(400);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }
+  );
 
   it("no ?org= + super-admin → uses session.org (regression: same-org path unchanged)", async () => {
     const fetchSpy = spyFetch();
@@ -2439,6 +2463,89 @@ describe("config authz — cross-org via ?org= (#166)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Path-shaped orgs (#253 review)
+// ---------------------------------------------------------------------------
+//
+// Slash-named orgs must ride every engine-path builder ENCODED — the
+// verb-perms gate's current-state lookup included (a raw interpolation
+// reads /orgs/team/alpha/..., the engine 404s, and the gate collapses a
+// legitimate publish flip into creation semantics → 403). Dot-segment
+// orgs can't be neutralized by encoding at all and are rejected on the
+// RESOLVED org, session-default path included.
+
+describe("config authz — path-shaped orgs (#253 review)", () => {
+  it("publish-only shepherd PUT flip in a slash-named org → 200; gate lookup and proxy both hit the ENCODED org path", async () => {
+    const fetchSpy = spyFetchWithCurrent("language", {
+      document: "# same\n",
+      published: false,
+    });
+    const res = await handleConfig(
+      new Request(
+        `https://portal.example.test/api/config/languages/spanish?org=${encodeURIComponent("team/alpha")}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ document: "# same\n", published: true }),
+        }
+      ),
+      env,
+      makeSession({
+        org: "team/alpha",
+        language_edit_rights: [],
+        language_publish_rights: ["spanish"],
+      }),
+      "/api/config/languages/spanish"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/team%2Falpha/languages/spanish"
+    );
+    expect(String(fetchSpy.mock.calls[1]![0])).toContain(
+      "/api/v1/admin/orgs/team%2Falpha/languages/spanish"
+    );
+  });
+
+  it.each([".", ".."])(
+    "session.org %j with NO ?org= → 400 (validated on the resolved org, not just the param)",
+    async (dots) => {
+      // A param-only check misses an org literally named "." reaching
+      // engine paths through the no-param session default: dots survive
+      // encodeURIComponent and /orgs/../x URL-normalizes into traversal.
+      const fetchSpy = spyFetch();
+      const res = await handleConfig(
+        makeRequest("GET", "/api/config/modes"),
+        env,
+        makeSession({ org: dots, isAdmin: true }),
+        "/api/config/modes"
+      );
+      expect(res.status).toBe(400);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }
+  );
+
+  it("?org=<trimmed echo of whitespace-padded session org> → same-org (both sides trimmed)", async () => {
+    // buildConfigUrl trims the param, so a legacy stored org " team"
+    // echoes back as "team" — comparing against the untrimmed session
+    // value would 403 its own admin (the #247 symptom again). Resolves
+    // to the RAW session.org so the engine path matches the no-param
+    // branch.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery("GET", "/api/config/languages", "org=team"),
+      env,
+      makeSession({ org: " team", isAdmin: true, isSuperAdmin: false }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      `/api/v1/admin/orgs/${encodeURIComponent(" team")}/languages`
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Same-org ?org= for every caller (#247)
 // ---------------------------------------------------------------------------
 //
@@ -2569,6 +2676,69 @@ describe("config authz — same-org ?org= (#247)", () => {
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeRequestWithQuery("GET", "/api/config/languages", "org=OTHER"),
+      env,
+      makeSession({ org: "acme", isAdmin: true, isSuperAdmin: false }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("org admin of a slash-named org with ?org=<own org> → proxies (same-org check runs before slash reject)", async () => {
+    // Org names are free-text and worker/admin.ts only trims — a
+    // slash-named org is creatable, and its admins' dialog fetches echo
+    // it back as ?org=. Rejecting it would resurrect the exact #247
+    // dead-selector symptom (as a 400) for that org. The same-org
+    // branch resolves to session.org, which handleConfig
+    // encodeURIComponent's, so no path shape reaches the upstream URL.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery(
+        "GET",
+        "/api/config/languages",
+        `org=${encodeURIComponent("team/alpha")}`
+      ),
+      env,
+      makeSession({ org: "team/alpha", isAdmin: true, isSuperAdmin: false }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/team%2Falpha/languages"
+    );
+  });
+
+  it("super-admin CROSS-org ?org=<slash-named other org> → proxies encoded (#253 review P2)", async () => {
+    // A super-admin provisioning users in a slash-named org they don't
+    // sit in needs the dialogs' list fetches to resolve, same as the
+    // org's own admins.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery(
+        "GET",
+        "/api/config/languages",
+        `org=${encodeURIComponent("team/alpha")}`
+      ),
+      env,
+      makeSession({ org: "acme", isSuperAdmin: true }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/team%2Falpha/languages"
+    );
+  });
+
+  it("non-super with ?org=<slash-named OTHER org> → still 403 (cross-org gate unchanged)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery(
+        "GET",
+        "/api/config/languages",
+        `org=${encodeURIComponent("team/alpha")}`
+      ),
       env,
       makeSession({ org: "acme", isAdmin: true, isSuperAdmin: false }),
       "/api/config/languages"

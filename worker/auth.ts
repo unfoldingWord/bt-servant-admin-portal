@@ -1,6 +1,11 @@
 import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
-import { errorResponse, jsonResponse, listKvKeys } from "./helpers";
+import {
+  errorResponse,
+  jsonResponse,
+  listKvKeys,
+  isPathShapedOrg,
+} from "./helpers";
 import type { LanguageRights, SessionData, StoredUser } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -118,6 +123,18 @@ export async function validateSession(
     return null;
   }
 
+  // Fail closed on traversal-capable org names (#253 review P1).
+  // admin.ts rejects "." / ".." at user create/move, but a stored value
+  // predating that guard hydrates into session.org and reaches upstream
+  // URL builders (chat.ts, baruch.ts, config.ts) where bare dots
+  // survive encodeURIComponent and /orgs/../x normalizes past the org
+  // scope. No legitimate org is named "." or ".." — locking the
+  // account out (recoverable via an admin org-move) beats letting its
+  // every request escape its org prefix.
+  if (isPathShapedOrg(user.org)) {
+    return null;
+  }
+
   // Lazy-migrate the legacy single-bit `language_rights` into the two
   // verb-perms fields when the stored record predates #181. Partner-
   // aware: if either verb-perm is explicit, the unset partner falls
@@ -204,6 +221,19 @@ export async function handleLogin(
   const hash = await hashPassword(password, user.salt);
   if (!timingSafeEqual(hash, user.passwordHash)) {
     return errorResponse("Invalid email or password", 401);
+  }
+
+  // Mirror of validateSession's dot-org fail-closed check (#253 review):
+  // without it, correct credentials against a "."/"..'-org record mint a
+  // session that every subsequent request rejects — an unexplained
+  // login-then-logged-out loop plus an orphaned KV session per attempt.
+  // Reject at login with a real message instead. Runs AFTER the password
+  // check so it can't be used to probe which emails exist.
+  if (isPathShapedOrg(user.org)) {
+    return errorResponse(
+      "This account's organization is invalid; ask an admin to move it to a valid org",
+      403
+    );
   }
 
   const sessionId = crypto.randomUUID();
