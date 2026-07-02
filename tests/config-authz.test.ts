@@ -2437,3 +2437,162 @@ describe("config authz — cross-org via ?org= (#166)", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Same-org ?org= for every caller (#247)
+// ---------------------------------------------------------------------------
+//
+// The user dialogs scope their language/mode list fetches to the target
+// user's org, which for org admins is always their own org — so the param
+// arrives on every request from those surfaces. Rejecting it with the
+// #166 super-admin gate broke the rights selectors (and the #248
+// empty-drafts CTA) for every non-super-admin: the fetch 403'd, the query
+// errored, and the selector sat on "Loading…" forever (Elsy's staging
+// re-test). `?org=<own org>` must resolve exactly like an absent param.
+
+describe("config authz — same-org ?org= (#247)", () => {
+  it("org admin GET languages with ?org=<own org> → proxies (no 403)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery("GET", "/api/config/languages", "org=acme"),
+      env,
+      makeSession({ org: "acme", isAdmin: true, isSuperAdmin: false }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/acme/languages"
+    );
+  });
+
+  it("plain user GET modes with ?org=<own org> → proxies (read is open)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery("GET", "/api/config/modes", "org=acme"),
+      env,
+      makeSession({ org: "acme", isAdmin: false, isSuperAdmin: false }),
+      "/api/config/modes"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/acme/modes"
+    );
+  });
+
+  it("?org= with spaces matches exactly against session.org (real-world org shape)", async () => {
+    // Org values are free-text at creation ("Test Organization one") and
+    // the portal only ever sends values read back from stored records, so
+    // the same-org path always compares byte-identical strings — spaces
+    // and casing included.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery(
+        "GET",
+        "/api/config/languages",
+        `org=${encodeURIComponent("Test Organization one")}`
+      ),
+      env,
+      makeSession({
+        org: "Test Organization one",
+        isAdmin: true,
+        isSuperAdmin: false,
+      }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      `/api/v1/admin/orgs/${encodeURIComponent("Test Organization one")}/languages`
+    );
+  });
+
+  it("non-super ?org=<case-variant of own org> → 403 (case-variants are NOT same-org)", async () => {
+    // KV keys are case-sensitive, so "ACME" is a distinct org from
+    // "acme" — matching it as same-org would silently retarget the
+    // request to the caller's home KV entry. Org identity stays an
+    // exact compare everywhere in the worker (admin.ts does the same);
+    // a case-variant from a non-super caller is a loud 403, like any
+    // other org.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery("GET", "/api/config/languages", "org=ACME"),
+      env,
+      makeSession({ org: "acme", isAdmin: true, isSuperAdmin: false }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("org admin PUT modes/{name} with ?org=<own org> → same-org authz applies (admin passes)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery("PUT", "/api/config/modes/spoken", "org=acme", {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: "## Identity\n" }),
+      }),
+      env,
+      makeSession({ org: "acme", isAdmin: true, isSuperAdmin: false }),
+      "/api/config/modes/spoken"
+    );
+    expect(res.status).toBe(200);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/acme/modes/spoken"
+    );
+  });
+
+  it("non-super with ?org=<own org> + restricted language_rights → 403 (same-org gate not bypassed)", async () => {
+    // The param must not grant anything the bare same-org path wouldn't:
+    // crossOrg stays false, so per-row language_rights are enforced.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery("PUT", "/api/config/languages/english", "org=acme", {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: "# English\n" }),
+      }),
+      env,
+      makeSession({
+        org: "acme",
+        isAdmin: false,
+        isSuperAdmin: false,
+        language_rights: ["spanish"],
+      }),
+      "/api/config/languages/english"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("non-super with ?org=<different case of OTHER org> → still 403", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery("GET", "/api/config/languages", "org=OTHER"),
+      env,
+      makeSession({ org: "acme", isAdmin: true, isSuperAdmin: false }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("super-admin ?org=<case-variant of own org> → cross-org to the case-variant org (distinct KV entry stays addressable)", async () => {
+    // "ACME" and "acme" are distinct KV entries. A super-admin naming
+    // the case-variant must reach THAT org — resolving it as same-org
+    // would silently read/write the home org's config while the caller
+    // believes they're operating on the other one. This mirrors the
+    // pre-#247 exact-compare behavior.
+    const fetchSpy = spyFetch();
+    await handleConfig(
+      makeRequestWithQuery("GET", "/api/config/languages", "org=ACME"),
+      env,
+      makeSession({ org: "acme", isSuperAdmin: true }),
+      "/api/config/languages"
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/ACME/languages"
+    );
+  });
+});
