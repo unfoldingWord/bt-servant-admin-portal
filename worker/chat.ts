@@ -17,10 +17,18 @@ const UUID_V4_RE =
 // (single shared engine key) this worker is the only enforcement point
 // (#253 review). An override is therefore rejected when it matches any
 // OTHER portal user's stored id; synthetic test IDs match nobody and
-// pass. The per-request scan over user records mirrors what
-// /api/admin/users already does per list call — org user counts are
-// small. Residual: engine-side IDs the portal doesn't store (e.g.
+// pass. Residual: engine-side IDs the portal doesn't store (e.g.
 // messaging end-users) can't be checked here.
+//
+// Per-isolate memo of ids already verified as matching no stored user,
+// so the test-chat panel doesn't pay a full user scan per message.
+// Sound because stored ids are minted server-side (crypto.randomUUID at
+// create) — an id that matched nobody can't become a stored user's id
+// later. Cleared wholesale at a size cap; it's an optimization, not
+// state anything depends on.
+const verifiedSyntheticIds = new Set<string>();
+const VERIFIED_SYNTHETIC_IDS_CAP = 256;
+
 async function resolveUserId(
   env: Env,
   override: string | null | undefined,
@@ -32,11 +40,16 @@ async function resolveUserId(
   // Compare lowercased: UUID_V4_RE accepts uppercase hex, and stored ids
   // (crypto.randomUUID) are lowercase — a case-sensitive compare would
   // let an uppercased copy of a victim's id slip past both checks and
-  // reach the engine (#253 review round 6). The resolved id keeps the
-  // canonical lowercase form for the same reason.
+  // reach the engine (#253 review round 6). Comparisons only: the
+  // FORWARDED id stays verbatim, because a non-matching override may be
+  // an engine-side id the portal doesn't store, and case-folding one of
+  // those would silently retarget the request (round 7).
   const normalized = override.toLowerCase();
   if (normalized === session.userId.toLowerCase()) {
     return { userId: session.userId };
+  }
+  if (verifiedSyntheticIds.has(normalized)) {
+    return { userId: override };
   }
   // Fail CLOSED on a KV blip: this is a security guard, and failing open
   // would let an induced storage error bypass it. The 503 is retryable
@@ -44,23 +57,36 @@ async function resolveUserId(
   // traffic never enters this branch.
   try {
     const keys = await listKvKeys(env.AUTH_KV, "user:");
-    // Parallel like admin.ts listUsers — the common case (synthetic
-    // test-chat id) matches nobody, so a serial loop would put N
+    // Parallel like admin.ts listUsers — a serial loop would put N
     // round-trips on the chat hot path.
     const users = await Promise.all(
       keys.map((key) => env.AUTH_KV.get<StoredUser>(key, { type: "json" }))
     );
-    if (users.some((user) => user?.id.toLowerCase() === normalized)) {
+    if (
+      users.some(
+        // typeof guard: a malformed record whose id is absent must scan
+        // past, not throw into the catch below — one corrupt KV entry
+        // would otherwise turn every overridden request into a
+        // permanent 'retryable' 503 (round 7).
+        (user) =>
+          typeof user?.id === "string" && user.id.toLowerCase() === normalized
+      )
+    ) {
       return {
         error: errorResponse("user_id may not target another user", 403),
       };
     }
-  } catch {
+  } catch (error) {
+    console.error("user_id verification scan failed:", error);
     return {
       error: errorResponse("Could not verify user_id; try again", 503),
     };
   }
-  return { userId: normalized };
+  if (verifiedSyntheticIds.size >= VERIFIED_SYNTHETIC_IDS_CAP) {
+    verifiedSyntheticIds.clear();
+  }
+  verifiedSyntheticIds.add(normalized);
+  return { userId: override };
 }
 
 export async function handleStream(

@@ -155,6 +155,44 @@ describe("chat user_id override — real-user IDOR guard (#253)", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("KV error during the scan → 503 fail-closed, engine untouched, error logged", async () => {
+    // The guard must not fail OPEN: an induced storage error would
+    // otherwise bypass the IDOR check entirely. Fresh UUID so the
+    // per-isolate synthetic-id memo can't short-circuit past the scan.
+    const fetchSpy = spyFetch();
+    vi.spyOn(env.AUTH_KV, "list").mockRejectedValue(new Error("kv blip"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await handleDeleteHistory(
+      new Request(
+        `https://portal.example.test/api/chat/history?user_id=${crypto.randomUUID()}`,
+        { method: "DELETE" }
+      ),
+      env,
+      makeSession()
+    );
+    expect(res.status).toBe(503);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("non-matching UPPERCASE override forwards VERBATIM (engine-side ids may be case-sensitive)", async () => {
+    await seedStoredUser("someone@acme.com");
+    const syntheticUpper = crypto.randomUUID().toUpperCase();
+    const fetchSpy = spyFetch();
+    const res = await handleHistory(
+      new Request(
+        `https://portal.example.test/api/chat/history?user_id=${syntheticUpper}`,
+        { method: "GET" }
+      ),
+      env,
+      makeSession()
+    );
+    expect(res.status).toBe(200);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      `/users/${syntheticUpper}/`
+    );
+  });
+
   it("no override → session.userId (unchanged default path)", async () => {
     const session = makeSession();
     const fetchSpy = spyFetch();
