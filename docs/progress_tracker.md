@@ -4,10 +4,10 @@
 
 ## Current Status
 
-**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **#240 shepherd rights-migration shipped 2026-07-02** (PR #250 = `7e17ff3`) — mode rename now migrates per-user `mode_*_rights` old→new slug and is open to edit-rights shepherds; converged over 6 review rounds (2→15→12→5→3→1). **#232 now closeable** pending Ian's staging verify. **#247 REOPENED by Elsy 2026-07-02** — the empty-drafts CTA fix (#248, shipped this morning) doesn't render in her staging test (org "Test Organization one"): the CTA's `languagesQuery.isSuccess` gate suppresses it when the fetch errors for that org — exactly the rd-5 F2 residual deferred at merge. **Priority/Critical, #1 for next session.** #249 (language visibility design) filed 2026-07-02, awaiting Elsy + Ian. Clone/retire un-gating are now small follow-ups (migration primitives ready).
+**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **#247 reopen root-caused and FIXED 2026-07-02 evening** (PRs #252 `5cbeb5b` + #253 `b0334682`, staging **v1.10.3**) — the real bug was the BFF 403ing same-org `?org=` for every non-super-admin (Elsy's "no language available" was the query-error render); the fix arc also closed a pre-existing **chat `user_id` IDOR** and settled org-shape handling (slash orgs legitimate + encoded everywhere; `.`/`..` rejected at every choke point). **Issue #247 stays open awaiting Elsy's v1.10.3 re-test.** #240 shepherd rights-migration shipped earlier same day (PR #250 = `7e17ff3`); **#232 now closeable** pending Ian's staging verify. #249 (language visibility design) awaiting Elsy + Ian. Clone/retire un-gating are small follow-ups (migration primitives ready).
 **Last Updated**: 2026-07-02
 **Demo target**: June 9 (passed) — outcome to be summarized
-**Last prod deploy**: 2026-06-24 (HEAD `3bebe24` / v1.9.0). Staging is **12 commits ahead** at `7e17ff3` (adds #248 empty-drafts CTA + #246/EOD doc + #240 rights-migration on top of the prior 8)
+**Last prod deploy**: 2026-06-24 (HEAD `3bebe24` / v1.9.0). Staging is **14 commits ahead** at `b033468` / **v1.10.3** (adds #252 + #253 — the #247 fix arc + IDOR fix — on top of the prior 12)
 
 ## Milestones
 
@@ -97,7 +97,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ## Session Log
 
-### 2026-07-02 — #248 empty-drafts CTA merged; #240 shepherd rights-migration shipped (6-round convergence); #247 reopened
+### 2026-07-02 — #248 CTA + #240 rights-migration shipped; #247 reopened, root-caused (BFF same-org ?org= 403) and fixed (PRs #252 + #253, v1.10.3); chat user_id IDOR closed
 
 **Context entering the session:** #248 (the #247 first-language-draft deadlock fix) had merged this morning after 5 review rounds; #246 (2026-07-01 EOD doc) was open; #240 (shepherd rights-migration) was the next unblocked dev item.
 
@@ -119,6 +119,22 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 - Frank's rd-1 review on #250 (2 findings — encoded org fed to migration, untrimmed newName forwarded) caught and fixed in `dc961b1` before the workflow rounds.
 - Post-merge: CI green on main for both #248 and #250; Deploy Staging green for both.
+
+**Evening session (same day):**
+
+- **#247 root-caused and fixed end-to-end** — the reopen was NOT the CTA logic: the user dialogs send `?org=<target user's org>` on every rights-list fetch (#181 F8), and the BFF's `resolveOrg` 403'd ANY non-super-admin sending `?org=`, even for their own org. Every plain org admin had broken language/mode selectors (stuck "Loading…" — Elsy's screenshot was the tell: that's the query-ERROR render, not success-empty), and the CTA's `isSuccess` gate then hid the failure. Also answered the question pending with Ian by reading bt-servant-worker source directly: `GET /languages` on a never-seen org returns **200 `{languages: []}`** (KV miss coalesces) — no worker-side change needed.
+- **PR #252 merged** (`5cbeb5b`, **v1.10.2**) — same-org `?org=` resolves like an absent param for every caller (exact post-trim match; a first-cut case-insensitive compare was reverted in review — it created three defects, deleted the mechanism instead); `RightsSelector` gained `loadError`/`onRetry` so a dead query shows a visible error + working Retry instead of loading forever; legacy-seed guard so a click can't silently collapse legacy full access while the list is unavailable.
+- **PR #253 merged** (`b033468`, **v1.10.3**) — the follow-up that converged over **8 workflow-review rounds + Seth's parallel review passes**, expanding well beyond the original scope as each round's adversarial pass found adjacent real bugs:
+  - **Org-shape handling settled end-to-end**: slash-named orgs are legitimate everywhere (every upstream URL builder now encodes the org — config gate lookups, chat.ts ×3, baruch.ts ×2; `fetchResourceState` encodes internally with all callers passing raw); bare `.`/`..` are the ONLY rejected shapes (create/move guard in admin.ts via shared `isPathShapedOrg` in helpers.ts, fail-closed at `validateSession` AND `handleLogin`, validated on the RESOLVED org in `resolveOrg` including the no-param session default). `encodedOrg` rename kills the raw-vs-encoded naming trap that caused a mid-PR double-encoding bug.
+  - **Chat `user_id` IDOR closed** (pre-existing, found by the round-6 gate review): portal user ids ARE `crypto.randomUUID()`, so the old "real user ids are not UUIDs" rationale was false — any authenticated user could read/DELETE a same-org colleague's chat history/memory via the test-chat override. `resolveUserId` now rejects overrides matching any OTHER stored user's id (case-insensitive compare, verbatim forward, fail-CLOSED 503 on KV errors with logging). A synthetic-id memo added for perf was **deleted same-day** when the round-8 review showed KV eventual consistency makes no-match verdicts uncacheable (a memoized stale verdict = durable bypass).
+  - Also: `updateUser`/`createUser` typeof-string guards (non-string org/name → 400 not TypeError-500), trim-both-sides same-org compare (whitespace-padded legacy orgs), rights-selector empty-list synthesis (loaded-empty stays clickable — the only revocation path for legacy grants in a zero-language org — with explicit consequence copy; unavailable stays disabled).
+  - Test suite **483 → 512** across the two PRs (new `tests/chat-user-override.test.ts` suite; org-shape matrices via `it.each`).
+- **#247 comment updated** — Elsy re-tests against staging **v1.10.3**; issue stays open pending her verify. The scoped-user visibility half remains #249.
+- **Declined-with-rationale ledger** (in PR #253 commits): `?org=<own-org>/` typo → 403 not 400 (slash orgs are legitimate targets); session-carried test-chat allow-list redesign (would also close the engine-side-id residual — best follow-up candidate); per-verb duplicate error lines (cosmetic); shared user-scan helper (three scans differ structurally); cross-org addressing of whitespace-padded legacy orgs (durable fix = org-move normalization).
+
+**Convergence note:** rounds tracked LOCATION of findings — round 5 core `resolveOrg`, rounds 6–8 strictly the newest-added lines (the IDOR guard function), round 8's single finding resolved by deleting the mechanism it critiqued. That trend (findings chasing the newest edit, never the settled design) is what justified merging without a round-9 sweep.
+
+### 2026-07-01 — #241 umbrella shipped end-to-end (PRs A + B + C); PR B rebounded once + belt-and-suspenders fix
 
 **Context entering the session:** Yesterday's `/sod` (2026-06-29) picked up after a 3-day gap since the 2026-06-26 EOD. That morning I filed the two #232 follow-up issues (#240 rights-migration + #241 umbrella for Ian's deferred §2/§3/§4 capabilities) and shipped **#241 PR A** (aliases type + badges + export round-trip) as PR #242 = `776c36c`. Elsy then filed a staging UX report on #232 (dropdown "still shows old mode name" post-rename); Ian and I diagnosed it as label-vs-slug confusion, sketched four options for a follow-up issue, and pinged Elsy for her pick + chat-side repro. That thread is still open awaiting her reply.
 
