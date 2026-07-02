@@ -95,12 +95,16 @@ export function RightsSelector({
   const isFull = value === "*";
   const isLegacy = value === undefined;
   // Legacy language rights convert to "Specific" by seeding the full
-  // item list (see the onChange below). With the list unavailable
-  // (loading or errored) that seed would be [], silently collapsing the
-  // user's legacy full access to an explicit no-access grant — so the
-  // Specific option is unclickable until the list actually loads.
+  // item list (see the onChange below). If that seed would be [] — the
+  // list is unavailable (loading/errored) OR genuinely empty — the
+  // click would silently collapse the user's legacy full access
+  // (which also covers every FUTURE language) to an explicit
+  // no-access grant, so the Specific option is unclickable until
+  // there's something real to seed from.
   const specificNeedsItems =
-    isLegacy && kind === "language" && availableItems === undefined;
+    isLegacy &&
+    kind === "language" &&
+    (availableItems === undefined || availableItems.length === 0);
   const selected = useMemo<Set<string>>(
     () => (Array.isArray(value) ? new Set(value) : new Set()),
     [value]
@@ -192,25 +196,6 @@ export function RightsSelector({
               </div>
             </div>
 
-            {/* The error line renders regardless of which option is
-                selected — it also explains why the Specific radio is
-                disabled for legacy-language users while the list is
-                unavailable. */}
-            {loadError && availableItems === undefined && (
-              <span className="text-destructive text-xs">
-                Couldn't load {kind}s.
-                {onRetry && (
-                  <button
-                    type="button"
-                    onClick={onRetry}
-                    className="ml-1.5 underline underline-offset-2"
-                  >
-                    Retry
-                  </button>
-                )}
-              </span>
-            )}
-
             {!isFull &&
               !isLegacy &&
               !(loadError && availableItems === undefined) && (
@@ -252,6 +237,33 @@ export function RightsSelector({
               )}
           </div>
         </label>
+
+        {/* Status lines live OUTSIDE the radio's <label>: an interactive
+            Retry button inside it would depend on label activation not
+            forwarding to the radio — spec-compliant, but not worth
+            relying on when a forwarded click would rewrite the rights
+            value. Rendered in every radio state, these also explain the
+            disabled Specific option for legacy-language users. */}
+        {loadError && availableItems === undefined && (
+          <span className="text-destructive block text-xs">
+            Couldn't load {kind}s.
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="ml-1.5 underline underline-offset-2"
+              >
+                Retry
+              </button>
+            )}
+          </span>
+        )}
+        {specificNeedsItems && availableItems !== undefined && (
+          <span className="text-muted-foreground block text-xs">
+            No {kind}s defined yet — create one before narrowing this user's
+            access.
+          </span>
+        )}
       </fieldset>
 
       {Array.isArray(value) && value.length > 0 && (

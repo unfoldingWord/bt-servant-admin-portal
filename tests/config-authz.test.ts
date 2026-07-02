@@ -2577,6 +2577,47 @@ describe("config authz — same-org ?org= (#247)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("org admin of a slash-named org with ?org=<own org> → proxies (same-org check runs before slash reject)", async () => {
+    // Org names are free-text and worker/admin.ts only trims — a
+    // slash-named org is creatable, and its admins' dialog fetches echo
+    // it back as ?org=. Rejecting it would resurrect the exact #247
+    // dead-selector symptom (as a 400) for that org. The same-org
+    // branch resolves to session.org, which handleConfig
+    // encodeURIComponent's, so no path shape reaches the upstream URL.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery(
+        "GET",
+        "/api/config/languages",
+        `org=${encodeURIComponent("team/alpha")}`
+      ),
+      env,
+      makeSession({ org: "team/alpha", isAdmin: true, isSuperAdmin: false }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/team%2Falpha/languages"
+    );
+  });
+
+  it("super-admin CROSS-org ?org=<slash-named other org> → still 400 (slash reject intact for cross-org)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery(
+        "GET",
+        "/api/config/languages",
+        `org=${encodeURIComponent("team/alpha")}`
+      ),
+      env,
+      makeSession({ org: "acme", isSuperAdmin: true }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("super-admin ?org=<case-variant of own org> → cross-org to the case-variant org (distinct KV entry stays addressable)", async () => {
     // "ACME" and "acme" are distinct KV entries. A super-admin naming
     // the case-variant must reach THAT org — resolving it as same-org

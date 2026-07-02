@@ -440,12 +440,24 @@ function resolveOrg(
   }
 
   const trimmed = orgParam.trim();
-  if (!trimmed || trimmed.includes("/")) {
+  if (!trimmed) {
     return { error: errorResponse("Invalid org parameter", 400) };
   }
 
+  // Same-org match runs BEFORE the slash reject: org names are free-text
+  // (worker/admin.ts only trims — it never rejects slashes), so a
+  // slash-named org is creatable, and its own admins' dialog fetches
+  // send it back as ?org=. The same-org branch resolves to session.org
+  // (encodeURIComponent'd at use), so no path shape from the param ever
+  // reaches the upstream URL here.
   if (trimmed === session.org) {
     return { crossOrg: false, org: session.org };
+  }
+
+  // Cross-org targeting keeps the slash reject: a path-shaped slug from
+  // a super-admin is a probe or a UI bug, never a legitimate target.
+  if (trimmed.includes("/")) {
+    return { error: errorResponse("Invalid org parameter", 400) };
   }
 
   if (session.isSuperAdmin !== true) {
