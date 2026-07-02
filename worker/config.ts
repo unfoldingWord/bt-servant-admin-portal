@@ -136,63 +136,49 @@ async function fetchCurrentResource(
   org: string,
   name: string
 ): Promise<ResourceShape | null> {
-  const enginePath =
-    kind === "language"
-      ? `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(name)}`
-      : `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(name)}`;
-  const res = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
-    headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
-  });
-  if (!res.ok) {
-    // 404 → resource doesn't exist yet (creation). Any other non-2xx
-    // (auth, 5xx, network blip): treat as null too so the gate falls
-    // through to creation semantics. The downstream proxy PUT will
-    // fail naturally if engine is genuinely down — duplicating the
-    // failure mode at the gate makes verb-restricted shepherds the
-    // first to lose autosave during transient engine flakiness for no
-    // security benefit. Creation semantics demand at minimum edit on
-    // any editorial field and publish on `published: true`, so the
-    // fall-through is conservative (stricter, not laxer) than the
-    // diff path would have produced.
-    return null;
-  }
-  const data = (await res.json()) as Record<string, unknown>;
-  // Engine wraps in { org, language|mode: {...} } — mirror of the
-  // unwrap logic in src/lib/languages-api.ts + src/lib/config-api.ts.
-  const wrapped = kind === "language" ? data.language : data.mode;
-  if (wrapped && typeof wrapped === "object") {
-    return wrapped as ResourceShape;
-  }
-  return data as ResourceShape;
+  // Any non-found state → null. 404 means the resource doesn't exist
+  // yet (creation); any other failure (auth, 5xx, network blip) is
+  // DELIBERATELY collapsed to null too, so the PUT gate falls through
+  // to creation semantics. The downstream proxy PUT will fail naturally
+  // if the engine is genuinely down — duplicating the failure mode at
+  // the gate makes verb-restricted shepherds the first to lose autosave
+  // during transient engine flakiness for no security benefit. Creation
+  // semantics demand at minimum edit on any editorial field and publish
+  // on `published: true`, so the fall-through is conservative
+  // (stricter, not laxer) than the diff path would have produced.
+  const state = await fetchResourceState(env, kind, org, name);
+  return state.status === "found" ? state.mode : null;
 }
 
-// Tri-state mode lookup for the rename arm's preflights. Unlike
-// fetchCurrentResource (whose null-on-any-error is deliberately lax —
-// the PUT gate falls through to stricter creation semantics), the
-// preflights are SECURITY checks and must fail CLOSED: a transient
-// engine 5xx during the collision check must abort the rename, not
-// read as "slug is free" and reopen the escalation window it guards
-// (rd-3 review). Distinguishing 404 from other failures also keeps the
-// error contract honest — "missing" is the only case reported as 404.
-type ModePreflight =
+// Tri-state resource lookup — the single copy of the engine GET +
+// envelope unwrap (rd-4 review: preflightMode and fetchCurrentResource
+// had drifted into near-duplicates of it). Callers layer their own
+// error semantics on top.
+type ResourceState =
   | { status: "found"; mode: ResourceShape }
   | { status: "missing" }
   | { status: "error" };
 
-async function preflightMode(
+async function fetchResourceState(
   env: Env,
+  kind: ResourceKind,
   org: string,
   name: string
-): Promise<ModePreflight> {
+): Promise<ResourceState> {
   try {
-    const res = await fetch(
-      `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(name)}`,
-      { headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` } }
-    );
+    const enginePath =
+      kind === "language"
+        ? `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(name)}`
+        : `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(name)}`;
+    const res = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
+      headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
+    });
     if (res.status === 404) return { status: "missing" };
     if (!res.ok) return { status: "error" };
     const data = (await res.json()) as Record<string, unknown>;
-    const wrapped = data.mode;
+    // Engine wraps in { org, language|mode: {...} } — mirror of the
+    // unwrap logic in src/lib/languages-api.ts + src/lib/config-api.ts.
+    const wrapped = kind === "language" ? data.language : data.mode;
     const mode =
       wrapped && typeof wrapped === "object"
         ? (wrapped as ResourceShape)
@@ -201,6 +187,36 @@ async function preflightMode(
   } catch {
     return { status: "error" };
   }
+}
+
+// Preflight lookup for the rename arm. Unlike fetchCurrentResource
+// (whose null-on-any-error is deliberately lax — the PUT gate falls
+// through to stricter creation semantics), the preflights are SECURITY
+// checks and must fail CLOSED: a transient engine 5xx during the
+// collision check must abort the rename, not read as "slug is free"
+// and reopen the escalation window it guards (rd-3 review). A found
+// mode whose payload lacks a string `name` is treated as an error for
+// the same reason — the canonical-name comparisons are the checks, and
+// a response-shape drift must disable the rename, not the guards
+// (rd-4 review). Distinguishing 404 from other failures also keeps the
+// error contract honest — "missing" is the only case reported as 404.
+type ModePreflight =
+  | { status: "found"; mode: ResourceShape & { name: string } }
+  | { status: "missing" }
+  | { status: "error" };
+
+async function preflightMode(
+  env: Env,
+  org: string,
+  name: string
+): Promise<ModePreflight> {
+  const state = await fetchResourceState(env, "mode", org, name);
+  if (state.status !== "found") return state;
+  if (typeof state.mode.name !== "string") return { status: "error" };
+  return {
+    status: "found",
+    mode: state.mode as ResourceShape & { name: string },
+  };
 }
 
 // Diff a PUT body against current engine state to determine which verb
@@ -498,6 +514,12 @@ export async function handleConfig(
       return errorResponse("Missing newName", 400);
     }
 
+    // Preflights — both fail CLOSED (engine error or a payload missing
+    // its canonical name → 502 retry, before any rights mutation), and
+    // both engine GETs run in parallel (independent lookups; rd-4
+    // latency note) with results evaluated source-first so the response
+    // precedence is unchanged.
+    //
     // Preflight 1 — the addressed slug must be the mode's CANONICAL
     // name. The engine resolves the rename source through aliases
     // (findModeBySlug honors aliases, engine #284), while this arm's
@@ -506,10 +528,21 @@ export async function handleConfig(
     // by a retire-and-forward) could rename — and thereby capture — the
     // aliased-to mode, stranding its real shepherds. Runs AFTER authz,
     // so a no-rights caller can't probe mode existence through it.
-    // preflightMode fails CLOSED: engine errors abort with 502 (retry),
-    // and only a true engine 404 reports "not found" (rd-3 review).
-    const source = await preflightMode(env, org, modeName);
-    if (source.status === "error") {
+    //
+    // Preflight 2 — collision check BEFORE expanding rights. Without
+    // it, renaming TO an existing mode's slug would grant every
+    // old-slug holder rights on that live mode for the window between
+    // expand and the engine's 409 (and permanently, if compensation's
+    // best-effort write fails). The engine GET resolves aliases, so a
+    // newName matching another mode's name OR alias surfaces here; a
+    // newName that is THIS mode's own alias returns the same mode and
+    // falls through — that's the engine's valid promote-own-alias
+    // un-rename.
+    const [source, target] = await Promise.all([
+      preflightMode(env, org, modeName),
+      preflightMode(env, org, newName),
+    ]);
+    if (source.status === "error" || target.status === "error") {
       return errorResponse(
         "Engine unreachable; rename not attempted. Retry the rename.",
         502
@@ -518,38 +551,14 @@ export async function handleConfig(
     if (source.status === "missing") {
       return errorResponse("Mode not found", 404);
     }
-    const canonicalName =
-      typeof source.mode.name === "string" ? source.mode.name : modeName;
+    const canonicalName = source.mode.name;
     if (canonicalName !== modeName) {
       return errorResponse(
         `"${modeName}" is an alias of "${canonicalName}" — rename the mode via its canonical slug`,
         409
       );
     }
-
-    // Preflight 2 — collision check BEFORE expanding rights. Without
-    // it, renaming TO an existing mode's slug would grant every
-    // old-slug holder rights on that live mode for the window between
-    // expand and the engine's 409 (and permanently, if compensation's
-    // best-effort write fails). Fails CLOSED for the same reason: a
-    // transient engine error must not read as "slug is free" and reopen
-    // the window this check exists to close. The engine GET resolves
-    // aliases, so a newName matching another mode's name OR alias
-    // surfaces here; a newName that is THIS mode's own alias returns
-    // the same mode and falls through — that's the engine's valid
-    // promote-own-alias un-rename.
-    const target = await preflightMode(env, org, newName);
-    if (target.status === "error") {
-      return errorResponse(
-        "Engine unreachable; rename not attempted. Retry the rename.",
-        502
-      );
-    }
-    if (
-      target.status === "found" &&
-      typeof target.mode.name === "string" &&
-      target.mode.name !== canonicalName
-    ) {
+    if (target.status === "found" && target.mode.name !== canonicalName) {
       return errorResponse(
         `Slug "${newName}" already belongs to another mode (as a name or alias) in this org`,
         409

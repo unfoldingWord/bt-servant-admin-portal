@@ -855,9 +855,9 @@ function makeRenameRequest(name: string, newName: string): Request {
 function spyFetchRenameEngine(opts: {
   sourceSlug: string;
   targetSlug: string;
-  source?: { name: string } | null;
-  target?: { name: string } | null;
-  probe?: { name: string } | null;
+  source?: Record<string, unknown> | null;
+  target?: Record<string, unknown> | null;
+  probe?: Record<string, unknown> | null;
   engineStatus?: number;
   engineThrows?: boolean;
   // Simulate a transient engine failure (500) on the preflight GETs —
@@ -866,7 +866,7 @@ function spyFetchRenameEngine(opts: {
   targetGetFails?: boolean;
 }) {
   let sourceGets = 0;
-  const wrap = (mode: { name: string } | null | undefined) =>
+  const wrap = (mode: Record<string, unknown> | null | undefined) =>
     mode
       ? new Response(JSON.stringify({ org: "x", mode }), { status: 200 })
       : new Response('{"error":"not found"}', { status: 404 });
@@ -1212,6 +1212,25 @@ describe("config authz — #232 mode rename (_rename)", () => {
       sourceSlug: "spoken",
       targetSlug: "conversation",
       sourceGetFails: true,
+    });
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(502);
+    expect(findEnginePost(fetchSpy)).toBeUndefined();
+  });
+
+  it("found mode WITHOUT a string name → 502 fail-closed, not a skipped guard (rd-4)", async () => {
+    // The canonical-name comparisons ARE the security checks; a
+    // response-shape drift that drops `name` must disable the rename,
+    // not silently disable the guards.
+    const fetchSpy = spyFetchRenameEngine({
+      sourceSlug: "spoken",
+      targetSlug: "conversation",
+      source: { slug: "spoken" }, // no `name` field
     });
     const res = await handleConfig(
       makeRenameRequest("spoken", "conversation"),

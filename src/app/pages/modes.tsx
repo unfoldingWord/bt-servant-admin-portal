@@ -4,7 +4,6 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Download, Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
-import { fetchMe } from "@/lib/auth-api";
 import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
 import {
@@ -481,28 +480,23 @@ export function ModesPage() {
           ),
         });
       }
-      // Follow the selection to the new slug so the editor re-syncs the
-      // doc under the renamed identity instead of orphaning on the old
-      // (now alias-only) name. Route through handleSelectMode (not raw
-      // setSelectedMode) so the dirty-editor switch-guard applies —
-      // same belt-and-suspenders as clone (#241 PR B) and retire.
-      if (name === selectedMode) handleSelectMode(newName);
-      // Background true-up from the server, shepherds only: admin and
-      // cross-org gates resolve to "*" without reading stored arrays,
-      // so the round-trip would be a pure no-op for them. Fire-and-
-      // forget — the optimistic patch above already made the UI
-      // consistent; this just reconciles any drift.
-      if (!isAdmin && !isCrossOrg) {
-        void fetchMe()
-          .then((freshUser) => {
-            if (freshUser) setUser(freshUser);
-          })
-          .catch(() => {
-            // keep the optimistic patch; next full load reconciles
-          });
-      }
+      // Follow the selection to the new slug DIRECTLY — deliberately
+      // NOT via handleSelectMode, unlike clone/retire (rd-4 review).
+      // Their switch-guard protects a still-existing source row; after
+      // a rename the old slug is gone from the list cache and the
+      // stale-selection guard nulls it regardless, so deferring to a
+      // "Switch mode?" dialog offers a "Stay" that cannot be honored.
+      // The rename dialog is dirty-gated upstream (renameDisabledReason)
+      // — a draft dirtied through the focus-leak window re-syncs under
+      // the renamed identity, same as main's pre-#240 behavior.
+      if (name === selectedMode) setSelectedMode(newName);
+      // No server true-up here: /me re-reads KV, which is eventually
+      // consistent — a racing read could return the PRE-migration
+      // snapshot and clobber the exact patch above (rd-4 review). The
+      // local patch mirrors the worker's migration; the next full page
+      // load reconciles any residual drift.
     },
-    [renameMode, selectedMode, handleSelectMode, setUser, isAdmin, isCrossOrg]
+    [renameMode, selectedMode, setSelectedMode, setUser]
   );
 
   const handleJumpToLine = useCallback((line: number) => {
