@@ -495,7 +495,13 @@ export async function handleConfig(
   if ("error" in resolved) {
     return resolved.error;
   }
-  const org = encodeURIComponent(resolved.org);
+  // Named so the raw-vs-encoded distinction travels with the variable:
+  // the round-3 double-encoding bug happened because a pre-encoded local
+  // called `org` was passed where raw resolved.org was expected. Helpers
+  // that take an org (fetchResourceState, preflightMode,
+  // gateConfigMutation, the rights migration) take RAW resolved.org;
+  // path templates below take this.
+  const encodedOrg = encodeURIComponent(resolved.org);
 
   // /api/config/prompt-overrides → GET (any session) / PUT/DELETE (admin)
   if (pathname === "/api/config/prompt-overrides") {
@@ -505,7 +511,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/prompt-overrides`,
+      `/api/v1/admin/orgs/${encodedOrg}/prompt-overrides`,
       ["GET", "PUT", "DELETE"]
     );
   }
@@ -666,7 +672,7 @@ export async function handleConfig(
       engineRes = await proxyToEngine(
         request,
         env,
-        `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_rename`,
+        `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_rename`,
         ["POST"],
         // Forward the TRIMMED newName — the same value the migration
         // used (Frank rd-1 P2).
@@ -743,7 +749,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_clone`,
+      `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_clone`,
       ["POST"]
     );
   }
@@ -773,7 +779,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_retire`,
+      `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_retire`,
       ["POST"]
     );
   }
@@ -797,7 +803,7 @@ export async function handleConfig(
       return proxyToEngine(
         request,
         env,
-        `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}`,
+        `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}`,
         ["GET", "PUT", "DELETE"],
         gate.parsedBody
       );
@@ -805,7 +811,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}`,
+      `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}`,
       ["GET", "PUT", "DELETE"]
     );
   }
@@ -829,7 +835,7 @@ export async function handleConfig(
       return proxyToEngine(
         request,
         env,
-        `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(languageName)}`,
+        `/api/v1/admin/orgs/${encodedOrg}/languages/${encodeURIComponent(languageName)}`,
         ["GET", "PUT", "DELETE"],
         gate.parsedBody
       );
@@ -837,7 +843,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(languageName)}`,
+      `/api/v1/admin/orgs/${encodedOrg}/languages/${encodeURIComponent(languageName)}`,
       ["GET", "PUT", "DELETE"]
     );
   }
@@ -852,7 +858,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/users/${encodeURIComponent(userId)}/mode`,
+      `/api/v1/admin/orgs/${encodedOrg}/users/${encodeURIComponent(userId)}/mode`,
       ["PUT", "DELETE"]
     );
   }
@@ -867,23 +873,29 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/users/${encodeURIComponent(userId)}/memory`,
+      `/api/v1/admin/orgs/${encodedOrg}/users/${encodeURIComponent(userId)}/memory`,
       ["GET", "DELETE"]
     );
   }
 
   // /api/config/modes → GET
   if (pathname === "/api/config/modes") {
-    return proxyToEngine(request, env, `/api/v1/admin/orgs/${org}/modes`, [
-      "GET",
-    ]);
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${encodedOrg}/modes`,
+      ["GET"]
+    );
   }
 
   // /api/config/languages → GET
   if (pathname === "/api/config/languages") {
-    return proxyToEngine(request, env, `/api/v1/admin/orgs/${org}/languages`, [
-      "GET",
-    ]);
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${encodedOrg}/languages`,
+      ["GET"]
+    );
   }
 
   // /api/config/language-scaffold → GET (org-scope; worker returns
@@ -894,7 +906,7 @@ export async function handleConfig(
     return proxyToEngine(
       request,
       env,
-      `/api/v1/admin/orgs/${org}/language-scaffold`,
+      `/api/v1/admin/orgs/${encodedOrg}/language-scaffold`,
       ["GET"]
     );
   }

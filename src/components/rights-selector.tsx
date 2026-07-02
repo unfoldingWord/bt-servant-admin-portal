@@ -108,6 +108,13 @@ export function RightsSelector({
   // irrevocable in a zero-language org).
   const specificNeedsItems =
     isLegacy && kind === "language" && availableItems === undefined;
+  // Shared by the chip-area suppression and the sibling error line so
+  // the two can't drift (they must flip together — showing the error
+  // AND the stale "Loading…" chip area reads as two states at once).
+  const listUnavailable = loadError && availableItems === undefined;
+  const listLoaded = availableItems !== undefined;
+  const loadingLabel = `Loading ${kind}s…`;
+  const emptyLabel = `No ${kind}s defined yet.`;
   const selected = useMemo<Set<string>>(
     () => (Array.isArray(value) ? new Set(value) : new Set()),
     [value]
@@ -199,45 +206,43 @@ export function RightsSelector({
               </div>
             </div>
 
-            {!isFull &&
-              !isLegacy &&
-              !(loadError && availableItems === undefined) && (
-                <div className="flex flex-wrap gap-1.5">
-                  {availableItems === undefined ? (
-                    <span className="text-muted-foreground text-xs">
-                      Loading {kind}s…
-                    </span>
-                  ) : availableItems.length === 0 ? (
-                    <span className="text-muted-foreground text-xs">
-                      No {kind}s defined yet.
-                    </span>
-                  ) : (
-                    availableItems.map((item) => {
-                      const checked = selected.has(item.name);
-                      return (
-                        <button
-                          key={item.name}
-                          type="button"
-                          onClick={() => toggleItem(item.name)}
-                          className={cn(
-                            "rounded-full border px-2.5 py-1 text-xs transition-colors",
-                            checked
-                              ? "bg-primary text-primary-foreground border-primary"
-                              : "bg-background hover:bg-accent"
-                          )}
-                        >
-                          {checked && (
-                            <span className="mr-1" aria-hidden="true">
-                              ✓
-                            </span>
-                          )}
-                          {item.label || item.name}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              )}
+            {!isFull && !isLegacy && !listUnavailable && (
+              <div className="flex flex-wrap gap-1.5">
+                {availableItems === undefined ? (
+                  <span className="text-muted-foreground text-xs">
+                    {loadingLabel}
+                  </span>
+                ) : availableItems.length === 0 ? (
+                  <span className="text-muted-foreground text-xs">
+                    {emptyLabel}
+                  </span>
+                ) : (
+                  availableItems.map((item) => {
+                    const checked = selected.has(item.name);
+                    return (
+                      <button
+                        key={item.name}
+                        type="button"
+                        onClick={() => toggleItem(item.name)}
+                        className={cn(
+                          "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                          checked
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-background hover:bg-accent"
+                        )}
+                      >
+                        {checked && (
+                          <span className="mr-1" aria-hidden="true">
+                            ✓
+                          </span>
+                        )}
+                        {item.label || item.name}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
         </label>
 
@@ -247,7 +252,7 @@ export function RightsSelector({
             relying on when a forwarded click would rewrite the rights
             value. Rendered in every radio state, these also explain the
             disabled Specific option for legacy-language users. */}
-        {loadError && availableItems === undefined && (
+        {listUnavailable && (
           <span className="text-destructive block text-xs">
             Couldn't load {kind}s.
             {onRetry && (
@@ -263,16 +268,16 @@ export function RightsSelector({
         )}
         {specificNeedsItems && !loadError && (
           <span className="text-muted-foreground block text-xs">
-            Loading {kind}s…
+            {loadingLabel}
           </span>
         )}
         {isLegacy &&
           kind === "language" &&
-          availableItems !== undefined &&
+          listLoaded &&
           availableItems.length === 0 && (
             <span className="text-muted-foreground block text-xs">
-              No {kind}s defined yet. Choosing "Specific {kind}s" locks in no
-              access — including {kind}s created later.
+              {emptyLabel} Choosing "Specific {kind}s" locks in no access —
+              including {kind}s created later.
             </span>
           )}
       </fieldset>
