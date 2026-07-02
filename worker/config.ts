@@ -136,16 +136,19 @@ async function fetchCurrentResource(
   org: string,
   name: string
 ): Promise<ResourceShape | null> {
-  // Any non-found state → null. 404 means the resource doesn't exist
-  // yet (creation); any other failure (auth, 5xx, network blip) is
-  // DELIBERATELY collapsed to null too, so the PUT gate falls through
-  // to creation semantics. The downstream proxy PUT will fail naturally
-  // if the engine is genuinely down — duplicating the failure mode at
-  // the gate makes verb-restricted shepherds the first to lose autosave
-  // during transient engine flakiness for no security benefit. Creation
-  // semantics demand at minimum edit on any editorial field and publish
-  // on `published: true`, so the fall-through is conservative
-  // (stricter, not laxer) than the diff path would have produced.
+  // Any non-found RESPONSE → null. 404 means the resource doesn't
+  // exist yet (creation); other non-2xx statuses (auth, engine 5xx)
+  // are DELIBERATELY collapsed to null too, so the PUT gate falls
+  // through to creation semantics — which demand at minimum edit on
+  // any editorial field and publish on `published: true`, stricter
+  // than the diff path would have produced.
+  //
+  // A THROWN fetch or malformed 2xx body is NOT collapsed: it
+  // propagates and fails the request, exactly as on main (rd-5
+  // review; pinned by test). Do not add a catch here or in
+  // fetchResourceState — swallowing throws widens the creation
+  // fallback and lets an edit-only shepherd unpublish a live mode
+  // during an engine blip.
   const state = await fetchResourceState(env, kind, org, name);
   return state.status === "found" ? state.mode : null;
 }
