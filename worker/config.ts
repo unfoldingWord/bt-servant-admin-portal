@@ -439,25 +439,25 @@ function resolveOrg(
     return { crossOrg: false, org: session.org };
   }
 
+  // Org names are free-text (worker/admin.ts only trims at create/
+  // rename), so slashes and other path-looking shapes are creatable and
+  // MUST resolve — rejecting them re-breaks the dialogs' list fetches
+  // (the #247 symptom) for anyone operating on such an org, same-org or
+  // cross-org. Path safety doesn't depend on this reject: every URL
+  // interpolation of the resolved org goes through the single
+  // encodeURIComponent in handleConfig, which neutralizes "/" (and the
+  // non-URL uses are KV-scoped, where any string is inert). The two
+  // shapes encoding can't neutralize are bare "." and ".." — dots
+  // survive encodeURIComponent and the URL parser normalizes dot
+  // segments, so those stay rejected. They can't be real org names
+  // without being indistinguishable from traversal.
   const trimmed = orgParam.trim();
-  if (!trimmed) {
+  if (!trimmed || trimmed === "." || trimmed === "..") {
     return { error: errorResponse("Invalid org parameter", 400) };
   }
 
-  // Same-org match runs BEFORE the slash reject: org names are free-text
-  // (worker/admin.ts only trims — it never rejects slashes), so a
-  // slash-named org is creatable, and its own admins' dialog fetches
-  // send it back as ?org=. The same-org branch resolves to session.org
-  // (encodeURIComponent'd at use), so no path shape from the param ever
-  // reaches the upstream URL here.
   if (trimmed === session.org) {
     return { crossOrg: false, org: session.org };
-  }
-
-  // Cross-org targeting keeps the slash reject: a path-shaped slug from
-  // a super-admin is a probe or a UI bug, never a legitimate target.
-  if (trimmed.includes("/")) {
-    return { error: errorResponse("Invalid org parameter", 400) };
   }
 
   if (session.isSuperAdmin !== true) {

@@ -2082,9 +2082,9 @@ describe("config authz — #181 verb diff (pure function)", () => {
 // Super admins need to edit modes/languages/prompt-overrides in orgs they
 // don't sit in (Tim's 2026-05-21 Zoom — Elsy as super-admin couldn't see
 // Word Collective from her uW session). Closing the gap with an explicit
-// `?org=<slug>` query param: super-admin only, loud 403 for non-super,
-// 400 on empty/path-traversal shapes. No behavior change when the param
-// is absent — that's the everyday org-admin path.
+// `?org=<slug>` query param: cross-org is super-admin only (loud 403
+// for non-super), 400 on empty/dot-segment shapes. No behavior change
+// when the param is absent — that's the everyday org-admin path.
 
 function makeRequestWithQuery(
   method: string,
@@ -2150,16 +2150,39 @@ describe("config authz — cross-org via ?org= (#166)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("?org=foo/bar (path-traversal shape) → 400 even for super-admin", async () => {
+  it("?org=foo/bar (slash-named org) → proxies with the slash encoded (#253 review P2)", async () => {
+    // Slash-named orgs are creatable (admin.ts only trims), so they must
+    // be addressable; path safety comes from handleConfig's
+    // encodeURIComponent, not from rejecting the shape.
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeRequestWithQuery("GET", "/api/config/modes", "org=foo%2Fbar"),
       env,
-      makeSession({ isSuperAdmin: true }),
+      makeSession({ org: "acme", isSuperAdmin: true }),
       "/api/config/modes"
     );
-    expect(res.status).toBe(400);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/foo%2Fbar/modes"
+    );
+  });
+
+  it("?org=. and ?org=.. → 400 even for super-admin (dot segments survive encoding)", async () => {
+    // encodeURIComponent leaves dots alone and the URL parser normalizes
+    // /orgs/../x into a traversal — bare dot orgs stay rejected.
+    for (const dots of [".", ".."]) {
+      const fetchSpy = spyFetch();
+      const res = await handleConfig(
+        makeRequestWithQuery("GET", "/api/config/modes", `org=${dots}`),
+        env,
+        makeSession({ org: "acme", isSuperAdmin: true }),
+        "/api/config/modes"
+      );
+      expect(res.status).toBe(400);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      vi.restoreAllMocks();
+    }
   });
 
   it("no ?org= + super-admin → uses session.org (regression: same-org path unchanged)", async () => {
@@ -2602,7 +2625,10 @@ describe("config authz — same-org ?org= (#247)", () => {
     );
   });
 
-  it("super-admin CROSS-org ?org=<slash-named other org> → still 400 (slash reject intact for cross-org)", async () => {
+  it("super-admin CROSS-org ?org=<slash-named other org> → proxies encoded (#253 review P2)", async () => {
+    // A super-admin provisioning users in a slash-named org they don't
+    // sit in needs the dialogs' list fetches to resolve, same as the
+    // org's own admins.
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeRequestWithQuery(
@@ -2614,7 +2640,26 @@ describe("config authz — same-org ?org= (#247)", () => {
       makeSession({ org: "acme", isSuperAdmin: true }),
       "/api/config/languages"
     );
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/team%2Falpha/languages"
+    );
+  });
+
+  it("non-super with ?org=<slash-named OTHER org> → still 403 (cross-org gate unchanged)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery(
+        "GET",
+        "/api/config/languages",
+        `org=${encodeURIComponent("team/alpha")}`
+      ),
+      env,
+      makeSession({ org: "acme", isAdmin: true, isSuperAdmin: false }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(403);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
