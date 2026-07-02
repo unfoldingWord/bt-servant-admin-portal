@@ -401,9 +401,22 @@ function isAdminMutation(method: string, session: SessionData): boolean {
   return (method === "PUT" || method === "DELETE") && !hasAdminPowers(session);
 }
 
-// Cross-org override via ?org=<slug>. Super-admin only; reject loud rather
-// than silently falling back to session.org so a UI bug or hostile probe
-// surfaces visibly instead of masquerading as a same-org request.
+// Org targeting via ?org=<slug>.
+//
+// `?org=<caller's own org>` is semantically a same-org request for ANY
+// caller, so it resolves like the param was absent (#247: the user
+// dialogs always scope their language/mode list fetches to the target
+// user's org, which for org admins is their own org — rejecting it
+// broke those fetches with a 403 for every non-super-admin). The match
+// is trim+lowercase, mirroring `isCrossOrgTarget` in
+// src/lib/language-bootstrap-gate.ts, and resolves to `session.org`'s
+// canonical casing so the upstream KV key never depends on how the
+// client spelled the param.
+//
+// A genuinely different org stays super-admin only, and rejects loud
+// rather than silently falling back to session.org so a UI bug or
+// hostile probe surfaces visibly instead of masquerading as a same-org
+// request.
 //
 // `crossOrg` reflects whether the resolved target differs from the
 // caller's home org — not merely whether the param was present. A super
@@ -426,6 +439,10 @@ function resolveOrg(
     return { error: errorResponse("Invalid org parameter", 400) };
   }
 
+  if (trimmed.toLowerCase() === session.org.trim().toLowerCase()) {
+    return { crossOrg: false, org: session.org };
+  }
+
   if (session.isSuperAdmin !== true) {
     return {
       error: errorResponse(
@@ -435,7 +452,7 @@ function resolveOrg(
     };
   }
 
-  return { crossOrg: trimmed !== session.org, org: trimmed };
+  return { crossOrg: true, org: trimmed };
 }
 
 export async function handleConfig(

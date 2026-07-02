@@ -24,6 +24,11 @@ interface RightsSelectorProps {
   value: LanguageRights | undefined;
   onChange: (next: LanguageRights) => void;
   availableItems: { name: string; label?: string }[] | undefined;
+  // True when the list fetch failed. Without this the selector can't
+  // tell "still loading" from "errored" (both leave availableItems
+  // undefined) and would show "Loading…" forever on a dead query —
+  // exactly how the #247 BFF 403 hid itself on staging.
+  loadError?: boolean;
   kind: RightsKind;
   verb: RightsVerb;
   disabled?: boolean;
@@ -74,6 +79,7 @@ export function RightsSelector({
   value,
   onChange,
   availableItems,
+  loadError = false,
   kind,
   verb,
   disabled = false,
@@ -163,7 +169,11 @@ export function RightsSelector({
 
             {!isFull && !isLegacy && (
               <div className="flex flex-wrap gap-1.5">
-                {availableItems === undefined ? (
+                {loadError && availableItems === undefined ? (
+                  <span className="text-destructive text-xs">
+                    Couldn't load {kind}s. Close the dialog and try again.
+                  </span>
+                ) : availableItems === undefined ? (
                   <span className="text-muted-foreground text-xs">
                     Loading {kind}s…
                   </span>
