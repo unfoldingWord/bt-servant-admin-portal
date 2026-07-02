@@ -205,8 +205,11 @@ export function filterAuthorizedLanguages<T extends { name: string }>(
 // mode_*_rights (old slug → new slug) — but the client auth store still
 // holds the login-time snapshot, and the per-row guard + dropdown
 // filter would hide the just-renamed mode until a reload. The caller
-// applies this synchronously post-rename (with a background /me
-// true-up), so the UI never renders an inconsistent rights/list pair.
+// applies this synchronously post-rename so the UI never renders an
+// inconsistent rights/list pair. Deliberately NO server true-up after
+// the patch: /me re-reads eventually-consistent KV, and a racing read
+// could return the PRE-migration snapshot and clobber this exact patch
+// (rd-4/rd-5 review) — the next full page load reconciles any drift.
 // `undefined` and `"*"` pass through — wildcard callers don't key on
 // stored arrays.
 export function renameSlugInRights(

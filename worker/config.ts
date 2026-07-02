@@ -154,6 +154,13 @@ async function fetchCurrentResource(
 // envelope unwrap (rd-4 review: preflightMode and fetchCurrentResource
 // had drifted into near-duplicates of it). Callers layer their own
 // error semantics on top.
+//
+// Deliberately does NOT catch: a thrown fetch (network) or a malformed
+// 2xx body (json parse) PROPAGATES. The PUT gate has always let those
+// surface as a request failure — swallowing them here would widen its
+// creation-semantics fallback and let an edit-only shepherd unpublish a
+// live mode during an engine blip (rd-5 review). preflightMode adds its
+// own catch to map throws to fail-closed "error".
 type ResourceState =
   | { status: "found"; mode: ResourceShape }
   | { status: "missing" }
@@ -165,28 +172,24 @@ async function fetchResourceState(
   org: string,
   name: string
 ): Promise<ResourceState> {
-  try {
-    const enginePath =
-      kind === "language"
-        ? `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(name)}`
-        : `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(name)}`;
-    const res = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
-      headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
-    });
-    if (res.status === 404) return { status: "missing" };
-    if (!res.ok) return { status: "error" };
-    const data = (await res.json()) as Record<string, unknown>;
-    // Engine wraps in { org, language|mode: {...} } — mirror of the
-    // unwrap logic in src/lib/languages-api.ts + src/lib/config-api.ts.
-    const wrapped = kind === "language" ? data.language : data.mode;
-    const mode =
-      wrapped && typeof wrapped === "object"
-        ? (wrapped as ResourceShape)
-        : (data as ResourceShape);
-    return { status: "found", mode };
-  } catch {
-    return { status: "error" };
-  }
+  const enginePath =
+    kind === "language"
+      ? `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(name)}`
+      : `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(name)}`;
+  const res = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
+    headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
+  });
+  if (res.status === 404) return { status: "missing" };
+  if (!res.ok) return { status: "error" };
+  const data = (await res.json()) as Record<string, unknown>;
+  // Engine wraps in { org, language|mode: {...} } — mirror of the
+  // unwrap logic in src/lib/languages-api.ts + src/lib/config-api.ts.
+  const wrapped = kind === "language" ? data.language : data.mode;
+  const mode =
+    wrapped && typeof wrapped === "object"
+      ? (wrapped as ResourceShape)
+      : (data as ResourceShape);
+  return { status: "found", mode };
 }
 
 // Preflight lookup for the rename arm. Unlike fetchCurrentResource
@@ -210,7 +213,12 @@ async function preflightMode(
   org: string,
   name: string
 ): Promise<ModePreflight> {
-  const state = await fetchResourceState(env, "mode", org, name);
+  let state: ResourceState;
+  try {
+    state = await fetchResourceState(env, "mode", org, name);
+  } catch {
+    return { status: "error" };
+  }
   if (state.status !== "found") return state;
   if (typeof state.mode.name !== "string") return { status: "error" };
   return {
@@ -542,7 +550,12 @@ export async function handleConfig(
       preflightMode(env, org, modeName),
       preflightMode(env, org, newName),
     ]);
-    if (source.status === "error" || target.status === "error") {
+    // Source-first evaluation, FULLY: the source's definitive answers
+    // (missing → 404, alias-addressed → 409) take precedence over a
+    // target-side engine error — a flaky target GET must not mask
+    // "the mode you're renaming doesn't exist" behind a generic
+    // 502 retry prompt the user can never satisfy (rd-5 review).
+    if (source.status === "error") {
       return errorResponse(
         "Engine unreachable; rename not attempted. Retry the rename.",
         502
@@ -556,6 +569,12 @@ export async function handleConfig(
       return errorResponse(
         `"${modeName}" is an alias of "${canonicalName}" — rename the mode via its canonical slug`,
         409
+      );
+    }
+    if (target.status === "error") {
+      return errorResponse(
+        "Engine unreachable; rename not attempted. Retry the rename.",
+        502
       );
     }
     if (target.status === "found" && target.mode.name !== canonicalName) {

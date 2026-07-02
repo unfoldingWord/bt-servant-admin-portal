@@ -1242,6 +1242,39 @@ describe("config authz — #232 mode rename (_rename)", () => {
     expect(findEnginePost(fetchSpy)).toBeUndefined();
   });
 
+  it("source MISSING beats target-side engine error → 404, not 502 (rd-5)", async () => {
+    // A flaky target GET must not mask "the mode you're renaming
+    // doesn't exist" behind a retry prompt the user can never satisfy.
+    const fetchSpy = spyFetchRenameEngine({
+      sourceSlug: "ghost",
+      targetSlug: "anything",
+      source: null,
+      targetGetFails: true,
+    });
+    const res = await handleConfig(
+      makeRenameRequest("ghost", "anything"),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/ghost/_rename"
+    );
+    expect(res.status).toBe(404);
+    expect(findEnginePost(fetchSpy)).toBeUndefined();
+  });
+
+  it("thrown fetch during preflight → 502, not an uncaught exception (rd-5)", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("connect failure"));
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(502);
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+
   it("engine error on TARGET preflight → 502 fail-closed, no expand (rd-3 F1)", async () => {
     // The collision guard must not evaporate on a transient GET error —
     // that would reopen the escalation window it exists to close.
@@ -1266,6 +1299,35 @@ describe("config authz — #232 mode rename (_rename)", () => {
     expect(
       (await readRightsUser("shepherd@acme.com")).mode_edit_rights
     ).toEqual(["spoken"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PUT-gate parity — fetchResourceState extraction must not soften the gate
+// ---------------------------------------------------------------------------
+
+describe("PUT gate — thrown engine GET propagates (rd-5 parity)", () => {
+  it("edit-only shepherd PUT while the gate's current-state GET throws → request fails, no proxy", async () => {
+    // On main, a thrown fetch in fetchCurrentResource propagated and
+    // the mutation was blocked. The rd-4 extraction briefly swallowed
+    // it into null → creation semantics, which would have let an
+    // edit-only shepherd unpublish a live mode (creation semantics
+    // only demand publish on published:true). Pin the propagation.
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("connect failure")
+    );
+    await expect(
+      handleConfig(
+        new Request("https://portal.example.test/api/config/modes/spoken", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ document: "# doc", published: false }),
+        }),
+        env,
+        makeSession({ mode_edit_rights: ["spoken"] }),
+        "/api/config/modes/spoken"
+      )
+    ).rejects.toThrow("connect failure");
   });
 });
 
