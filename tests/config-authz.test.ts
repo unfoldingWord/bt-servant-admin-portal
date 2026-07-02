@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __testInternals, handleConfig } from "../worker/config";
-import type { SessionData } from "../worker/types";
+import type { SessionData, StoredUser } from "../worker/types";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -819,13 +819,19 @@ describe("config authz — #181 verb-perms (modes)", () => {
 // ---------------------------------------------------------------------------
 //
 // Rename reslugs a mode's canonical identity in place (the engine keeps the
-// old slug as an alias so assigned users aren't stranded). The BFF restricts
-// it to admins + super-admin cross-org and proxies the POST (with its
-// `{ newName }` body) to the engine `_rename` op. Non-admin shepherds are
-// blocked even with full per-row rights: their mode rights are slug-scoped
-// and a rename would lock them out of the renamed slug (#238 review). The
-// dedicated route must be matched before the generic `modes/{name}` route,
-// which would otherwise swallow `{name}/_rename` and 405 the POST.
+// old slug as an alias so assigned users aren't stranded). The BFF proxies
+// the POST (with its `{ newName }` body) to the engine `_rename` op.
+//
+// #240 opened rename to non-admin shepherds with EDIT rights on the source
+// mode: the arm now migrates per-user `mode_*_rights` (old slug → new slug)
+// around the engine call, so a shepherd renaming their own mode keeps
+// access to the renamed slug (previously the #238-review reason to gate
+// admin-only). Publish-only shepherds stay denied — rename is an edit-side
+// action. The dedicated route must be matched before the generic
+// `modes/{name}` route, which would otherwise swallow `{name}/_rename` and
+// 405 the POST. Migration side-effect coverage lives in the "#240 rename
+// rights migration" describe below; pure-helper coverage in
+// tests/rights-migration.test.ts.
 
 function makeRenameRequest(name: string, newName: string): Request {
   return new Request(
@@ -879,10 +885,9 @@ describe("config authz — #232 mode rename (_rename)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("non-admin with BOTH edit+publish on the row → 403 (rename is admin-only)", async () => {
-    // The crux of the #238 review: full per-row rights are NOT enough.
-    // Mode rights are slug-scoped, so letting a shepherd rename would lock
-    // them out of the renamed slug. Only admins/cross-org may rename.
+  it("non-admin shepherd with EDIT rights on the row → proxies (#240)", async () => {
+    // Inversion of the #238-review case: with rights migration in place,
+    // full per-row rights ARE enough. This was 403 pre-#240.
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeRenameRequest("spoken", "conversation"),
@@ -893,7 +898,96 @@ describe("config authz — #232 mode rename (_rename)", () => {
       }),
       "/api/config/modes/spoken/_rename"
     );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/acme/modes/spoken/_rename"
+    );
+  });
+
+  it("non-admin shepherd with edit-only rights → proxies (#240 acceptance)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ mode_edit_rights: ["spoken"] }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("non-admin with publish-only rights → 403 (rename is edit-side)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ mode_publish_rights: ["spoken"] }),
+      "/api/config/modes/spoken/_rename"
+    );
     expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("non-admin with edit rights on a DIFFERENT mode → 403", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ mode_edit_rights: ["other-mode"] }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("malformed JSON body → 400 without engine call", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      new Request(
+        "https://portal.example.test/api/config/modes/spoken/_rename",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{not json",
+        }
+      ),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("missing newName → 400 without engine call", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      new Request(
+        "https://portal.example.test/api/config/modes/spoken/_rename",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }
+      ),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("GET on the rename route → 405 (method gate precedes body read)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequest("GET", "/api/config/modes/spoken/_rename"),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(405);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -917,6 +1011,227 @@ describe("config authz — #232 mode rename (_rename)", () => {
     expect(String(fetchSpy.mock.calls[0]![0])).toContain(
       "/api/v1/admin/orgs/word-collective/modes/spoken/_rename"
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #240 rename rights migration — per-user mode_*_rights old slug → new slug
+// ---------------------------------------------------------------------------
+//
+// End-to-end through handleConfig with real AUTH_KV records: the rename arm
+// expands affected users (old + new slug) before the engine call, then
+// contracts (drops old) on engine success or compensates (drops the never-
+// live new slug) on engine failure. Assertions inspect the stored user
+// records directly — the first KV-side-effect coverage in this file.
+
+interface SeedRightsUser {
+  email: string;
+  org: string;
+  mode_edit_rights?: StoredUser["mode_edit_rights"];
+  mode_publish_rights?: StoredUser["mode_publish_rights"];
+}
+
+async function seedRightsUser(input: SeedRightsUser): Promise<void> {
+  const stored: StoredUser = {
+    id: crypto.randomUUID(),
+    email: input.email,
+    name: input.email,
+    org: input.org,
+    // Auth fields are never consulted by the config gate — dummies keep
+    // the seed cheap (no PBKDF2 per test).
+    passwordHash: "x",
+    salt: "x",
+    isAdmin: false,
+    mode_edit_rights: input.mode_edit_rights,
+    mode_publish_rights: input.mode_publish_rights,
+  };
+  await env.AUTH_KV.put(`user:${input.email}`, JSON.stringify(stored));
+}
+
+async function readRightsUser(email: string): Promise<StoredUser> {
+  const user = await env.AUTH_KV.get<StoredUser>(`user:${email}`, {
+    type: "json",
+  });
+  if (!user) throw new Error(`seed user missing: ${email}`);
+  return user;
+}
+
+function spyFetchEngineFailure(status: number) {
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(() =>
+      Promise.resolve(new Response('{"error":"engine says no"}', { status }))
+    );
+}
+
+describe("#240 rename rights migration", () => {
+  it("engine success → affected users' arrays hold the new slug, old removed", async () => {
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["other", "spoken"],
+      mode_publish_rights: ["spoken"],
+    });
+    spyFetch();
+
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(200);
+
+    const after = await readRightsUser("shepherd@acme.com");
+    expect(after.mode_edit_rights).toEqual(["conversation", "other"]);
+    expect(after.mode_publish_rights).toEqual(["conversation"]);
+  });
+
+  it("renaming shepherd keeps access to the renamed mode (#240 acceptance)", async () => {
+    // The shepherd's own stored record migrates like everyone else's;
+    // validateSession re-reads the record per request, so their next
+    // call sees the new slug without re-login.
+    await seedRightsUser({
+      email: "self@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+    });
+    spyFetch();
+
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ email: "self@acme.com", mode_edit_rights: ["spoken"] }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(200);
+
+    const after = await readRightsUser("self@acme.com");
+    expect(after.mode_edit_rights).toEqual(["conversation"]);
+  });
+
+  it("wildcard and unrelated users untouched; other-org same-slug untouched", async () => {
+    await seedRightsUser({
+      email: "wildcard@acme.com",
+      org: "acme",
+      mode_edit_rights: "*",
+    });
+    await seedRightsUser({
+      email: "unrelated@acme.com",
+      org: "acme",
+      mode_edit_rights: ["other"],
+    });
+    await seedRightsUser({
+      email: "elsewhere@word-collective.com",
+      org: "word-collective",
+      mode_edit_rights: ["spoken"],
+    });
+    spyFetch();
+
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(200);
+
+    expect((await readRightsUser("wildcard@acme.com")).mode_edit_rights).toBe(
+      "*"
+    );
+    expect(
+      (await readRightsUser("unrelated@acme.com")).mode_edit_rights
+    ).toEqual(["other"]);
+    expect(
+      (await readRightsUser("elsewhere@word-collective.com")).mode_edit_rights
+    ).toEqual(["spoken"]);
+  });
+
+  it("engine failure → migration compensated, arrays unchanged, engine status passes through", async () => {
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: ["spoken", "zulu"],
+    });
+    spyFetchEngineFailure(409);
+
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(409);
+
+    const after = await readRightsUser("shepherd@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken"]);
+    expect(after.mode_publish_rights).toEqual(["spoken", "zulu"]);
+  });
+
+  it("user already holding BOTH slugs is untouched by contract (pinned)", async () => {
+    // Expand skips them (new slug already present), so they're outside
+    // the recorded set that contract/compensate operate on. After the
+    // rename their old-slug entry goes stale-but-inert (it survives as
+    // an alias, and nothing in authz reads aliases). Deliberately NOT
+    // cleaned up: we can't distinguish a stale entry from an intentional
+    // grant made moments before the rename, and the conservative rule is
+    // to never remove entries the migration didn't add.
+    await seedRightsUser({
+      email: "both@acme.com",
+      org: "acme",
+      mode_edit_rights: ["conversation", "spoken"],
+    });
+    spyFetch();
+
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(200);
+
+    expect((await readRightsUser("both@acme.com")).mode_edit_rights).toEqual([
+      "conversation",
+      "spoken",
+    ]);
+  });
+
+  it("cross-org rename migrates TARGET-org users, not the caller's home org", async () => {
+    await seedRightsUser({
+      email: "target@word-collective.com",
+      org: "word-collective",
+      mode_edit_rights: ["spoken"],
+    });
+    await seedRightsUser({
+      email: "home@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+    });
+    spyFetch();
+
+    const res = await handleConfig(
+      new Request(
+        "https://portal.example.test/api/config/modes/spoken/_rename?org=word-collective",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ newName: "conversation" }),
+        }
+      ),
+      env,
+      makeSession({ org: "acme", isSuperAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(200);
+
+    expect(
+      (await readRightsUser("target@word-collective.com")).mode_edit_rights
+    ).toEqual(["conversation"]);
+    expect((await readRightsUser("home@acme.com")).mode_edit_rights).toEqual([
+      "spoken",
+    ]);
   });
 });
 

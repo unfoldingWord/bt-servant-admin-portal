@@ -1,5 +1,6 @@
 import type { Env } from "./helpers";
 import { errorResponse } from "./helpers";
+import { contractOrgModeRights, expandOrgModeRights } from "./rights-migration";
 import type { LanguageRights, SessionData } from "./types";
 
 // `undefined` is the back-compat default for users predating the rights
@@ -393,15 +394,24 @@ export async function handleConfig(
   // mode route below — the `(.+)` there would otherwise capture
   // `{name}/_rename` as the mode name and reject POST as 405. The engine
   // (#232) reslugs the mode in place and keeps the old slug as an alias
-  // so existing user assignments aren't stranded.
+  // so existing END-USER assignments aren't stranded.
   //
-  // Restricted to admins + super-admin cross-org. Per-user mode rights
-  // are slug-scoped (`mode_edit_rights` / `mode_publish_rights`), so a
-  // non-admin shepherd who renamed a mode would keep rights on the OLD
-  // slug and lose access to the renamed mode — and the worker would 403
-  // their later `/modes/{newName}` calls (#238 review). Until rights
-  // migration exists, only admins (blanket mode access) and cross-org
-  // super-admins (per-row gate bypassed anyway) may rename.
+  // Authorization (#240): admins and cross-org super-admins pass as
+  // before; non-admin shepherds pass with EDIT rights on the source
+  // mode. `rightsFor` returns `[]` for modes when the verb field is
+  // unset, so the pre-#181 admin-only baseline (both mode fields
+  // undefined → deny) holds without a separate check. Publish-only
+  // shepherds are denied — rename changes the mode's identity, which is
+  // an edit-side action.
+  //
+  // Rights migration (#240): per-user `mode_edit_rights` /
+  // `mode_publish_rights` are slug-scoped and nothing in the authz path
+  // reads aliases, so renaming would strand every shepherd holding the
+  // old slug. Around the engine call we run an expand→contract
+  // migration over the target org's users (see worker/rights-migration
+  // .ts for the atomicity model — at every intermediate point a user's
+  // rights cover whichever slug is live).
+  //
   // `[^/]+` (not `.+`) so `.../foo/_rename/_rename` doesn't slip past
   // with modeName = "foo/_rename" and waste an engine round-trip on a
   // guaranteed 404. Mode names are always single URL segments — the
@@ -411,15 +421,66 @@ export async function handleConfig(
   );
   if (modeRenameMatch?.[1]) {
     const modeName = decodeURIComponent(modeRenameMatch[1]);
-    if (!resolved.crossOrg && !hasAdminPowers(session)) {
+    if (
+      !resolved.crossOrg &&
+      !hasAdminPowers(session) &&
+      !hasRights(rightsFor(session, "mode", "edit"), modeName)
+    ) {
       return errorResponse("Forbidden", 403);
     }
-    return proxyToEngine(
+    // Method check before the body read so a non-POST still gets 405
+    // (proxyToEngine would normally handle this, but we consume the
+    // body first and a failed json() on a bodyless GET would misreport
+    // as 400).
+    if (request.method !== "POST") {
+      return errorResponse("Method not allowed", 405);
+    }
+    // The migration needs `newName` before the engine call, so the arm
+    // reads the body (one-shot stream) and passes the parsed copy back
+    // through proxyToEngine. Only presence is validated here — slug
+    // format, self-rename, and collisions (409) are the engine's calls,
+    // and its status + message pass through faithfully.
+    let renameBody: { newName?: unknown };
+    try {
+      renameBody = (await request.json()) as { newName?: unknown };
+    } catch {
+      return errorResponse("Invalid JSON", 400);
+    }
+    const newName =
+      typeof renameBody.newName === "string" ? renameBody.newName.trim() : "";
+    if (!newName) {
+      return errorResponse("Missing newName", 400);
+    }
+
+    // Phase 1 — expand: affected users hold BOTH slugs. Aborts (500)
+    // without calling the engine if the user store can't be fully
+    // updated, so a half-migrated store never coexists with a rename.
+    let expandedUserKeys: string[];
+    try {
+      expandedUserKeys = await expandOrgModeRights(env, org, modeName, newName);
+    } catch {
+      return errorResponse("Rights migration failed; rename aborted", 500);
+    }
+
+    const engineRes = await proxyToEngine(
       request,
       env,
       `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_rename`,
-      ["POST"]
+      ["POST"],
+      renameBody
     );
+
+    // Phase 3 — contract on success (drop the old slug), compensate on
+    // engine failure (drop the never-live new slug). Both are best-
+    // effort: affected users already hold the live slug either way, so
+    // a failed cleanup leaves a harmless stale entry (logged inside the
+    // helper), and the engine's response passes through regardless.
+    if (engineRes.ok) {
+      await contractOrgModeRights(env, expandedUserKeys, modeName, newName);
+    } else {
+      await contractOrgModeRights(env, expandedUserKeys, newName, modeName);
+    }
+    return engineRes;
   }
 
   // /api/config/modes/{name}/_clone → POST. Same admin-only gate as

@@ -110,11 +110,14 @@ export function ModesPage() {
   const canPublishSelected =
     selectedMode !== null && hasRights(modePublishRights, selectedMode);
   const canDeleteSelected = canEditSelected && canPublishSelected;
-  // Rename is admin/cross-org only (#238 review). Per-user mode rights are
-  // slug-scoped, so a non-admin shepherd renaming a mode would lock
-  // themselves out of the renamed slug. Mirror the worker gate, which
-  // 403s any non-admin same-org rename.
-  const canRenameSelected = isAdmin || isCrossOrg;
+  // Rename opens to shepherds with EDIT rights on the row (#240): the
+  // worker now migrates per-user `mode_*_rights` old-slug→new-slug
+  // around the engine rename, so a shepherd renaming their own mode
+  // keeps access to the renamed slug. Mirrors the worker gate (admin /
+  // cross-org / edit-on-source). isAdmin/isCrossOrg are implied by
+  // canEditSelected here (both resolve modeEditRights to "*") but stay
+  // explicit to keep the gate's intent readable.
+  const canRenameSelected = isAdmin || isCrossOrg || canEditSelected;
   // Clone rides the same gate as rename today (#241 PR B). The clone
   // has no rights pre-assigned, so a non-admin cloning would land on a
   // mode they can't edit. Kept as a separate boolean so the gate can
