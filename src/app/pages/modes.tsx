@@ -13,6 +13,7 @@ import {
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import {
   effectiveModeEditRights,
+  renameSlugInRights,
   effectiveModePublishRights,
   filterByAnyRights,
   hasAdminPowers,
@@ -55,6 +56,7 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 
 export function ModesPage() {
   const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
   const isAdmin = hasAdminPowers(user);
   const homeOrg = useAuthStore((s) => s.user?.org);
   const selectedMode = useUiStore((s) => s.selectedMode);
@@ -110,11 +112,14 @@ export function ModesPage() {
   const canPublishSelected =
     selectedMode !== null && hasRights(modePublishRights, selectedMode);
   const canDeleteSelected = canEditSelected && canPublishSelected;
-  // Rename is admin/cross-org only (#238 review). Per-user mode rights are
-  // slug-scoped, so a non-admin shepherd renaming a mode would lock
-  // themselves out of the renamed slug. Mirror the worker gate, which
-  // 403s any non-admin same-org rename.
-  const canRenameSelected = isAdmin || isCrossOrg;
+  // Rename opens to shepherds with EDIT rights on the row (#240): the
+  // worker now migrates per-user `mode_*_rights` old-slug→new-slug
+  // around the engine rename, so a shepherd renaming their own mode
+  // keeps access to the renamed slug. Mirrors the worker gate (admin /
+  // cross-org / edit-on-source). isAdmin/isCrossOrg are implied by
+  // canEditSelected here (both resolve modeEditRights to "*") but stay
+  // explicit to keep the gate's intent readable.
+  const canRenameSelected = isAdmin || isCrossOrg || canEditSelected;
   // Clone rides the same gate as rename today (#241 PR B). The clone
   // has no rights pre-assigned, so a non-admin cloning would land on a
   // mode they can't edit. Kept as a separate boolean so the gate can
@@ -449,12 +454,49 @@ export function ModesPage() {
   const handleRenameMode = useCallback(
     async (name: string, newName: string) => {
       await renameMode.mutateAsync({ name, newName });
-      // Follow the selection to the new slug so the editor re-syncs the
-      // doc under the renamed identity instead of orphaning on the old
-      // (now alias-only) name.
+      // #240: the worker migrated this user's stored mode_*_rights to
+      // the new slug, but the Zustand auth store still holds the login-
+      // time snapshot with the OLD slug — the per-row rights guard and
+      // the dropdown filter would hide the just-renamed mode. Patch the
+      // store SYNCHRONOUSLY (a local mirror of the worker's migration)
+      // so no render ever sees the fresh list paired with stale rights.
+      // An awaited /me here would reopen exactly that window: the list
+      // cache already swapped slugs in useRenameMode.onSuccess, and the
+      // stale-selection guard would null the selection mid-round-trip,
+      // blanking the editor (rd-3 review).
+      const current = useAuthStore.getState().user;
+      if (current) {
+        setUser({
+          ...current,
+          mode_edit_rights: renameSlugInRights(
+            current.mode_edit_rights,
+            name,
+            newName
+          ),
+          mode_publish_rights: renameSlugInRights(
+            current.mode_publish_rights,
+            name,
+            newName
+          ),
+        });
+      }
+      // Follow the selection to the new slug DIRECTLY — deliberately
+      // NOT via handleSelectMode, unlike clone/retire (rd-4 review).
+      // Their switch-guard protects a still-existing source row; after
+      // a rename the old slug is gone from the list cache and the
+      // stale-selection guard nulls it regardless, so deferring to a
+      // "Switch mode?" dialog offers a "Stay" that cannot be honored.
+      // The rename dialog is dirty-gated upstream (renameDisabledReason)
+      // — a draft dirtied through the focus-leak window re-syncs under
+      // the renamed identity, same as main's pre-#240 behavior.
       if (name === selectedMode) setSelectedMode(newName);
+      // No server true-up here: /me re-reads KV, which is eventually
+      // consistent — a racing read could return the PRE-migration
+      // snapshot and clobber the exact patch above (rd-4 review). The
+      // local patch mirrors the worker's migration; the next full page
+      // load reconciles any residual drift.
     },
-    [renameMode, selectedMode, setSelectedMode]
+    [renameMode, selectedMode, setSelectedMode, setUser]
   );
 
   const handleJumpToLine = useCallback((line: number) => {

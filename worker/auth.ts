@@ -1,6 +1,6 @@
 import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
-import { errorResponse, jsonResponse } from "./helpers";
+import { errorResponse, jsonResponse, listKvKeys } from "./helpers";
 import type { LanguageRights, SessionData, StoredUser } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -53,25 +53,20 @@ export async function invalidateUserSessions(
   targetEmail: string,
   exceptSessionId?: string | null
 ): Promise<void> {
-  let cursor: string | undefined;
+  const keys = await listKvKeys(env.AUTH_KV, "session:");
   const deletePromises: Promise<void>[] = [];
-  do {
-    const page = await env.AUTH_KV.list({ prefix: "session:", cursor });
-    const reads = page.keys
-      .filter(
-        (key) => !exceptSessionId || key.name !== `session:${exceptSessionId}`
-      )
+  await Promise.all(
+    keys
+      .filter((key) => !exceptSessionId || key !== `session:${exceptSessionId}`)
       .map(async (key) => {
-        const sess = await env.AUTH_KV.get<SessionData>(key.name, {
+        const sess = await env.AUTH_KV.get<SessionData>(key, {
           type: "json",
         });
         if (sess?.email === targetEmail) {
-          deletePromises.push(env.AUTH_KV.delete(key.name));
+          deletePromises.push(env.AUTH_KV.delete(key));
         }
-      });
-    await Promise.all(reads);
-    cursor = page.list_complete ? undefined : page.cursor;
-  } while (cursor);
+      })
+  );
   await Promise.all(deletePromises);
 }
 

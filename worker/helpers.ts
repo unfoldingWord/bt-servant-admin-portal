@@ -31,3 +31,22 @@ export function requireSameOrigin(request: Request): Response | null {
   }
   return null;
 }
+
+// Paginated KV key listing — the AUTH_KV store has no secondary indexes,
+// so every "all users" / "all sessions" operation is a prefix scan. One
+// shared loop (rd-3 review: three hand-rolled copies had accumulated in
+// admin.ts, auth.ts, and rights-migration.ts) so a future change to
+// list semantics — an org index, error handling, limits — lands once.
+export async function listKvKeys(
+  kv: KVNamespace,
+  prefix: string
+): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const list = await kv.list({ prefix, cursor });
+    keys.push(...list.keys.map((k) => k.name));
+    cursor = list.list_complete ? undefined : list.cursor;
+  } while (cursor);
+  return keys;
+}
