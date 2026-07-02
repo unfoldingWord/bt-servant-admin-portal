@@ -1568,6 +1568,38 @@ describe("admin users — path-shaped org names (#253)", () => {
     expect((body as { user: { org: string } }).user.org).toBe("team/alpha");
   });
 
+  it("create with non-string org (number) → 400, not an uncaught TypeError 500", async () => {
+    const { status } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: {
+        email: "new@acme.com",
+        password: "Str0ng-Passw0rd!",
+        name: "New",
+        org: 123,
+      },
+    });
+    expect(status).toBe(400);
+  });
+
+  it("update with non-string org/name → 400, not an uncaught TypeError 500", async () => {
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    for (const body of [{ org: 123 }, { name: ["x"] }]) {
+      const { status } = await call({
+        method: "PUT",
+        pathname: `/api/admin/users/${bob.email}`,
+        headers: { "X-Admin-Secret": ADMIN_SECRET },
+        body,
+      });
+      expect(status).toBe(400);
+    }
+  });
+
   it("pre-existing slash-org user can still be updated (guard is create/move only)", async () => {
     // Directly seeded with a slash org — simulates a value stored before
     // this guard existed. Renaming (org untouched) must still work.

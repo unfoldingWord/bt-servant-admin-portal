@@ -456,7 +456,13 @@ function resolveOrg(
     if (!trimmed) {
       return { error: errorResponse("Invalid org parameter", 400) };
     }
-    if (trimmed === session.org) {
+    if (trimmed === session.org.trim()) {
+      // Trim BOTH sides: buildConfigUrl trims the param before sending,
+      // so a legacy whitespace-padded stored org (" team") would never
+      // equal its own trimmed echo and its admin would land in the
+      // cross-org 403 — the #247 symptom again (#253 review). Resolve
+      // to the RAW session.org so the engine path matches what the
+      // no-param branch produces for the same caller.
       resolved = { crossOrg: false, org: session.org };
     } else if (session.isSuperAdmin !== true) {
       return {

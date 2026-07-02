@@ -4,12 +4,6 @@ import type { Env } from "./helpers";
 import { errorResponse, jsonResponse, listKvKeys } from "./helpers";
 import type { LanguageRights, StoredUser } from "./types";
 
-// Accepts `"*"` or an array of non-empty trimmed strings. Returns `undefined`
-// when the input is unset so the caller can treat that as "leave existing
-// value alone". Shared by `language_rights` (legacy) and the four verb-perms
-// fields added in #181 — they all use the same `LanguageRights` shape.
-// `fieldName` is interpolated into error messages so a bad `mode_edit_rights`
-// payload doesn't surface as a misleading "language_rights" error.
 // Org names are free-text — slashes included: every upstream URL builder
 // encodeURIComponent's the org (config.ts, chat.ts, baruch.ts), which
 // neutralizes "/". An earlier draft rejected slashes here too, which
@@ -25,6 +19,12 @@ function isPathShapedOrg(org: string): boolean {
 
 const ORG_SHAPE_ERROR = 'org cannot be "." or ".."';
 
+// Accepts `"*"` or an array of non-empty trimmed strings. Returns `undefined`
+// when the input is unset so the caller can treat that as "leave existing
+// value alone". Shared by `language_rights` (legacy) and the four verb-perms
+// fields added in #181 — they all use the same `LanguageRights` shape.
+// `fieldName` is interpolated into error messages so a bad `mode_edit_rights`
+// payload doesn't surface as a misleading "language_rights" error.
 function parseRights(
   value: unknown,
   fieldName: string
@@ -233,10 +233,19 @@ async function createUser(
     return errorResponse("Invalid JSON", 400);
   }
 
-  const email = body.email?.trim().toLowerCase();
-  const password = body.password;
-  const name = body.name?.trim();
-  const org = body.org?.trim();
+  // typeof guards, not just `?.`: a non-string field (client bug,
+  // curl typo like org: 123) would reach .trim() and throw an uncaught
+  // TypeError — an opaque 500 instead of the 400 every other malformed
+  // field gets, and it would bypass the shape checks below entirely
+  // (#253 review).
+  const email =
+    typeof body.email === "string"
+      ? body.email.trim().toLowerCase()
+      : undefined;
+  const password =
+    typeof body.password === "string" ? body.password : undefined;
+  const name = typeof body.name === "string" ? body.name.trim() : undefined;
+  const org = typeof body.org === "string" ? body.org.trim() : undefined;
 
   if (!email || !password || !name || !org) {
     return errorResponse("email, password, name, and org are required", 400);
@@ -373,6 +382,15 @@ async function updateUser(
     body = (await request.json()) as typeof body;
   } catch {
     return errorResponse("Invalid JSON", 400);
+  }
+
+  // Same typeof rationale as createUser: reject non-string name/org
+  // before any .trim() below can throw into an opaque 500 (#253 review).
+  if (body.name !== undefined && typeof body.name !== "string") {
+    return errorResponse("name must be a string", 400);
+  }
+  if (body.org !== undefined && typeof body.org !== "string") {
+    return errorResponse("org must be a string", 400);
   }
 
   // Only cross-org scopes may grant or revoke isSuperAdmin. Reject loud

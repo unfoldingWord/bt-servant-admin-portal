@@ -218,6 +218,19 @@ export async function handleLogin(
     return errorResponse("Invalid email or password", 401);
   }
 
+  // Mirror of validateSession's dot-org fail-closed check (#253 review):
+  // without it, correct credentials against a "."/"..'-org record mint a
+  // session that every subsequent request rejects — an unexplained
+  // login-then-logged-out loop plus an orphaned KV session per attempt.
+  // Reject at login with a real message instead. Runs AFTER the password
+  // check so it can't be used to probe which emails exist.
+  if (user.org === "." || user.org === "..") {
+    return errorResponse(
+      "This account's organization is invalid; ask an admin to move it to a valid org",
+      403
+    );
+  }
+
   const sessionId = crypto.randomUUID();
   // Same partner-aware lazy migration as validateSession — keeps the
   // freshly-minted session shape identical to a re-hydrated one so the

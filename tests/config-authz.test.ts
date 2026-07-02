@@ -2168,10 +2168,12 @@ describe("config authz — cross-org via ?org= (#166)", () => {
     );
   });
 
-  it("?org=. and ?org=.. → 400 even for super-admin (dot segments survive encoding)", async () => {
-    // encodeURIComponent leaves dots alone and the URL parser normalizes
-    // /orgs/../x into a traversal — bare dot orgs stay rejected.
-    for (const dots of [".", ".."]) {
+  it.each([".", ".."])(
+    "?org=%j → 400 even for super-admin (dot segments survive encoding)",
+    async (dots) => {
+      // encodeURIComponent leaves dots alone and the URL parser
+      // normalizes /orgs/../x into a traversal — bare dot orgs stay
+      // rejected.
       const fetchSpy = spyFetch();
       const res = await handleConfig(
         makeRequestWithQuery("GET", "/api/config/modes", `org=${dots}`),
@@ -2181,9 +2183,8 @@ describe("config authz — cross-org via ?org= (#166)", () => {
       );
       expect(res.status).toBe(400);
       expect(fetchSpy).not.toHaveBeenCalled();
-      vi.restoreAllMocks();
     }
-  });
+  );
 
   it("no ?org= + super-admin → uses session.org (regression: same-org path unchanged)", async () => {
     const fetchSpy = spyFetch();
@@ -2505,11 +2506,12 @@ describe("config authz — path-shaped orgs (#253 review)", () => {
     );
   });
 
-  it("session.org '.' or '..' with NO ?org= → 400 (validated on the resolved org, not just the param)", async () => {
-    // A param-only check misses an org literally named "." reaching
-    // engine paths through the no-param session default: dots survive
-    // encodeURIComponent and /orgs/../x URL-normalizes into traversal.
-    for (const dots of [".", ".."]) {
+  it.each([".", ".."])(
+    "session.org %j with NO ?org= → 400 (validated on the resolved org, not just the param)",
+    async (dots) => {
+      // A param-only check misses an org literally named "." reaching
+      // engine paths through the no-param session default: dots survive
+      // encodeURIComponent and /orgs/../x URL-normalizes into traversal.
       const fetchSpy = spyFetch();
       const res = await handleConfig(
         makeRequest("GET", "/api/config/modes"),
@@ -2519,8 +2521,27 @@ describe("config authz — path-shaped orgs (#253 review)", () => {
       );
       expect(res.status).toBe(400);
       expect(fetchSpy).not.toHaveBeenCalled();
-      vi.restoreAllMocks();
     }
+  );
+
+  it("?org=<trimmed echo of whitespace-padded session org> → same-org (both sides trimmed)", async () => {
+    // buildConfigUrl trims the param, so a legacy stored org " team"
+    // echoes back as "team" — comparing against the untrimmed session
+    // value would 403 its own admin (the #247 symptom again). Resolves
+    // to the RAW session.org so the engine path matches the no-param
+    // branch.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery("GET", "/api/config/languages", "org=team"),
+      env,
+      makeSession({ org: " team", isAdmin: true, isSuperAdmin: false }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      `/api/v1/admin/orgs/${encodeURIComponent(" team")}/languages`
+    );
   });
 });
 

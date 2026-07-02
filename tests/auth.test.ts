@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { handleMe } from "../worker/auth";
+import { handleLogin, handleMe } from "../worker/auth";
 import { generateSalt, hashPassword } from "../worker/crypto";
 import type { LanguageRights, SessionData, StoredUser } from "../worker/types";
 
@@ -263,6 +263,33 @@ describe("validateSession — dot-segment org fails closed (#253)", () => {
         env
       );
       expect(res.status).toBe(401);
+    }
+  );
+});
+
+describe("handleLogin — dot-segment org fails closed (#253)", () => {
+  it.each([".", ".."])(
+    "correct credentials against org %j → 403 with a real message, no session minted",
+    async (dotOrg) => {
+      // Without the login-side mirror of validateSession's guard, login
+      // 200s and every later request 401s — an unexplained loop that
+      // also orphans a session record per attempt.
+      await seedUser({ email: "dot@acme.com", name: "Dot", org: dotOrg });
+
+      const res = await handleLogin(
+        new Request("https://portal.example.test/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: "dot@acme.com",
+            password: "test-password",
+          }),
+        }),
+        env
+      );
+      expect(res.status).toBe(403);
+      const sessions = await env.AUTH_KV.list({ prefix: "session:" });
+      expect(sessions.keys).toHaveLength(0);
     }
   );
 });
