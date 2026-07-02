@@ -455,9 +455,19 @@ export async function handleConfig(
     // Phase 1 — expand: affected users hold BOTH slugs. Aborts (500)
     // without calling the engine if the user store can't be fully
     // updated, so a half-migrated store never coexists with a rename.
+    //
+    // `resolved.org` (raw), NOT the URL-encoded `org` used for engine
+    // paths: stored `user.org` values are raw strings, so an org slug
+    // that encodes differently (space, non-ASCII) would otherwise match
+    // nobody and silently strand every shepherd (Frank rd-1 P1).
     let expandedUserKeys: string[];
     try {
-      expandedUserKeys = await expandOrgModeRights(env, org, modeName, newName);
+      expandedUserKeys = await expandOrgModeRights(
+        env,
+        resolved.org,
+        modeName,
+        newName
+      );
     } catch {
       return errorResponse("Rights migration failed; rename aborted", 500);
     }
@@ -467,7 +477,12 @@ export async function handleConfig(
       env,
       `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_rename`,
       ["POST"],
-      renameBody
+      // Forward the TRIMMED newName — the same value the migration used.
+      // The browser slugifies before sending, but the BFF is the API
+      // boundary: a direct call with `" conversation "` must not migrate
+      // rights to `conversation` while the engine receives the padded
+      // original (Frank rd-1 P2).
+      { ...renameBody, newName }
     );
 
     // Phase 3 — contract on success (drop the old slug), compensate on

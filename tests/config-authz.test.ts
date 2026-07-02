@@ -1198,6 +1198,66 @@ describe("#240 rename rights migration", () => {
     ]);
   });
 
+  it("org slug that URL-encodes differently still matches stored users (Frank rd-1 P1)", async () => {
+    // Stored `user.org` values are raw strings; the engine path uses
+    // encodeURIComponent(org). The migration must compare against the
+    // RAW org — an org with a space would otherwise migrate nobody and
+    // silently strand every shepherd.
+    await seedRightsUser({
+      email: "shepherd@spacey.com",
+      org: "word collective",
+      mode_edit_rights: ["spoken"],
+    });
+    spyFetch();
+
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ org: "word collective", isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(200);
+
+    expect(
+      (await readRightsUser("shepherd@spacey.com")).mode_edit_rights
+    ).toEqual(["conversation"]);
+  });
+
+  it("padded newName is trimmed for BOTH the migration and the engine body (Frank rd-1 P2)", async () => {
+    // The BFF is the API boundary: a direct call with `" conversation "`
+    // must not migrate rights to `conversation` while the engine
+    // receives the padded original.
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+    });
+    const fetchSpy = spyFetch();
+
+    const res = await handleConfig(
+      new Request(
+        "https://portal.example.test/api/config/modes/spoken/_rename",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ newName: "  conversation  " }),
+        }
+      ),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(200);
+
+    const sentBody = JSON.parse(
+      (fetchSpy.mock.calls[0]![1] as RequestInit).body as string
+    ) as { newName: string };
+    expect(sentBody.newName).toBe("conversation");
+    expect(
+      (await readRightsUser("shepherd@acme.com")).mode_edit_rights
+    ).toEqual(["conversation"]);
+  });
+
   it("cross-org rename migrates TARGET-org users, not the caller's home org", async () => {
     await seedRightsUser({
       email: "target@word-collective.com",
