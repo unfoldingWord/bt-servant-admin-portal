@@ -1,7 +1,7 @@
 import { getSessionId, invalidateUserSessions, validateSession } from "./auth";
 import { generateSalt, hashPassword, timingSafeEqual } from "./crypto";
 import type { Env } from "./helpers";
-import { errorResponse, jsonResponse } from "./helpers";
+import { errorResponse, jsonResponse, listKvKeys } from "./helpers";
 import type { LanguageRights, StoredUser } from "./types";
 
 // Accepts `"*"` or an array of non-empty trimmed strings. Returns `undefined`
@@ -299,17 +299,11 @@ async function listUsers(
     return errorResponse("Method not allowed", 405);
   }
 
-  const keys: KVNamespaceListKey<unknown>[] = [];
-  let cursor: string | undefined;
-  do {
-    const list = await env.AUTH_KV.list({ prefix: "user:", cursor });
-    keys.push(...list.keys);
-    cursor = list.list_complete ? undefined : list.cursor;
-  } while (cursor);
+  const keys = await listKvKeys(env.AUTH_KV, "user:");
 
   const users = await Promise.all(
     keys.map(async (key) => {
-      const user = await env.AUTH_KV.get<StoredUser>(key.name, {
+      const user = await env.AUTH_KV.get<StoredUser>(key, {
         type: "json",
       });
       if (!user) return null;

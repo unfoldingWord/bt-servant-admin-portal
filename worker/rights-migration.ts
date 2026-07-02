@@ -1,4 +1,5 @@
 import type { Env } from "./helpers";
+import { listKvKeys } from "./helpers";
 import type { LanguageRights, StoredUser } from "./types";
 
 // #240 — per-user rights migration for slug-changing mode ops.
@@ -61,7 +62,9 @@ export type RightsField = (typeof MODE_RIGHTS_FIELDS)[number];
 // modes `undefined` means no access (nothing to widen), and for the
 // legacy language field it means full access (same as wildcard).
 // Returns the new array, or null when no change is needed (from absent,
-// or to already present).
+// or to already present). Appends WITHOUT sorting: expand+compensate on
+// a failed rename must be write-neutral, and a sort would permanently
+// reorder arrays for an operation that did nothing (rd-3 review).
 export function expandRights(
   rights: LanguageRights | undefined,
   from: string,
@@ -70,7 +73,7 @@ export function expandRights(
   if (rights === undefined || rights === "*") return null;
   if (!rights.includes(from)) return null;
   if (rights.includes(to)) return null;
-  return [...rights, to].sort();
+  return [...rights, to];
 }
 
 // Remove `remove` — but ONLY when `keep` is present in the same array.
@@ -121,21 +124,6 @@ function applyToUser(
   return changed;
 }
 
-// Enumerate every `user:` key. AUTH_KV has no org index — same paginated
-// scan as worker/admin.ts listUsers. Fine at current org sizes; if user
-// counts ever approach the Workers subrequest cap, an org index is the
-// fix, not a smarter scan (flagged in #240's design notes).
-async function listUserKeys(env: Env): Promise<string[]> {
-  const keys: string[] = [];
-  let cursor: string | undefined;
-  do {
-    const list = await env.AUTH_KV.list({ prefix: "user:", cursor });
-    keys.push(...list.keys.map((k) => k.name));
-    cursor = list.list_complete ? undefined : list.cursor;
-  } while (cursor);
-  return keys;
-}
-
 // Phase 1: add `newSlug` alongside `oldSlug` for every affected user in
 // `org`. Each record is re-read immediately before its write (read →
 // transform → put per key), so a concurrent admin edit to the same user
@@ -158,7 +146,7 @@ export async function expandOrgModeRights(
   oldSlug: string,
   newSlug: string
 ): Promise<MigrationRecord[]> {
-  const keys = await listUserKeys(env);
+  const keys = await listKvKeys(env.AUTH_KV, "user:");
 
   const results = await Promise.allSettled(
     keys.map(async (key): Promise<MigrationRecord | null> => {
@@ -175,11 +163,18 @@ export async function expandOrgModeRights(
 
   const written: MigrationRecord[] = [];
   let failed = false;
-  for (const result of results) {
+  for (const [i, result] of results.entries()) {
     if (result.status === "fulfilled") {
       if (result.value) written.push(result.value);
     } else {
       failed = true;
+      // Name the key and reason — the only evidence an operator gets
+      // when diagnosing a production KV failure via cf-logs (rd-3
+      // review: this was the one failure branch with zero diagnostics).
+      console.error(
+        `rights-migration: expand failed for ${keys[i]} (org=${org}, ${oldSlug}→${newSlug})`,
+        result.reason
+      );
     }
   }
 

@@ -14,6 +14,7 @@ import {
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import {
   effectiveModeEditRights,
+  renameSlugInRights,
   effectiveModePublishRights,
   filterByAnyRights,
   hasAdminPowers,
@@ -457,23 +458,51 @@ export function ModesPage() {
       // #240: the worker migrated this user's stored mode_*_rights to
       // the new slug, but the Zustand auth store still holds the login-
       // time snapshot with the OLD slug — the per-row rights guard and
-      // the dropdown filter below would hide the just-renamed mode
-      // until a full reload. Refresh from /me BEFORE moving the
-      // selection so the guard sees the migrated rights. Best-effort:
-      // on failure keep the stale user (admins are unaffected either
-      // way; a shepherd falls back to reload — the pre-#240 behavior).
-      try {
-        const freshUser = await fetchMe();
-        if (freshUser) setUser(freshUser);
-      } catch {
-        // keep the stale snapshot; selection below still moves
+      // the dropdown filter would hide the just-renamed mode. Patch the
+      // store SYNCHRONOUSLY (a local mirror of the worker's migration)
+      // so no render ever sees the fresh list paired with stale rights.
+      // An awaited /me here would reopen exactly that window: the list
+      // cache already swapped slugs in useRenameMode.onSuccess, and the
+      // stale-selection guard would null the selection mid-round-trip,
+      // blanking the editor (rd-3 review).
+      const current = useAuthStore.getState().user;
+      if (current) {
+        setUser({
+          ...current,
+          mode_edit_rights: renameSlugInRights(
+            current.mode_edit_rights,
+            name,
+            newName
+          ),
+          mode_publish_rights: renameSlugInRights(
+            current.mode_publish_rights,
+            name,
+            newName
+          ),
+        });
       }
       // Follow the selection to the new slug so the editor re-syncs the
       // doc under the renamed identity instead of orphaning on the old
-      // (now alias-only) name.
-      if (name === selectedMode) setSelectedMode(newName);
+      // (now alias-only) name. Route through handleSelectMode (not raw
+      // setSelectedMode) so the dirty-editor switch-guard applies —
+      // same belt-and-suspenders as clone (#241 PR B) and retire.
+      if (name === selectedMode) handleSelectMode(newName);
+      // Background true-up from the server, shepherds only: admin and
+      // cross-org gates resolve to "*" without reading stored arrays,
+      // so the round-trip would be a pure no-op for them. Fire-and-
+      // forget — the optimistic patch above already made the UI
+      // consistent; this just reconciles any drift.
+      if (!isAdmin && !isCrossOrg) {
+        void fetchMe()
+          .then((freshUser) => {
+            if (freshUser) setUser(freshUser);
+          })
+          .catch(() => {
+            // keep the optimistic patch; next full load reconciles
+          });
+      }
     },
-    [renameMode, selectedMode, setSelectedMode, setUser]
+    [renameMode, selectedMode, handleSelectMode, setUser, isAdmin, isCrossOrg]
   );
 
   const handleJumpToLine = useCallback((line: number) => {

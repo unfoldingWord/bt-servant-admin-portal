@@ -860,6 +860,10 @@ function spyFetchRenameEngine(opts: {
   probe?: { name: string } | null;
   engineStatus?: number;
   engineThrows?: boolean;
+  // Simulate a transient engine failure (500) on the preflight GETs —
+  // the fail-closed paths.
+  sourceGetFails?: boolean;
+  targetGetFails?: boolean;
 }) {
   let sourceGets = 0;
   const wrap = (mode: { name: string } | null | undefined) =>
@@ -888,6 +892,11 @@ function spyFetchRenameEngine(opts: {
         opts.source === undefined ? { name: opts.sourceSlug } : opts.source;
       if (url.endsWith(`/modes/${encodeURIComponent(opts.sourceSlug)}`)) {
         sourceGets += 1;
+        if (sourceGets === 1 && opts.sourceGetFails) {
+          return Promise.resolve(
+            new Response('{"error":"transient"}', { status: 500 })
+          );
+        }
         if (sourceGets > 1) {
           return Promise.resolve(
             wrap(opts.probe === undefined ? defaultSource : opts.probe)
@@ -896,6 +905,11 @@ function spyFetchRenameEngine(opts: {
         return Promise.resolve(wrap(defaultSource));
       }
       if (url.endsWith(`/modes/${encodeURIComponent(opts.targetSlug)}`)) {
+        if (opts.targetGetFails) {
+          return Promise.resolve(
+            new Response('{"error":"transient"}', { status: 500 })
+          );
+        }
         return Promise.resolve(
           wrap(opts.target === undefined ? null : opts.target)
         );
@@ -1192,6 +1206,48 @@ describe("config authz — #232 mode rename (_rename)", () => {
     expect(res.status).toBe(200);
     expect(findEnginePost(fetchSpy)).toBeDefined();
   });
+
+  it("engine error on SOURCE preflight → 502 fail-closed, not a false 404 (rd-3)", async () => {
+    const fetchSpy = spyFetchRenameEngine({
+      sourceSlug: "spoken",
+      targetSlug: "conversation",
+      sourceGetFails: true,
+    });
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(502);
+    expect(findEnginePost(fetchSpy)).toBeUndefined();
+  });
+
+  it("engine error on TARGET preflight → 502 fail-closed, no expand (rd-3 F1)", async () => {
+    // The collision guard must not evaporate on a transient GET error —
+    // that would reopen the escalation window it exists to close.
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+    });
+    const fetchSpy = spyFetchRenameEngine({
+      sourceSlug: "spoken",
+      targetSlug: "conversation",
+      targetGetFails: true,
+    });
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ mode_edit_rights: ["spoken"] }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(502);
+    expect(findEnginePost(fetchSpy)).toBeUndefined();
+    expect(
+      (await readRightsUser("shepherd@acme.com")).mode_edit_rights
+    ).toEqual(["spoken"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1258,7 +1314,7 @@ describe("#240 rename rights migration", () => {
     expect(res.status).toBe(200);
 
     const after = await readRightsUser("shepherd@acme.com");
-    expect(after.mode_edit_rights).toEqual(["conversation", "other"]);
+    expect(after.mode_edit_rights).toEqual(["other", "conversation"]);
     expect(after.mode_publish_rights).toEqual(["conversation"]);
   });
 
@@ -1383,7 +1439,7 @@ describe("#240 rename rights migration", () => {
 
     expect(
       (await readRightsUser("shepherd@acme.com")).mode_edit_rights
-    ).toEqual(["conversation", "spoken"]);
+    ).toEqual(["spoken", "conversation"]);
   });
 
   it("engine 5xx + probe shows rename LANDED → contracts to the new slug (rd-2 F7)", async () => {
@@ -1416,7 +1472,12 @@ describe("#240 rename rights migration", () => {
     ).toEqual(["conversation"]);
   });
 
-  it("engine 5xx + probe shows rename did NOT land → compensates to the old slug", async () => {
+  it("engine 5xx + probe still shows the OLD name → keeps the superset (rd-3 F3)", async () => {
+    // Probe-says-old is NOT definitive: a gateway 5xx can be emitted
+    // while the engine is still processing, and the rename may commit
+    // moments after the probe. Compensating here would strand every
+    // shepherd on a dead slug. Only probe-says-NEW is proof (of
+    // success); everything else keeps both slugs.
     await seedRightsUser({
       email: "shepherd@acme.com",
       org: "acme",
@@ -1439,7 +1500,7 @@ describe("#240 rename rights migration", () => {
 
     expect(
       (await readRightsUser("shepherd@acme.com")).mode_edit_rights
-    ).toEqual(["spoken"]);
+    ).toEqual(["spoken", "conversation"]);
   });
 
   it("user already holding BOTH slugs is untouched by contract (pinned)", async () => {

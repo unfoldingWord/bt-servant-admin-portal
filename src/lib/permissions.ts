@@ -199,3 +199,23 @@ export function filterAuthorizedLanguages<T extends { name: string }>(
   const allowed = new Set(rights);
   return languages.filter((l) => allowed.has(l.name));
 }
+
+// #240: local mirror of the worker's rename rights-migration. After a
+// shepherd renames a mode, the worker rewrites their stored
+// mode_*_rights (old slug → new slug) — but the client auth store still
+// holds the login-time snapshot, and the per-row guard + dropdown
+// filter would hide the just-renamed mode until a reload. The caller
+// applies this synchronously post-rename (with a background /me
+// true-up), so the UI never renders an inconsistent rights/list pair.
+// `undefined` and `"*"` pass through — wildcard callers don't key on
+// stored arrays.
+export function renameSlugInRights(
+  rights: LanguageRights | undefined,
+  from: string,
+  to: string
+): LanguageRights | undefined {
+  if (rights === undefined || rights === "*") return rights;
+  if (!rights.includes(from)) return rights;
+  const withoutFrom = rights.filter((slug) => slug !== from);
+  return withoutFrom.includes(to) ? withoutFrom : [...withoutFrom, to];
+}

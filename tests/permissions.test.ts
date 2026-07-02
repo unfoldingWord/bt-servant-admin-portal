@@ -12,6 +12,7 @@ import {
   hasAnyLanguageRights,
   hasAnyModeAccess,
   hasLanguageRights,
+  renameSlugInRights,
 } from "../src/lib/permissions";
 
 // Trinary back-compat is load-bearing for this file:
@@ -366,5 +367,31 @@ describe("filterByAnyRights", () => {
 
   it("both empty arrays → empty", () => {
     expect(filterByAnyRights(all, [], [])).toEqual([]);
+  });
+});
+
+describe("renameSlugInRights (#240 client mirror)", () => {
+  it("replaces the old slug with the new, preserving order", () => {
+    expect(renameSlugInRights(["a", "spoken", "b"], "spoken", "conv")).toEqual([
+      "a",
+      "b",
+      "conv",
+    ]);
+  });
+
+  it("no duplicate when the new slug is already held", () => {
+    expect(renameSlugInRights(["spoken", "conv"], "spoken", "conv")).toEqual([
+      "conv",
+    ]);
+  });
+
+  it("unchanged when the old slug isn't held", () => {
+    const rights = ["other"];
+    expect(renameSlugInRights(rights, "spoken", "conv")).toBe(rights);
+  });
+
+  it("wildcard and undefined pass through", () => {
+    expect(renameSlugInRights("*", "spoken", "conv")).toBe("*");
+    expect(renameSlugInRights(undefined, "spoken", "conv")).toBeUndefined();
   });
 });

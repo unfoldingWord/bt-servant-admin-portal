@@ -1,5 +1,12 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+afterEach(() => {
+  // Belt-and-suspenders for the KV put spy below: if its expected
+  // rejection ever stops occurring, an inline mockRestore would be
+  // skipped and the rejecting mock would leak into every later test.
+  vi.restoreAllMocks();
+});
 
 import {
   contractOrgModeRights,
@@ -17,15 +24,18 @@ import type { StoredUser } from "../worker/types";
 // modified).
 
 describe("expandRights", () => {
-  it("adds the new slug alongside the old, sorted", () => {
+  it("appends the new slug alongside the old WITHOUT reordering", () => {
+    // Order preservation is load-bearing: a failed rename must be
+    // write-neutral (expand + compensate restores the exact original
+    // array), so expand can't sort as a side effect.
     expect(expandRights(["spoken"], "spoken", "conversation")).toEqual([
-      "conversation",
       "spoken",
+      "conversation",
     ]);
     expect(expandRights(["b", "spoken", "a"], "spoken", "z")).toEqual([
-      "a",
       "b",
       "spoken",
+      "a",
       "z",
     ]);
   });
@@ -131,11 +141,11 @@ describe("expandOrgModeRights", () => {
     ]);
 
     const after = await read("a@acme.com");
-    expect(after.mode_edit_rights).toEqual(["conversation", "spoken"]);
+    expect(after.mode_edit_rights).toEqual(["spoken", "conversation"]);
     expect(after.mode_publish_rights).toEqual([
-      "conversation",
       "spoken",
       "zulu",
+      "conversation",
     ]);
     expect((await read("b@acme.com")).mode_edit_rights).toEqual(["other"]);
   });

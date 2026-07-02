@@ -166,6 +166,43 @@ async function fetchCurrentResource(
   return data as ResourceShape;
 }
 
+// Tri-state mode lookup for the rename arm's preflights. Unlike
+// fetchCurrentResource (whose null-on-any-error is deliberately lax —
+// the PUT gate falls through to stricter creation semantics), the
+// preflights are SECURITY checks and must fail CLOSED: a transient
+// engine 5xx during the collision check must abort the rename, not
+// read as "slug is free" and reopen the escalation window it guards
+// (rd-3 review). Distinguishing 404 from other failures also keeps the
+// error contract honest — "missing" is the only case reported as 404.
+type ModePreflight =
+  | { status: "found"; mode: ResourceShape }
+  | { status: "missing" }
+  | { status: "error" };
+
+async function preflightMode(
+  env: Env,
+  org: string,
+  name: string
+): Promise<ModePreflight> {
+  try {
+    const res = await fetch(
+      `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(name)}`,
+      { headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` } }
+    );
+    if (res.status === 404) return { status: "missing" };
+    if (!res.ok) return { status: "error" };
+    const data = (await res.json()) as Record<string, unknown>;
+    const wrapped = data.mode;
+    const mode =
+      wrapped && typeof wrapped === "object"
+        ? (wrapped as ResourceShape)
+        : (data as ResourceShape);
+    return { status: "found", mode };
+  } catch {
+    return { status: "error" };
+  }
+}
+
 // Diff a PUT body against current engine state to determine which verb
 // rights the caller needs. The portal sends the full resource on every
 // PUT — document and published both present even for an autosave that
@@ -469,12 +506,20 @@ export async function handleConfig(
     // by a retire-and-forward) could rename — and thereby capture — the
     // aliased-to mode, stranding its real shepherds. Runs AFTER authz,
     // so a no-rights caller can't probe mode existence through it.
-    const sourceMode = await fetchCurrentResource(env, "mode", org, modeName);
-    if (!sourceMode) {
+    // preflightMode fails CLOSED: engine errors abort with 502 (retry),
+    // and only a true engine 404 reports "not found" (rd-3 review).
+    const source = await preflightMode(env, org, modeName);
+    if (source.status === "error") {
+      return errorResponse(
+        "Engine unreachable; rename not attempted. Retry the rename.",
+        502
+      );
+    }
+    if (source.status === "missing") {
       return errorResponse("Mode not found", 404);
     }
     const canonicalName =
-      typeof sourceMode.name === "string" ? sourceMode.name : modeName;
+      typeof source.mode.name === "string" ? source.mode.name : modeName;
     if (canonicalName !== modeName) {
       return errorResponse(
         `"${modeName}" is an alias of "${canonicalName}" — rename the mode via its canonical slug`,
@@ -486,16 +531,24 @@ export async function handleConfig(
     // it, renaming TO an existing mode's slug would grant every
     // old-slug holder rights on that live mode for the window between
     // expand and the engine's 409 (and permanently, if compensation's
-    // best-effort write fails). The engine GET resolves aliases, so a
-    // newName matching another mode's name OR alias surfaces here; a
-    // newName that is THIS mode's own alias returns the same mode and
-    // falls through — that's the engine's valid promote-own-alias
-    // un-rename.
-    const targetMode = await fetchCurrentResource(env, "mode", org, newName);
+    // best-effort write fails). Fails CLOSED for the same reason: a
+    // transient engine error must not read as "slug is free" and reopen
+    // the window this check exists to close. The engine GET resolves
+    // aliases, so a newName matching another mode's name OR alias
+    // surfaces here; a newName that is THIS mode's own alias returns
+    // the same mode and falls through — that's the engine's valid
+    // promote-own-alias un-rename.
+    const target = await preflightMode(env, org, newName);
+    if (target.status === "error") {
+      return errorResponse(
+        "Engine unreachable; rename not attempted. Retry the rename.",
+        502
+      );
+    }
     if (
-      targetMode &&
-      typeof targetMode.name === "string" &&
-      targetMode.name !== canonicalName
+      target.status === "found" &&
+      typeof target.mode.name === "string" &&
+      target.mode.name !== canonicalName
     ) {
       return errorResponse(
         `Slug "${newName}" already belongs to another mode (as a name or alias) in this org`,
@@ -551,37 +604,37 @@ export async function handleConfig(
     }
 
     // Phase 3 — classify the outcome:
-    //   2xx  → rename applied → contract (drop the old slug).
-    //   4xx  → engine definitively rejected (validation/collision/404)
-    //          → compensate (drop the never-live new slug).
-    //   5xx  → AMBIGUOUS (the engine may have persisted the rename and
-    //          failed afterwards, or a gateway may have emitted the 5xx
-    //          after commit). Disambiguate with a re-GET of the old
-    //          slug — alias-aware resolution means it returns the mode
-    //          either way, and its canonical name tells us whether the
-    //          rename landed. If the probe itself fails, keep the
-    //          superset: never compensate on uncertainty.
+    //   2xx        → rename applied → contract (drop the old slug).
+    //   400–499    → engine definitively rejected (validation, races on
+    //                collision/404) → compensate (drop the never-live
+    //                new slug).
+    //   everything → AMBIGUOUS. A 5xx can be emitted by a gateway after
+    //   else         the engine committed — or WHILE the engine is
+    //                still processing, so even a probe that reports the
+    //                old name doesn't prove the rename won't land
+    //                moments later (rd-3 review). The probe is used
+    //                only in the ONE direction it's definitive: seeing
+    //                the NEW canonical name proves the rename applied →
+    //                contract. Every other 5xx-class outcome keeps the
+    //                superset (both slugs) + logs — never compensate on
+    //                uncertainty. Worst case is an inert extra entry;
+    //                compensating a rename that lands strands every
+    //                shepherd. (3xx lands here too rather than in the
+    //                "rejected" band — it's not evidence of failure.)
     // Cleanup is best-effort in all branches (affected users already
     // hold the live slug; failures log inside the helper), and the
     // engine's response passes through regardless.
     if (engineRes.ok) {
       await contractOrgModeRights(env, migrationRecords, modeName, newName);
-    } else if (engineRes.status < 500) {
+    } else if (engineRes.status >= 400 && engineRes.status < 500) {
       await contractOrgModeRights(env, migrationRecords, newName, modeName);
     } else {
-      const probe = await fetchCurrentResource(
-        env,
-        "mode",
-        org,
-        modeName
-      ).catch(() => null);
-      if (probe && probe.name === newName) {
+      const probe = await preflightMode(env, org, modeName);
+      if (probe.status === "found" && probe.mode.name === newName) {
         await contractOrgModeRights(env, migrationRecords, modeName, newName);
-      } else if (probe && probe.name === modeName) {
-        await contractOrgModeRights(env, migrationRecords, newName, modeName);
       } else {
         console.error(
-          `rename ${modeName}→${newName} (org=${resolved.org}): engine 5xx and probe inconclusive; leaving rights superset in place`
+          `rename ${modeName}→${newName} (org=${resolved.org}): engine returned ${engineRes.status} and the probe could not confirm the rename applied; leaving rights superset in place`
         );
       }
     }
