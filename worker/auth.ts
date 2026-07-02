@@ -118,6 +118,18 @@ export async function validateSession(
     return null;
   }
 
+  // Fail closed on traversal-capable org names (#253 review P1).
+  // admin.ts rejects "." / ".." at user create/move, but a stored value
+  // predating that guard hydrates into session.org and reaches upstream
+  // URL builders (chat.ts, baruch.ts, config.ts) where bare dots
+  // survive encodeURIComponent and /orgs/../x normalizes past the org
+  // scope. No legitimate org is named "." or ".." — locking the
+  // account out (recoverable via an admin org-move) beats letting its
+  // every request escape its org prefix.
+  if (user.org === "." || user.org === "..") {
+    return null;
+  }
+
   // Lazy-migrate the legacy single-bit `language_rights` into the two
   // verb-perms fields when the stored record predates #181. Partner-
   // aware: if either verb-perm is explicit, the unset partner falls

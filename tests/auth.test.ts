@@ -233,3 +233,36 @@ describe("validateSession lazy-mapping (#181) — via handleMe", () => {
     expect(me.mode_publish_rights).toBe("*");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Dot-segment org names fail closed at session validation (#253 review P1)
+// ---------------------------------------------------------------------------
+//
+// admin.ts rejects "." / ".." at user create/move, but a stored value
+// predating that guard hydrates into session.org and reaches upstream
+// URL builders where dots survive encodeURIComponent and /orgs/../x
+// normalizes past the org scope. validateSession is the single choke
+// point every authenticated request crosses.
+
+describe("validateSession — dot-segment org fails closed (#253)", () => {
+  it.each([".", ".."])(
+    "user stored with org %j → session invalid (401 from /api/me)",
+    async (dotOrg) => {
+      const user = await seedUser({
+        email: "dot@acme.com",
+        name: "Dot",
+        org: dotOrg,
+      });
+      const session = await seedLegacySession(user);
+
+      const res = await handleMe(
+        new Request("https://portal.example.test/api/me", {
+          method: "GET",
+          headers: { Cookie: `session=${session}` },
+        }),
+        env
+      );
+      expect(res.status).toBe(401);
+    }
+  );
+});

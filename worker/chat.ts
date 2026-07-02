@@ -93,7 +93,7 @@ export async function handleHistory(
 
   const userId = resolveUserId(url.searchParams.get("user_id"), session);
   const params = new URLSearchParams({ limit, offset });
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${session.org}/users/${userId}/history?${params.toString()}`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${encodeURIComponent(session.org)}/users/${userId}/history?${params.toString()}`;
 
   const engineRes = await fetch(engineUrl, {
     headers: {
@@ -132,7 +132,7 @@ export async function handleDeleteHistory(
 
   const url = new URL(request.url);
   const userId = resolveUserId(url.searchParams.get("user_id"), session);
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${session.org}/users/${userId}/history`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(session.org)}/users/${userId}/history`;
 
   const engineRes = await fetch(engineUrl, {
     method: "DELETE",
@@ -163,7 +163,7 @@ export async function handleDeleteMemory(
 
   const url = new URL(request.url);
   const userId = resolveUserId(url.searchParams.get("user_id"), session);
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${session.org}/users/${userId}/memory`;
+  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(session.org)}/users/${userId}/memory`;
 
   const engineRes = await fetch(engineUrl, {
     method: "DELETE",

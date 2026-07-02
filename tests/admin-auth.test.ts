@@ -1510,25 +1510,22 @@ describe("verb-perms — parseRights validation errors", () => {
 // values stored before this guard are handled at the consumers.
 
 describe("admin users — path-shaped org names (#253)", () => {
-  it.each(["team/alpha", ".", ".."])(
-    "create user with org %j → 400",
-    async (badOrg) => {
-      const { status } = await call({
-        method: "POST",
-        pathname: "/api/admin/users",
-        headers: { "X-Admin-Secret": ADMIN_SECRET },
-        body: {
-          email: "new@acme.com",
-          password: "Str0ng-Passw0rd!",
-          name: "New",
-          org: badOrg,
-        },
-      });
-      expect(status).toBe(400);
-    }
-  );
+  it.each([".", ".."])("create user with org %j → 400", async (badOrg) => {
+    const { status } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: {
+        email: "new@acme.com",
+        password: "Str0ng-Passw0rd!",
+        name: "New",
+        org: badOrg,
+      },
+    });
+    expect(status).toBe(400);
+  });
 
-  it.each(["a/b", ".", ".."])("move user to org %j → 400", async (badOrg) => {
+  it.each([".", ".."])("move user to org %j → 400", async (badOrg) => {
     const bob = await seedUser({
       email: "bob@acme.com",
       name: "Bob",
@@ -1541,6 +1538,34 @@ describe("admin users — path-shaped org names (#253)", () => {
       body: { org: badOrg },
     });
     expect(status).toBe(400);
+  });
+
+  it("org admin of an existing slash-named org can create users in it (#253 review P2)", async () => {
+    // Slash is NOT rejected: every upstream URL builder encodes the org,
+    // and rejecting the shape before the own-org equality check stranded
+    // existing slash tenants' membership management entirely.
+    const admin = await seedUser({
+      email: "admin@slash.org",
+      name: "Slash Admin",
+      org: "team/alpha",
+      isAdmin: true,
+    });
+    const session = await seedSession(admin);
+
+    const { status, body } = await call({
+      method: "POST",
+      pathname: "/api/admin/users",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      sessionId: session,
+      body: {
+        email: "new@slash.org",
+        password: "Str0ng-Passw0rd!",
+        name: "New Member",
+        org: "team/alpha",
+      },
+    });
+    expect(status).toBe(201);
+    expect((body as { user: { org: string } }).user.org).toBe("team/alpha");
   });
 
   it("pre-existing slash-org user can still be updated (guard is create/move only)", async () => {

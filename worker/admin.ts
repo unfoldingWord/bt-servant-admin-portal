@@ -10,18 +10,20 @@ import type { LanguageRights, StoredUser } from "./types";
 // fields added in #181 — they all use the same `LanguageRights` shape.
 // `fieldName` is interpolated into error messages so a bad `mode_edit_rights`
 // payload doesn't surface as a misleading "language_rights" error.
-// Org names are free-text, but path-shaped values are rejected at the
-// door: session.org is interpolated into upstream URLs across the worker
-// (chat.ts and baruch.ts interpolate it raw; config.ts encodes but bare
-// "."/".." survive encodeURIComponent and URL-normalize into traversal).
-// Guarding creation and move keeps such values out of every downstream
-// URL builder at once (#253 review P2). Stored orgs predating this guard
-// are handled defensively where they're consumed (config.ts resolveOrg).
+// Org names are free-text — slashes included: every upstream URL builder
+// encodeURIComponent's the org (config.ts, chat.ts, baruch.ts), which
+// neutralizes "/". An earlier draft rejected slashes here too, which
+// stranded existing slash-named orgs' own admins from creating users in
+// their org (#253 review P2 — the shape guard ran before the own-org
+// equality check). The ONLY shapes rejected are bare "." / "..":
+// encoding can't neutralize them (/orgs/../x URL-normalizes past the
+// org scope) and no legitimate org carries those names. Stored values
+// predating this guard fail closed at validateSession.
 function isPathShapedOrg(org: string): boolean {
-  return org === "." || org === ".." || org.includes("/");
+  return org === "." || org === "..";
 }
 
-const ORG_SHAPE_ERROR = 'org cannot be "." or ".." or contain "/"';
+const ORG_SHAPE_ERROR = 'org cannot be "." or ".."';
 
 function parseRights(
   value: unknown,
