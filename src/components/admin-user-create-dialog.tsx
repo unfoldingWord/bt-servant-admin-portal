@@ -319,6 +319,7 @@ export function AdminUserCreateDialog({
               onChange={setLangEdit}
               availableItems={languagesQuery.data?.languages}
               loadError={languagesQuery.isError}
+              onRetry={() => void languagesQuery.refetch()}
             />
             <RightsSelector
               kind="language"
@@ -327,6 +328,7 @@ export function AdminUserCreateDialog({
               onChange={setLangPublish}
               availableItems={languagesQuery.data?.languages}
               loadError={languagesQuery.isError}
+              onRetry={() => void languagesQuery.refetch()}
             />
             <RightsSelector
               kind="mode"
@@ -335,6 +337,7 @@ export function AdminUserCreateDialog({
               onChange={setModeEdit}
               availableItems={modesQuery.data?.modes}
               loadError={modesQuery.isError}
+              onRetry={() => void modesQuery.refetch()}
             />
             <RightsSelector
               kind="mode"
@@ -343,6 +346,7 @@ export function AdminUserCreateDialog({
               onChange={setModePublish}
               availableItems={modesQuery.data?.modes}
               loadError={modesQuery.isError}
+              onRetry={() => void modesQuery.refetch()}
             />
 
             {errorText && (

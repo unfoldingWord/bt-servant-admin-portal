@@ -2481,17 +2481,17 @@ describe("config authz — same-org ?org= (#247)", () => {
     );
   });
 
-  it("?org= matches case-insensitively and resolves to session.org's casing", async () => {
-    // Org values are free-text at creation ("Test Organization one"), so
-    // the client and the session can disagree on case. The upstream KV
-    // key is case-sensitive — resolve to the session's canonical casing,
-    // never the param's.
+  it("?org= with spaces matches exactly against session.org (real-world org shape)", async () => {
+    // Org values are free-text at creation ("Test Organization one") and
+    // the portal only ever sends values read back from stored records, so
+    // the same-org path always compares byte-identical strings — spaces
+    // and casing included.
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeRequestWithQuery(
         "GET",
         "/api/config/languages",
-        `org=${encodeURIComponent("Test ORGANIZATION one")}`
+        `org=${encodeURIComponent("Test Organization one")}`
       ),
       env,
       makeSession({
@@ -2506,6 +2506,24 @@ describe("config authz — same-org ?org= (#247)", () => {
     expect(String(fetchSpy.mock.calls[0]![0])).toContain(
       `/api/v1/admin/orgs/${encodeURIComponent("Test Organization one")}/languages`
     );
+  });
+
+  it("non-super ?org=<case-variant of own org> → 403 (case-variants are NOT same-org)", async () => {
+    // KV keys are case-sensitive, so "ACME" is a distinct org from
+    // "acme" — matching it as same-org would silently retarget the
+    // request to the caller's home KV entry. Org identity stays an
+    // exact compare everywhere in the worker (admin.ts does the same);
+    // a case-variant from a non-super caller is a loud 403, like any
+    // other org.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequestWithQuery("GET", "/api/config/languages", "org=ACME"),
+      env,
+      makeSession({ org: "acme", isAdmin: true, isSuperAdmin: false }),
+      "/api/config/languages"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("org admin PUT modes/{name} with ?org=<own org> → same-org authz applies (admin passes)", async () => {
@@ -2548,8 +2566,6 @@ describe("config authz — same-org ?org= (#247)", () => {
   });
 
   it("non-super with ?org=<different case of OTHER org> → still 403", async () => {
-    // Case-insensitive matching must only widen the SAME-org path, not
-    // soften the cross-org reject.
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeRequestWithQuery("GET", "/api/config/languages", "org=OTHER"),
@@ -2561,25 +2577,22 @@ describe("config authz — same-org ?org= (#247)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("super-admin ?org=<own org, different case> → treated as same-org (rights enforced)", async () => {
-    // Pre-#247 this compared exactly, so a case-differing self-reference
-    // slipped through as crossOrg and BYPASSED the caller's own
-    // language_rights (the Frank #185 hole, case-variant edition).
+  it("super-admin ?org=<case-variant of own org> → cross-org to the case-variant org (distinct KV entry stays addressable)", async () => {
+    // "ACME" and "acme" are distinct KV entries. A super-admin naming
+    // the case-variant must reach THAT org — resolving it as same-org
+    // would silently read/write the home org's config while the caller
+    // believes they're operating on the other one. This mirrors the
+    // pre-#247 exact-compare behavior.
     const fetchSpy = spyFetch();
-    const res = await handleConfig(
-      makeRequestWithQuery("PUT", "/api/config/languages/english", "org=ACME", {
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document: "# English\n" }),
-      }),
+    await handleConfig(
+      makeRequestWithQuery("GET", "/api/config/languages", "org=ACME"),
       env,
-      makeSession({
-        org: "acme",
-        isSuperAdmin: true,
-        language_rights: ["spanish"],
-      }),
-      "/api/config/languages/english"
+      makeSession({ org: "acme", isSuperAdmin: true }),
+      "/api/config/languages"
     );
-    expect(res.status).toBe(403);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/ACME/languages"
+    );
   });
 });

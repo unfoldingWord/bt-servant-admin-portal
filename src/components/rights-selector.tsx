@@ -29,6 +29,12 @@ interface RightsSelectorProps {
   // undefined) and would show "Loading…" forever on a dead query —
   // exactly how the #247 BFF 403 hid itself on staging.
   loadError?: boolean;
+  // Refetches the failed list. The dialogs stay mounted across
+  // open/close (admin-users.tsx renders them unconditionally), so an
+  // errored query never refetches on reopen — a button wired to
+  // query.refetch() is the only real recovery short of a window
+  // refocus.
+  onRetry?: () => void;
   kind: RightsKind;
   verb: RightsVerb;
   disabled?: boolean;
@@ -80,6 +86,7 @@ export function RightsSelector({
   onChange,
   availableItems,
   loadError = false,
+  onRetry,
   kind,
   verb,
   disabled = false,
@@ -87,6 +94,13 @@ export function RightsSelector({
 }: RightsSelectorProps) {
   const isFull = value === "*";
   const isLegacy = value === undefined;
+  // Legacy language rights convert to "Specific" by seeding the full
+  // item list (see the onChange below). With the list unavailable
+  // (loading or errored) that seed would be [], silently collapsing the
+  // user's legacy full access to an explicit no-access grant — so the
+  // Specific option is unclickable until the list actually loads.
+  const specificNeedsItems =
+    isLegacy && kind === "language" && availableItems === undefined;
   const selected = useMemo<Set<string>>(
     () => (Array.isArray(value) ? new Set(value) : new Set()),
     [value]
@@ -133,12 +147,23 @@ export function RightsSelector({
           </div>
         </label>
 
-        <label className="hover:bg-accent flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors">
+        <label
+          className={cn(
+            "flex items-start gap-3 rounded-md border p-3 transition-colors",
+            specificNeedsItems
+              ? "cursor-not-allowed opacity-60"
+              : "hover:bg-accent cursor-pointer"
+          )}
+        >
           <input
             type="radio"
             name={radioName}
+            disabled={specificNeedsItems}
             checked={!isFull && !isLegacy}
             onChange={() => {
+              // Hard guard behind the disabled attribute: never seed
+              // from an absent list.
+              if (specificNeedsItems) return;
               if (isLegacy && kind === "language") {
                 // Legacy languages = back-compat full access. Pre-
                 // populate the explicit list with every available
@@ -167,47 +192,64 @@ export function RightsSelector({
               </div>
             </div>
 
-            {!isFull && !isLegacy && (
-              <div className="flex flex-wrap gap-1.5">
-                {loadError && availableItems === undefined ? (
-                  <span className="text-destructive text-xs">
-                    Couldn't load {kind}s. Close the dialog and try again.
-                  </span>
-                ) : availableItems === undefined ? (
-                  <span className="text-muted-foreground text-xs">
-                    Loading {kind}s…
-                  </span>
-                ) : availableItems.length === 0 ? (
-                  <span className="text-muted-foreground text-xs">
-                    No {kind}s defined yet.
-                  </span>
-                ) : (
-                  availableItems.map((item) => {
-                    const checked = selected.has(item.name);
-                    return (
-                      <button
-                        key={item.name}
-                        type="button"
-                        onClick={() => toggleItem(item.name)}
-                        className={cn(
-                          "rounded-full border px-2.5 py-1 text-xs transition-colors",
-                          checked
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-background hover:bg-accent"
-                        )}
-                      >
-                        {checked && (
-                          <span className="mr-1" aria-hidden="true">
-                            ✓
-                          </span>
-                        )}
-                        {item.label || item.name}
-                      </button>
-                    );
-                  })
+            {/* The error line renders regardless of which option is
+                selected — it also explains why the Specific radio is
+                disabled for legacy-language users while the list is
+                unavailable. */}
+            {loadError && availableItems === undefined && (
+              <span className="text-destructive text-xs">
+                Couldn't load {kind}s.
+                {onRetry && (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="ml-1.5 underline underline-offset-2"
+                  >
+                    Retry
+                  </button>
                 )}
-              </div>
+              </span>
             )}
+
+            {!isFull &&
+              !isLegacy &&
+              !(loadError && availableItems === undefined) && (
+                <div className="flex flex-wrap gap-1.5">
+                  {availableItems === undefined ? (
+                    <span className="text-muted-foreground text-xs">
+                      Loading {kind}s…
+                    </span>
+                  ) : availableItems.length === 0 ? (
+                    <span className="text-muted-foreground text-xs">
+                      No {kind}s defined yet.
+                    </span>
+                  ) : (
+                    availableItems.map((item) => {
+                      const checked = selected.has(item.name);
+                      return (
+                        <button
+                          key={item.name}
+                          type="button"
+                          onClick={() => toggleItem(item.name)}
+                          className={cn(
+                            "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                            checked
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "bg-background hover:bg-accent"
+                          )}
+                        >
+                          {checked && (
+                            <span className="mr-1" aria-hidden="true">
+                              ✓
+                            </span>
+                          )}
+                          {item.label || item.name}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              )}
           </div>
         </label>
       </fieldset>

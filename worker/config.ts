@@ -408,14 +408,19 @@ function isAdminMutation(method: string, session: SessionData): boolean {
 // dialogs always scope their language/mode list fetches to the target
 // user's org, which for org admins is their own org — rejecting it
 // broke those fetches with a 403 for every non-super-admin). The match
-// is trim+lowercase, mirroring `isCrossOrgTarget` in
-// src/lib/language-bootstrap-gate.ts, and resolves to `session.org`'s
-// canonical casing so the upstream KV key never depends on how the
-// client spelled the param.
+// is EXACT (post-trim), deliberately: org identity must mean one thing
+// inside the worker, and worker/admin.ts compares orgs exactly. The
+// portal only ever sends org values read back from stored records
+// (session.org, user.org), so the strings are byte-identical on every
+// legitimate same-org path; a case-variant is either a genuinely
+// distinct org (KV keys are case-sensitive) or a probe, and both must
+// stay loud/cross-org rather than silently retarget to session.org.
+// (src/lib/language-bootstrap-gate.ts lowercases for CTA *wording* on
+// free-text input — a display decision, not an authz one.)
 //
-// A genuinely different org stays super-admin only, and rejects loud
-// rather than silently falling back to session.org so a UI bug or
-// hostile probe surfaces visibly instead of masquerading as a same-org
+// A different org stays super-admin only, and rejects loud rather
+// than silently falling back to session.org so a UI bug or hostile
+// probe surfaces visibly instead of masquerading as a same-org
 // request.
 //
 // `crossOrg` reflects whether the resolved target differs from the
@@ -439,7 +444,7 @@ function resolveOrg(
     return { error: errorResponse("Invalid org parameter", 400) };
   }
 
-  if (trimmed.toLowerCase() === session.org.trim().toLowerCase()) {
+  if (trimmed === session.org) {
     return { crossOrg: false, org: session.org };
   }
 

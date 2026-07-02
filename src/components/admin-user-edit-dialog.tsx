@@ -359,6 +359,7 @@ export function AdminUserEditDialog({
               onChange={setLangEdit}
               availableItems={languagesQuery.data?.languages}
               loadError={languagesQuery.isError}
+              onRetry={() => void languagesQuery.refetch()}
               showLegacyHint={showLegacyLang}
             />
             <RightsSelector
@@ -368,6 +369,7 @@ export function AdminUserEditDialog({
               onChange={setLangPublish}
               availableItems={languagesQuery.data?.languages}
               loadError={languagesQuery.isError}
+              onRetry={() => void languagesQuery.refetch()}
               showLegacyHint={showLegacyLang}
             />
             <RightsSelector
@@ -377,6 +379,7 @@ export function AdminUserEditDialog({
               onChange={setModeEdit}
               availableItems={modesQuery.data?.modes}
               loadError={modesQuery.isError}
+              onRetry={() => void modesQuery.refetch()}
             />
             <RightsSelector
               kind="mode"
@@ -385,6 +388,7 @@ export function AdminUserEditDialog({
               onChange={setModePublish}
               availableItems={modesQuery.data?.modes}
               loadError={modesQuery.isError}
+              onRetry={() => void modesQuery.refetch()}
             />
 
             <div className="space-y-2">
