@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Download, Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
+import { fetchMe } from "@/lib/auth-api";
 import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
 import {
@@ -55,6 +56,7 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 
 export function ModesPage() {
   const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
   const isAdmin = hasAdminPowers(user);
   const homeOrg = useAuthStore((s) => s.user?.org);
   const selectedMode = useUiStore((s) => s.selectedMode);
@@ -452,12 +454,26 @@ export function ModesPage() {
   const handleRenameMode = useCallback(
     async (name: string, newName: string) => {
       await renameMode.mutateAsync({ name, newName });
+      // #240: the worker migrated this user's stored mode_*_rights to
+      // the new slug, but the Zustand auth store still holds the login-
+      // time snapshot with the OLD slug — the per-row rights guard and
+      // the dropdown filter below would hide the just-renamed mode
+      // until a full reload. Refresh from /me BEFORE moving the
+      // selection so the guard sees the migrated rights. Best-effort:
+      // on failure keep the stale user (admins are unaffected either
+      // way; a shepherd falls back to reload — the pre-#240 behavior).
+      try {
+        const freshUser = await fetchMe();
+        if (freshUser) setUser(freshUser);
+      } catch {
+        // keep the stale snapshot; selection below still moves
+      }
       // Follow the selection to the new slug so the editor re-syncs the
       // doc under the renamed identity instead of orphaning on the old
       // (now alias-only) name.
       if (name === selectedMode) setSelectedMode(newName);
     },
-    [renameMode, selectedMode, setSelectedMode]
+    [renameMode, selectedMode, setSelectedMode, setUser]
   );
 
   const handleJumpToLine = useCallback((line: number) => {

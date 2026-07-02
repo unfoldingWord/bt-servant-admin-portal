@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   contractOrgModeRights,
@@ -113,20 +113,22 @@ async function read(email: string): Promise<StoredUser> {
 }
 
 describe("expandOrgModeRights", () => {
-  it("expands both verb fields for affected org users, returns their keys", async () => {
+  it("expands both verb fields for affected org users, returns per-field records", async () => {
     const key = await seed("a@acme.com", "acme", {
       mode_edit_rights: ["spoken"],
       mode_publish_rights: ["spoken", "zulu"],
     });
     await seed("b@acme.com", "acme", { mode_edit_rights: ["other"] });
 
-    const written = await expandOrgModeRights(
+    const records = await expandOrgModeRights(
       env,
       "acme",
       "spoken",
       "conversation"
     );
-    expect(written).toEqual([key]);
+    expect(records).toEqual([
+      { key, fields: ["mode_edit_rights", "mode_publish_rights"] },
+    ]);
 
     const after = await read("a@acme.com");
     expect(after.mode_edit_rights).toEqual(["conversation", "spoken"]);
@@ -138,6 +140,24 @@ describe("expandOrgModeRights", () => {
     expect((await read("b@acme.com")).mode_edit_rights).toEqual(["other"]);
   });
 
+  it("records ONLY the fields it modified (per-field, not per-user)", async () => {
+    // The F4-review scenario setup: the publish field already legit-
+    // imately holds the new slug, so expand must touch (and record)
+    // only the edit field.
+    const key = await seed("mixed@acme.com", "acme", {
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: ["conversation", "spoken"],
+    });
+
+    const records = await expandOrgModeRights(
+      env,
+      "acme",
+      "spoken",
+      "conversation"
+    );
+    expect(records).toEqual([{ key, fields: ["mode_edit_rights"] }]);
+  });
+
   it("skips users outside the org and users already holding the new slug", async () => {
     await seed("other-org@wc.com", "word-collective", {
       mode_edit_rights: ["spoken"],
@@ -146,13 +166,13 @@ describe("expandOrgModeRights", () => {
       mode_edit_rights: ["conversation", "spoken"],
     });
 
-    const written = await expandOrgModeRights(
+    const records = await expandOrgModeRights(
       env,
       "acme",
       "spoken",
       "conversation"
     );
-    expect(written).toEqual([]);
+    expect(records).toEqual([]);
     expect((await read("other-org@wc.com")).mode_edit_rights).toEqual([
       "spoken",
     ]);
@@ -161,10 +181,35 @@ describe("expandOrgModeRights", () => {
       "spoken",
     ]);
   });
+
+  it("partial write failure → rolls back landed writes and throws (rd-2 F11)", async () => {
+    await seed("ok@acme.com", "acme", { mode_edit_rights: ["spoken"] });
+    await seed("fails@acme.com", "acme", { mode_edit_rights: ["spoken"] });
+
+    const realPut = env.AUTH_KV.put.bind(env.AUTH_KV);
+    const putSpy = vi
+      .spyOn(env.AUTH_KV, "put")
+      .mockImplementation((key, value, options) => {
+        if (key === "user:fails@acme.com") {
+          return Promise.reject(new Error("simulated KV outage"));
+        }
+        return realPut(key, value, options);
+      });
+
+    await expect(
+      expandOrgModeRights(env, "acme", "spoken", "conversation")
+    ).rejects.toThrow("rights migration failed");
+    putSpy.mockRestore();
+
+    // The user whose write landed must be rolled back to pre-expand
+    // state; the failed one never persisted.
+    expect((await read("ok@acme.com")).mode_edit_rights).toEqual(["spoken"]);
+    expect((await read("fails@acme.com")).mode_edit_rights).toEqual(["spoken"]);
+  });
 });
 
 describe("contractOrgModeRights", () => {
-  it("removes the slug only from the given keys, partner-guarded", async () => {
+  it("removes the slug only from recorded keys, partner-guarded", async () => {
     const migrated = await seed("m@acme.com", "acme", {
       mode_edit_rights: ["conversation", "spoken"],
     });
@@ -173,7 +218,12 @@ describe("contractOrgModeRights", () => {
       mode_edit_rights: ["conversation", "spoken"],
     });
 
-    await contractOrgModeRights(env, [migrated], "spoken", "conversation");
+    await contractOrgModeRights(
+      env,
+      [{ key: migrated, fields: ["mode_edit_rights"] }],
+      "spoken",
+      "conversation"
+    );
 
     expect((await read("m@acme.com")).mode_edit_rights).toEqual([
       "conversation",
@@ -184,19 +234,52 @@ describe("contractOrgModeRights", () => {
     ]);
   });
 
+  it("touches ONLY recorded fields — pre-existing grant in the other field survives compensation (rd-2 F4)", async () => {
+    // The confirmed F4 scenario: expand modified only the edit field;
+    // the publish field's "conversation" entry is a pre-existing grant.
+    // Compensation (remove "conversation", keep "spoken") must strip it
+    // from the recorded edit field ONLY — a per-user sweep would pass
+    // the partner-guard on publish too and delete the legitimate grant.
+    const key = await seed("mixed@acme.com", "acme", {
+      mode_edit_rights: ["conversation", "spoken"],
+      mode_publish_rights: ["conversation", "spoken"],
+    });
+
+    await contractOrgModeRights(
+      env,
+      [{ key, fields: ["mode_edit_rights"] }],
+      "conversation",
+      "spoken"
+    );
+
+    const after = await read("mixed@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken"]);
+    expect(after.mode_publish_rights).toEqual(["conversation", "spoken"]);
+  });
+
   it("leaves a user alone when the partner slug is missing", async () => {
     // Defensive: if state drifted between phases (concurrent admin
     // edit removed the new slug), contract must not strip the old one.
     const key = await seed("drift@acme.com", "acme", {
       mode_edit_rights: ["spoken"],
     });
-    await contractOrgModeRights(env, [key], "spoken", "conversation");
+    await contractOrgModeRights(
+      env,
+      [{ key, fields: ["mode_edit_rights"] }],
+      "spoken",
+      "conversation"
+    );
     expect((await read("drift@acme.com")).mode_edit_rights).toEqual(["spoken"]);
   });
 
   it("tolerates keys whose records vanished", async () => {
     await expect(
-      contractOrgModeRights(env, ["user:gone@acme.com"], "a", "b")
+      contractOrgModeRights(
+        env,
+        [{ key: "user:gone@acme.com", fields: ["mode_edit_rights"] }],
+        "a",
+        "b"
+      )
     ).resolves.toBeUndefined();
   });
 });

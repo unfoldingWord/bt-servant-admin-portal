@@ -47,18 +47,14 @@ export const MODE_RIGHTS_FIELDS = [
   "mode_publish_rights",
 ] as const satisfies readonly (keyof StoredUser)[];
 
-// Includes the legacy single-bit field: a future language rename must
-// migrate it too, since `rightsFor` falls back to it when the verb
-// fields are unset.
-export const LANGUAGE_RIGHTS_FIELDS = [
-  "language_edit_rights",
-  "language_publish_rights",
-  "language_rights",
-] as const satisfies readonly (keyof StoredUser)[];
-
-export type RightsField =
-  | (typeof MODE_RIGHTS_FIELDS)[number]
-  | (typeof LANGUAGE_RIGHTS_FIELDS)[number];
+// A future language rename would add the three language fields here
+// (including the legacy `language_rights` bit, whose undefined-means-
+// full semantics differ from modes — the expandRights passthrough is
+// correct for it, but the consumer must decide how "*"-equivalent
+// legacy users interact with per-slug migration). Deliberately not
+// pre-declared: no consumer exists yet, and an unused constant would
+// assert semantics nobody has validated.
+export type RightsField = (typeof MODE_RIGHTS_FIELDS)[number];
 
 // Add `to` wherever `from` is held. `"*"` and `undefined` pass through
 // untouched — wildcard resolves at gate time and needs no entry; for
@@ -95,32 +91,41 @@ export function removeSlugIfPartnerPresent(
   return rights.filter((slug) => slug !== remove);
 }
 
+// The unit contract and compensate operate on: which FIELDS of which
+// user the expand actually modified. Per-field (not per-user) recording
+// is load-bearing: a user can hold a legitimate pre-existing grant on
+// the new slug in one field (say publish on "conversation") while the
+// expand only touched the other (edit gained "conversation" alongside
+// "spoken"). A per-user record would let compensation's partner-guard
+// pass on the untouched field and strip the pre-existing grant.
+export interface MigrationRecord {
+  key: string;
+  fields: RightsField[];
+}
+
 // Apply a per-field transform to a user record. Mutates in place;
-// returns true when any field changed.
+// returns the fields that changed.
 function applyToUser(
   user: StoredUser,
   fields: readonly RightsField[],
   transform: (rights: LanguageRights | undefined) => string[] | null
-): boolean {
-  let changed = false;
+): RightsField[] {
+  const changed: RightsField[] = [];
   for (const field of fields) {
     const next = transform(user[field]);
     if (next !== null) {
       user[field] = next;
-      changed = true;
+      changed.push(field);
     }
   }
   return changed;
 }
 
-// Enumerate every stored user in `org`. AUTH_KV has no org index — this
-// mirrors the listUsers scan in worker/admin.ts (full `user:` prefix,
-// filter by `.org` in code). Fine at current org sizes; if user counts
-// grow enough to hurt, an org index is the fix, not a smarter scan.
-async function listOrgUsers(
-  env: Env,
-  org: string
-): Promise<{ key: string; user: StoredUser }[]> {
+// Enumerate every `user:` key. AUTH_KV has no org index — same paginated
+// scan as worker/admin.ts listUsers. Fine at current org sizes; if user
+// counts ever approach the Workers subrequest cap, an org index is the
+// fix, not a smarter scan (flagged in #240's design notes).
+async function listUserKeys(env: Env): Promise<string[]> {
   const keys: string[] = [];
   let cursor: string | undefined;
   do {
@@ -128,54 +133,65 @@ async function listOrgUsers(
     keys.push(...list.keys.map((k) => k.name));
     cursor = list.list_complete ? undefined : list.cursor;
   } while (cursor);
-
-  const entries = await Promise.all(
-    keys.map(async (key) => {
-      const user = await env.AUTH_KV.get<StoredUser>(key, { type: "json" });
-      if (!user || user.org !== org) return null;
-      return { key, user };
-    })
-  );
-  return entries.filter((e): e is { key: string; user: StoredUser } => !!e);
+  return keys;
 }
 
 // Phase 1: add `newSlug` alongside `oldSlug` for every affected user in
-// `org`. Returns the KV keys of the users actually modified — contract
-// and compensate operate ONLY on this set, so a user who legitimately
-// held BOTH slugs before the rename is never touched by the cleanup
-// phases (compensating them would strip a pre-existing grant).
+// `org`. Each record is re-read immediately before its write (read →
+// transform → put per key), so a concurrent admin edit to the same user
+// is only at risk during a single key's read-write gap — not the whole
+// scan duration. KV has no CAS; two truly simultaneous writes to one
+// user remain last-write-wins (accepted at current scale, #240 design
+// question 2).
+//
+// Returns records of the users/fields actually modified — contract and
+// compensate operate ONLY on those fields, so a user who legitimately
+// held BOTH slugs before the rename (or held the new slug in a field
+// the expand didn't touch) is never affected by cleanup.
 //
 // Throws if any write fails, AFTER attempting to compensate the writes
-// that did land — the caller should abort the rename (the engine call
+// that did land — the caller must abort the rename (the engine call
 // hasn't happened yet, so the old slug is still live and untouched).
 export async function expandOrgModeRights(
   env: Env,
   org: string,
   oldSlug: string,
   newSlug: string
-): Promise<string[]> {
-  const entries = await listOrgUsers(env, org);
-  const affected = entries.filter(({ user }) =>
-    applyToUser(user, MODE_RIGHTS_FIELDS, (r) =>
-      expandRights(r, oldSlug, newSlug)
-    )
-  );
-  if (affected.length === 0) return [];
+): Promise<MigrationRecord[]> {
+  const keys = await listUserKeys(env);
 
   const results = await Promise.allSettled(
-    affected.map(({ key, user }) => env.AUTH_KV.put(key, JSON.stringify(user)))
+    keys.map(async (key): Promise<MigrationRecord | null> => {
+      const user = await env.AUTH_KV.get<StoredUser>(key, { type: "json" });
+      if (!user || user.org !== org) return null;
+      const fields = applyToUser(user, MODE_RIGHTS_FIELDS, (r) =>
+        expandRights(r, oldSlug, newSlug)
+      );
+      if (fields.length === 0) return null;
+      await env.AUTH_KV.put(key, JSON.stringify(user));
+      return { key, fields };
+    })
   );
-  const written = affected
-    .filter((_, i) => results[i]?.status === "fulfilled")
-    .map(({ key }) => key);
 
-  if (written.length < affected.length) {
+  const written: MigrationRecord[] = [];
+  let failed = false;
+  for (const result of results) {
+    if (result.status === "fulfilled") {
+      if (result.value) written.push(result.value);
+    } else {
+      failed = true;
+    }
+  }
+
+  if (failed) {
     // Partial expand — roll back what landed so the caller can abort
-    // with a clean store. If the rollback itself also fails, affected
-    // users hold an extra entry for a slug that doesn't exist (the
-    // engine was never called): no live access changes, but a future
-    // mode created with that slug would inherit accidental shepherds —
-    // hence the loud log.
+    // with a clean store. (A rejected entry may have failed on the read
+    // OR the put; either way its user is untouched or unrecorded, and
+    // unrecorded-but-written is impossible since the put is the last
+    // step.) If the rollback itself also fails, affected users hold an
+    // extra entry for a slug that doesn't exist (the engine was never
+    // called): no live access changes, but a future mode created with
+    // that slug would inherit accidental shepherds — hence the loud log.
     await contractOrgModeRights(env, written, newSlug, oldSlug).catch((err) =>
       console.error(
         `rights-migration: rollback after partial expand failed (org=${org}, ${oldSlug}→${newSlug}); stale "${newSlug}" entries may remain`,
@@ -187,26 +203,29 @@ export async function expandOrgModeRights(
   return written;
 }
 
-// Phases 3a/3b: remove `removeSlug` (keeping `keepSlug`) from the users
-// expanded in phase 1. Best-effort by design — by the time this runs,
-// the engine outcome is settled and every affected user already holds
-// the live slug, so a failed removal only leaves a harmless stale entry
-// (logged, never surfaced to the caller as an error).
+// Phases 3a/3b: remove `removeSlug` (keeping `keepSlug`) from exactly
+// the fields recorded by the expand. Best-effort by design — by the
+// time this runs, the engine outcome is settled and every affected user
+// already holds the live slug, so a failed removal only leaves a
+// harmless stale entry (logged, never surfaced to the caller as an
+// error).
 export async function contractOrgModeRights(
   env: Env,
-  userKeys: string[],
+  records: MigrationRecord[],
   removeSlug: string,
   keepSlug: string
 ): Promise<void> {
   await Promise.all(
-    userKeys.map(async (key) => {
+    records.map(async ({ key, fields }) => {
       try {
         const user = await env.AUTH_KV.get<StoredUser>(key, { type: "json" });
         if (!user) return;
-        const changed = applyToUser(user, MODE_RIGHTS_FIELDS, (r) =>
+        const changed = applyToUser(user, fields, (r) =>
           removeSlugIfPartnerPresent(r, removeSlug, keepSlug)
         );
-        if (changed) await env.AUTH_KV.put(key, JSON.stringify(user));
+        if (changed.length > 0) {
+          await env.AUTH_KV.put(key, JSON.stringify(user));
+        }
       } catch (err) {
         console.error(
           `rights-migration: cleanup failed for ${key} (remove "${removeSlug}", keep "${keepSlug}") — stale entry remains`,

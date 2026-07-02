@@ -1,6 +1,10 @@
 import type { Env } from "./helpers";
 import { errorResponse } from "./helpers";
-import { contractOrgModeRights, expandOrgModeRights } from "./rights-migration";
+import {
+  contractOrgModeRights,
+  expandOrgModeRights,
+  type MigrationRecord,
+} from "./rights-migration";
 import type { LanguageRights, SessionData } from "./types";
 
 // `undefined` is the back-compat default for users predating the rights
@@ -115,6 +119,11 @@ async function proxyToEngine(
 // signal so a future `{label: "new"}` PUT for languages stays on the edit
 // gate even though today's portal only sends `document`.
 interface ResourceShape {
+  // Canonical slug from the engine's admin view. The rename arm's
+  // preflights compare it against URL/body slugs — the engine resolves
+  // slugs through aliases (findModeBySlug honors aliases, engine #284),
+  // so the addressed slug and the mode's canonical name can differ.
+  name?: string;
   document?: string;
   label?: string;
   description?: string;
@@ -437,19 +446,61 @@ export async function handleConfig(
     }
     // The migration needs `newName` before the engine call, so the arm
     // reads the body (one-shot stream) and passes the parsed copy back
-    // through proxyToEngine. Only presence is validated here — slug
-    // format, self-rename, and collisions (409) are the engine's calls,
-    // and its status + message pass through faithfully.
-    let renameBody: { newName?: unknown };
+    // through proxyToEngine. `| null` in the cast: the JSON literal
+    // `null` parses without throwing, and dereferencing it would 500
+    // instead of the 400 every other malformed body gets.
+    let renameBody: { newName?: unknown } | null;
     try {
-      renameBody = (await request.json()) as { newName?: unknown };
+      renameBody = (await request.json()) as { newName?: unknown } | null;
     } catch {
       return errorResponse("Invalid JSON", 400);
     }
     const newName =
-      typeof renameBody.newName === "string" ? renameBody.newName.trim() : "";
+      typeof renameBody?.newName === "string" ? renameBody.newName.trim() : "";
     if (!newName) {
       return errorResponse("Missing newName", 400);
+    }
+
+    // Preflight 1 — the addressed slug must be the mode's CANONICAL
+    // name. The engine resolves the rename source through aliases
+    // (findModeBySlug honors aliases, engine #284), while this arm's
+    // authz + migration key on the addressed slug. Without this check a
+    // shepherd holding rights only on a stale ALIAS (e.g. left behind
+    // by a retire-and-forward) could rename — and thereby capture — the
+    // aliased-to mode, stranding its real shepherds. Runs AFTER authz,
+    // so a no-rights caller can't probe mode existence through it.
+    const sourceMode = await fetchCurrentResource(env, "mode", org, modeName);
+    if (!sourceMode) {
+      return errorResponse("Mode not found", 404);
+    }
+    const canonicalName =
+      typeof sourceMode.name === "string" ? sourceMode.name : modeName;
+    if (canonicalName !== modeName) {
+      return errorResponse(
+        `"${modeName}" is an alias of "${canonicalName}" — rename the mode via its canonical slug`,
+        409
+      );
+    }
+
+    // Preflight 2 — collision check BEFORE expanding rights. Without
+    // it, renaming TO an existing mode's slug would grant every
+    // old-slug holder rights on that live mode for the window between
+    // expand and the engine's 409 (and permanently, if compensation's
+    // best-effort write fails). The engine GET resolves aliases, so a
+    // newName matching another mode's name OR alias surfaces here; a
+    // newName that is THIS mode's own alias returns the same mode and
+    // falls through — that's the engine's valid promote-own-alias
+    // un-rename.
+    const targetMode = await fetchCurrentResource(env, "mode", org, newName);
+    if (
+      targetMode &&
+      typeof targetMode.name === "string" &&
+      targetMode.name !== canonicalName
+    ) {
+      return errorResponse(
+        `Slug "${newName}" already belongs to another mode (as a name or alias) in this org`,
+        409
+      );
     }
 
     // Phase 1 — expand: affected users hold BOTH slugs. Aborts (500)
@@ -460,9 +511,9 @@ export async function handleConfig(
     // paths: stored `user.org` values are raw strings, so an org slug
     // that encodes differently (space, non-ASCII) would otherwise match
     // nobody and silently strand every shepherd (Frank rd-1 P1).
-    let expandedUserKeys: string[];
+    let migrationRecords: MigrationRecord[];
     try {
-      expandedUserKeys = await expandOrgModeRights(
+      migrationRecords = await expandOrgModeRights(
         env,
         resolved.org,
         modeName,
@@ -472,40 +523,81 @@ export async function handleConfig(
       return errorResponse("Rights migration failed; rename aborted", 500);
     }
 
-    const engineRes = await proxyToEngine(
-      request,
-      env,
-      `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_rename`,
-      ["POST"],
-      // Forward the TRIMMED newName — the same value the migration used.
-      // The browser slugifies before sending, but the BFF is the API
-      // boundary: a direct call with `" conversation "` must not migrate
-      // rights to `conversation` while the engine receives the padded
-      // original (Frank rd-1 P2).
-      { ...renameBody, newName }
-    );
+    // Engine call under try/catch: a thrown fetch (network blip, DNS)
+    // is an AMBIGUOUS outcome — the rename may or may not have applied.
+    // Keep the superset (both slugs) rather than guessing: compensating
+    // a rename that actually landed would strand every shepherd, while
+    // a stale extra entry is inert. 502 tells the caller to retry.
+    let engineRes: Response;
+    try {
+      engineRes = await proxyToEngine(
+        request,
+        env,
+        `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(modeName)}/_rename`,
+        ["POST"],
+        // Forward the TRIMMED newName — the same value the migration
+        // used (Frank rd-1 P2).
+        { ...renameBody, newName }
+      );
+    } catch (err) {
+      console.error(
+        `rename ${modeName}→${newName} (org=${resolved.org}): engine call threw after expand; leaving rights superset in place`,
+        err
+      );
+      return errorResponse(
+        "Engine unreachable; rename may not have applied. Retry the rename.",
+        502
+      );
+    }
 
-    // Phase 3 — contract on success (drop the old slug), compensate on
-    // engine failure (drop the never-live new slug). Both are best-
-    // effort: affected users already hold the live slug either way, so
-    // a failed cleanup leaves a harmless stale entry (logged inside the
-    // helper), and the engine's response passes through regardless.
+    // Phase 3 — classify the outcome:
+    //   2xx  → rename applied → contract (drop the old slug).
+    //   4xx  → engine definitively rejected (validation/collision/404)
+    //          → compensate (drop the never-live new slug).
+    //   5xx  → AMBIGUOUS (the engine may have persisted the rename and
+    //          failed afterwards, or a gateway may have emitted the 5xx
+    //          after commit). Disambiguate with a re-GET of the old
+    //          slug — alias-aware resolution means it returns the mode
+    //          either way, and its canonical name tells us whether the
+    //          rename landed. If the probe itself fails, keep the
+    //          superset: never compensate on uncertainty.
+    // Cleanup is best-effort in all branches (affected users already
+    // hold the live slug; failures log inside the helper), and the
+    // engine's response passes through regardless.
     if (engineRes.ok) {
-      await contractOrgModeRights(env, expandedUserKeys, modeName, newName);
+      await contractOrgModeRights(env, migrationRecords, modeName, newName);
+    } else if (engineRes.status < 500) {
+      await contractOrgModeRights(env, migrationRecords, newName, modeName);
     } else {
-      await contractOrgModeRights(env, expandedUserKeys, newName, modeName);
+      const probe = await fetchCurrentResource(
+        env,
+        "mode",
+        org,
+        modeName
+      ).catch(() => null);
+      if (probe && probe.name === newName) {
+        await contractOrgModeRights(env, migrationRecords, modeName, newName);
+      } else if (probe && probe.name === modeName) {
+        await contractOrgModeRights(env, migrationRecords, newName, modeName);
+      } else {
+        console.error(
+          `rename ${modeName}→${newName} (org=${resolved.org}): engine 5xx and probe inconclusive; leaving rights superset in place`
+        );
+      }
     }
     return engineRes;
   }
 
-  // /api/config/modes/{name}/_clone → POST. Same admin-only gate as
-  // _rename (#241 PR B). The engine creates a new mode with the new
-  // slug + optional label; content is copied verbatim from the source.
-  // Rights don't migrate — mode_edit_rights / mode_publish_rights are
-  // slug-scoped and no shepherd holds rights on the fresh slug yet, so
-  // gating this to admin/cross-org avoids handing a non-admin a mode
-  // they can't edit. Matched above the catch-all for the same regex-
-  // ordering reason as _rename.
+  // /api/config/modes/{name}/_clone → POST. Admin/cross-org ONLY —
+  // deliberately STRICTER than _rename, which #240 opened to edit-
+  // rights shepherds. The engine creates a new mode with the new slug +
+  // optional label; content is copied verbatim from the source. Rights
+  // don't migrate — mode_edit_rights / mode_publish_rights are slug-
+  // scoped and no shepherd holds rights on the fresh slug yet, so a
+  // non-admin cloning would land on a mode they can't edit. Opening
+  // this needs a cloner-auto-grant decision (rights-migration.ts
+  // primitives are ready; product call pending). Matched above the
+  // catch-all for the same regex-ordering reason as _rename.
   // `[^/]+` for the same reason as _rename above.
   const modeCloneMatch = pathname.match(
     /^\/api\/config\/modes\/([^/]+)\/_clone$/
@@ -530,11 +622,13 @@ export async function handleConfig(
   // silently resolve to the target — the "bring FIA Coach users over
   // silently" flow from Ian's #232 plan §3.
   //
-  // Same admin/cross-org gate as _rename and _clone. Retire deletes a
-  // mode + widens the target's alias set, both of which are org-wide
-  // config changes; per-user mode rights are slug-scoped, so gating
-  // to admin/cross-org matches the trust bar of PUT/DELETE-modes
-  // today. `[^/]+` for the same reason as _rename and _clone above.
+  // Admin/cross-org ONLY — deliberately STRICTER than _rename, which
+  // #240 opened to edit-rights shepherds. Retire deletes a mode +
+  // widens the target's alias set, both org-wide config changes;
+  // whether the retired mode's shepherds should inherit rights on the
+  // forward target is an open product call (rights-migration.ts
+  // primitives are ready). `[^/]+` for the same reason as _rename and
+  // _clone above.
   const modeRetireMatch = pathname.match(
     /^\/api\/config\/modes\/([^/]+)\/_retire$/
   );
