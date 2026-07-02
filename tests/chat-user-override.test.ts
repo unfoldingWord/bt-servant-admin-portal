@@ -157,8 +157,7 @@ describe("chat user_id override — real-user IDOR guard (#253)", () => {
 
   it("KV error during the scan → 503 fail-closed, engine untouched, error logged", async () => {
     // The guard must not fail OPEN: an induced storage error would
-    // otherwise bypass the IDOR check entirely. Fresh UUID so the
-    // per-isolate synthetic-id memo can't short-circuit past the scan.
+    // otherwise bypass the IDOR check entirely.
     const fetchSpy = spyFetch();
     vi.spyOn(env.AUTH_KV, "list").mockRejectedValue(new Error("kv blip"));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

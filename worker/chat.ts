@@ -20,15 +20,12 @@ const UUID_V4_RE =
 // pass. Residual: engine-side IDs the portal doesn't store (e.g.
 // messaging end-users) can't be checked here.
 //
-// Per-isolate memo of ids already verified as matching no stored user,
-// so the test-chat panel doesn't pay a full user scan per message.
-// Sound because stored ids are minted server-side (crypto.randomUUID at
-// create) — an id that matched nobody can't become a stored user's id
-// later. Cleared wholesale at a size cap; it's an optimization, not
-// state anything depends on.
-const verifiedSyntheticIds = new Set<string>();
-const VERIFIED_SYNTHETIC_IDS_CAP = 256;
-
+// Deliberately NO caching of scan verdicts: KV list/get are eventually
+// consistent, so a no-match verdict raced against user creation can be
+// stale — memoizing it would convert that transient window into a
+// durable per-isolate bypass for the new user's id (#253 review round
+// 8; an earlier draft did exactly that). The per-request scan cost is
+// the accepted price until the session-carried allow-list follow-up.
 async function resolveUserId(
   env: Env,
   override: string | null | undefined,
@@ -47,9 +44,6 @@ async function resolveUserId(
   const normalized = override.toLowerCase();
   if (normalized === session.userId.toLowerCase()) {
     return { userId: session.userId };
-  }
-  if (verifiedSyntheticIds.has(normalized)) {
-    return { userId: override };
   }
   // Fail CLOSED on a KV blip: this is a security guard, and failing open
   // would let an induced storage error bypass it. The 503 is retryable
@@ -82,10 +76,6 @@ async function resolveUserId(
       error: errorResponse("Could not verify user_id; try again", 503),
     };
   }
-  if (verifiedSyntheticIds.size >= VERIFIED_SYNTHETIC_IDS_CAP) {
-    verifiedSyntheticIds.clear();
-  }
-  verifiedSyntheticIds.add(normalized);
   return { userId: override };
 }
 
