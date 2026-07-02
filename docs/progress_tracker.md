@@ -4,10 +4,10 @@
 
 ## Current Status
 
-**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **#241 umbrella shipped end-to-end today** (PRs #242 + #244 + #245) — Ian's deferred #232 §2/§3/§4 capabilities (clone, alias display + retire/forward, export aliases) all live on staging. Test suite 366 → 408 across the three PRs. **#232 stays open** for the shepherd rights-migration follow-up (#240); Elsy filed a new slug-visibility UX report 2026-06-29 that Ian and I diagnosed as label-vs-slug confusion (options 1–4 for the follow-up sketched; awaiting Elsy's pick + chat-side repro on her item 2). Track E phase 1 step 2 (#181) shipped 2026-06-25. Elsy locked her three #230 product decisions; Ian's three worker-#257 contract questions still open. Track E phase 1 step 1 (#154 ↔ worker#94 reconciliation) still un-picked.
-**Last Updated**: 2026-07-01
+**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **#240 shepherd rights-migration shipped 2026-07-02** (PR #250 = `7e17ff3`) — mode rename now migrates per-user `mode_*_rights` old→new slug and is open to edit-rights shepherds; converged over 6 review rounds (2→15→12→5→3→1). **#232 now closeable** pending Ian's staging verify. **#247 REOPENED by Elsy 2026-07-02** — the empty-drafts CTA fix (#248, shipped this morning) doesn't render in her staging test (org "Test Organization one"): the CTA's `languagesQuery.isSuccess` gate suppresses it when the fetch errors for that org — exactly the rd-5 F2 residual deferred at merge. **Priority/Critical, #1 for next session.** #249 (language visibility design) filed 2026-07-02, awaiting Elsy + Ian. Clone/retire un-gating are now small follow-ups (migration primitives ready).
+**Last Updated**: 2026-07-02
 **Demo target**: June 9 (passed) — outcome to be summarized
-**Last prod deploy**: 2026-06-24 (HEAD `3bebe24` / v1.9.0) — portal promoted by Ian at 15:55 UTC; web-client also promoted same day (first ever post-#41 chat-app prod). Staging is **8 commits ahead** at `e9c4e02` (#181 verb-perms PR 2 + #232 mode rename + Ian's WhatsApp doc + #241 PRs A/B/C)
+**Last prod deploy**: 2026-06-24 (HEAD `3bebe24` / v1.9.0). Staging is **12 commits ahead** at `7e17ff3` (adds #248 empty-drafts CTA + #246/EOD doc + #240 rights-migration on top of the prior 8)
 
 ## Milestones
 
@@ -97,7 +97,28 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ## Session Log
 
-### 2026-07-01 — #241 umbrella shipped end-to-end (PRs A + B + C); PR B rebounded once + belt-and-suspenders fix
+### 2026-07-02 — #248 empty-drafts CTA merged; #240 shepherd rights-migration shipped (6-round convergence); #247 reopened
+
+**Context entering the session:** #248 (the #247 first-language-draft deadlock fix) had merged this morning after 5 review rounds; #246 (2026-07-01 EOD doc) was open; #240 (shepherd rights-migration) was the next unblocked dev item.
+
+**Completed:**
+
+- **#248 merged** (`b7649be`) — empty-drafts CTA for the first language draft. Frank's post-merge review came back clean (no confirmed issues, 427 tests verified independently). Staging deployed.
+- **#246 merged** (`984d9c2`) — 2026-07-01 EOD tracker entry lands on main.
+- **#249 filed** — language-draft visibility & sharing design memo (the deferred second half of #247). Code archaeology reframed Elsy's "draft tied to the user" as a rights-layer asymmetry: drafts are org-scoped in storage (like modes), but languages have no admin trump (deliberate, PR #185) while modes do. Four options bracketed (status quo + copy / org-wide read-only visibility / admin-trump parity / both); my lean is option 4. Pointer comment posted on #247. Awaiting Elsy + Ian.
+- **#240 shipped** — PR #250 = `7e17ff3`, merged + staging-deployed. Mode rename migrates per-user `mode_edit_rights` / `mode_publish_rights` (old slug → new slug) around the engine `_rename` op, and rename opens to non-admin shepherds with edit rights on the source mode. New `worker/rights-migration.ts` with field-parameterized primitives (reusable for retire-forwarding, clone auto-grant, language rename). Test suite 427 → 475.
+  - **Atomicity model** (the load-bearing decision): expand → engine → contract/compensate, holding the invariant "a user's rights always cover whichever slug is live" at every intermediate point. Both alternative orderings the issue proposed have a lockout as their worst case; this one's worst case is an inert stale entry (logged). Compensation runs ONLY on definitive engine 4xx — every ambiguous outcome (thrown fetch, 5xx, inconclusive probe) keeps the rights superset. Sessions need no handling: `validateSession` re-reads the live user record per request.
+  - **Two privilege escalations surfaced by review, both closed with preflights**: (1) alias-capture — a shepherd holding rights on a stale alias could rename-and-capture the aliased-to mode (verified in bt-servant-worker source that `renameMode` → `findModeBySlug` resolves aliases); fixed by a canonical-slug source preflight. (2) collision-window — expanding rights before the engine's 409 granted rights on the collision-target mode; fixed by a target preflight. Both fail CLOSED (engine error → 502 before any mutation).
+  - **Review convergence: 2 → 15 → 12 → 5 → 3 → 1** (Frank rd-1, then 5 workflow-backed xhigh rounds). Every round's findings sat in the _previous round's own edits_, never the core design — the signature of a right architecture absorbing edge-tightening. Notably rd-5 caught that my rd-4 dedup refactor had softened the unrelated PUT gate (swallowed throws → creation semantics → an edit-only shepherd could unpublish); now pinned by test.
+
+**Reopened / needs attention:**
+
+- **#247 REOPENED (Priority/Critical)** — Elsy re-tested #248 on staging (v1.10.1, org "Test Organization one") and the create-draft CTA does NOT render: choosing "Specific Languages" shows "no language available" with no affordance, and the test user then has no languages access. Root cause is the **rd-5 F2 residual deferred at #248 merge**: the CTA gates on `languagesQuery.isSuccess`, so if the worker's languages fetch errors for that org, the CTA is suppressed. Posted a holding reply committing to reproduce + fix the gate (render on empty AND error, independent of the worker's unknown-org behavior) first thing next session.
+
+**Also worked / verified:**
+
+- Frank's rd-1 review on #250 (2 findings — encoded org fed to migration, untrimmed newName forwarded) caught and fixed in `dc961b1` before the workflow rounds.
+- Post-merge: CI green on main for both #248 and #250; Deploy Staging green for both.
 
 **Context entering the session:** Yesterday's `/sod` (2026-06-29) picked up after a 3-day gap since the 2026-06-26 EOD. That morning I filed the two #232 follow-up issues (#240 rights-migration + #241 umbrella for Ian's deferred §2/§3/§4 capabilities) and shipped **#241 PR A** (aliases type + badges + export round-trip) as PR #242 = `776c36c`. Elsy then filed a staging UX report on #232 (dropdown "still shows old mode name" post-rename); Ian and I diagnosed it as label-vs-slug confusion, sketched four options for a follow-up issue, and pinged Elsy for her pick + chat-side repro. That thread is still open awaiting her reply.
 
