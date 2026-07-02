@@ -10,6 +10,19 @@ import type { LanguageRights, StoredUser } from "./types";
 // fields added in #181 — they all use the same `LanguageRights` shape.
 // `fieldName` is interpolated into error messages so a bad `mode_edit_rights`
 // payload doesn't surface as a misleading "language_rights" error.
+// Org names are free-text, but path-shaped values are rejected at the
+// door: session.org is interpolated into upstream URLs across the worker
+// (chat.ts and baruch.ts interpolate it raw; config.ts encodes but bare
+// "."/".." survive encodeURIComponent and URL-normalize into traversal).
+// Guarding creation and move keeps such values out of every downstream
+// URL builder at once (#253 review P2). Stored orgs predating this guard
+// are handled defensively where they're consumed (config.ts resolveOrg).
+function isPathShapedOrg(org: string): boolean {
+  return org === "." || org === ".." || org.includes("/");
+}
+
+const ORG_SHAPE_ERROR = 'org cannot be "." or ".." or contain "/"';
+
 function parseRights(
   value: unknown,
   fieldName: string
@@ -226,6 +239,9 @@ async function createUser(
   if (!email || !password || !name || !org) {
     return errorResponse("email, password, name, and org are required", 400);
   }
+  if (isPathShapedOrg(org)) {
+    return errorResponse(ORG_SHAPE_ERROR, 400);
+  }
 
   // Org-scoped admins can only create users in their own org.
   if (scope.kind === "org" && org !== scope.org) {
@@ -408,6 +424,9 @@ async function updateUser(
     const trimmed = body.org.trim();
     if (!trimmed) {
       return errorResponse("org cannot be empty", 400);
+    }
+    if (isPathShapedOrg(trimmed)) {
+      return errorResponse(ORG_SHAPE_ERROR, 400);
     }
     user.org = trimmed;
   }

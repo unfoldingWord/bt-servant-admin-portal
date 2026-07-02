@@ -1498,3 +1498,68 @@ describe("verb-perms — parseRights validation errors", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Path-shaped org names rejected at create/move (#253 review)
+// ---------------------------------------------------------------------------
+//
+// session.org is interpolated into upstream URLs across the worker
+// (chat.ts/baruch.ts raw; config.ts encoded, where bare dot segments
+// still survive encoding and URL-normalize into traversal). Rejecting
+// the shapes at the door keeps them out of every downstream builder;
+// values stored before this guard are handled at the consumers.
+
+describe("admin users — path-shaped org names (#253)", () => {
+  it.each(["team/alpha", ".", ".."])(
+    "create user with org %j → 400",
+    async (badOrg) => {
+      const { status } = await call({
+        method: "POST",
+        pathname: "/api/admin/users",
+        headers: { "X-Admin-Secret": ADMIN_SECRET },
+        body: {
+          email: "new@acme.com",
+          password: "Str0ng-Passw0rd!",
+          name: "New",
+          org: badOrg,
+        },
+      });
+      expect(status).toBe(400);
+    }
+  );
+
+  it.each(["a/b", ".", ".."])("move user to org %j → 400", async (badOrg) => {
+    const bob = await seedUser({
+      email: "bob@acme.com",
+      name: "Bob",
+      org: "acme",
+    });
+    const { status } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${bob.email}`,
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: { org: badOrg },
+    });
+    expect(status).toBe(400);
+  });
+
+  it("pre-existing slash-org user can still be updated (guard is create/move only)", async () => {
+    // Directly seeded with a slash org — simulates a value stored before
+    // this guard existed. Renaming (org untouched) must still work.
+    const legacy = await seedUser({
+      email: "legacy@slash.org",
+      name: "Legacy",
+      org: "team/alpha",
+    });
+    const { status, body } = await call({
+      method: "PUT",
+      pathname: `/api/admin/users/${legacy.email}`,
+      headers: { "X-Admin-Secret": ADMIN_SECRET },
+      body: { name: "Legacy Renamed" },
+    });
+    expect(status).toBe(200);
+    expect((body as { user: { name: string } }).user.name).toBe(
+      "Legacy Renamed"
+    );
+  });
+});

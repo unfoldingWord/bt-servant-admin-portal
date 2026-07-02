@@ -95,16 +95,19 @@ export function RightsSelector({
   const isFull = value === "*";
   const isLegacy = value === undefined;
   // Legacy language rights convert to "Specific" by seeding the full
-  // item list (see the onChange below). If that seed would be [] — the
-  // list is unavailable (loading/errored) OR genuinely empty — the
-  // click would silently collapse the user's legacy full access
-  // (which also covers every FUTURE language) to an explicit
-  // no-access grant, so the Specific option is unclickable until
-  // there's something real to seed from.
+  // item list (see the onChange below). While the list is UNAVAILABLE
+  // (loading or errored) that seed would be [] by accident, silently
+  // collapsing the user's legacy full access to an explicit no-access
+  // grant — so the Specific option is unclickable until the fetch
+  // settles. A loaded-EMPTY list is different: seeding [] is then the
+  // only truthful conversion and deliberately stays clickable — it's
+  // the admin's only way to revoke a legacy grant (which also covers
+  // every FUTURE language) before an org has content. The status line
+  // below the options spells out that consequence (#253 review: an
+  // earlier draft disabled the empty case too, making legacy access
+  // irrevocable in a zero-language org).
   const specificNeedsItems =
-    isLegacy &&
-    kind === "language" &&
-    (availableItems === undefined || availableItems.length === 0);
+    isLegacy && kind === "language" && availableItems === undefined;
   const selected = useMemo<Set<string>>(
     () => (Array.isArray(value) ? new Set(value) : new Set()),
     [value]
@@ -258,12 +261,20 @@ export function RightsSelector({
             )}
           </span>
         )}
-        {specificNeedsItems && availableItems !== undefined && (
+        {specificNeedsItems && !loadError && (
           <span className="text-muted-foreground block text-xs">
-            No {kind}s defined yet — create one before narrowing this user's
-            access.
+            Loading {kind}s…
           </span>
         )}
+        {isLegacy &&
+          kind === "language" &&
+          availableItems !== undefined &&
+          availableItems.length === 0 && (
+            <span className="text-muted-foreground block text-xs">
+              No {kind}s defined yet. Choosing "Specific {kind}s" locks in no
+              access — including {kind}s created later.
+            </span>
+          )}
       </fieldset>
 
       {Array.isArray(value) && value.length > 0 && (

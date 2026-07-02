@@ -2462,6 +2462,69 @@ describe("config authz — cross-org via ?org= (#166)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Path-shaped orgs (#253 review)
+// ---------------------------------------------------------------------------
+//
+// Slash-named orgs must ride every engine-path builder ENCODED — the
+// verb-perms gate's current-state lookup included (a raw interpolation
+// reads /orgs/team/alpha/..., the engine 404s, and the gate collapses a
+// legitimate publish flip into creation semantics → 403). Dot-segment
+// orgs can't be neutralized by encoding at all and are rejected on the
+// RESOLVED org, session-default path included.
+
+describe("config authz — path-shaped orgs (#253 review)", () => {
+  it("publish-only shepherd PUT flip in a slash-named org → 200; gate lookup and proxy both hit the ENCODED org path", async () => {
+    const fetchSpy = spyFetchWithCurrent("language", {
+      document: "# same\n",
+      published: false,
+    });
+    const res = await handleConfig(
+      new Request(
+        `https://portal.example.test/api/config/languages/spanish?org=${encodeURIComponent("team/alpha")}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ document: "# same\n", published: true }),
+        }
+      ),
+      env,
+      makeSession({
+        org: "team/alpha",
+        language_edit_rights: [],
+        language_publish_rights: ["spanish"],
+      }),
+      "/api/config/languages/spanish"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/team%2Falpha/languages/spanish"
+    );
+    expect(String(fetchSpy.mock.calls[1]![0])).toContain(
+      "/api/v1/admin/orgs/team%2Falpha/languages/spanish"
+    );
+  });
+
+  it("session.org '.' or '..' with NO ?org= → 400 (validated on the resolved org, not just the param)", async () => {
+    // A param-only check misses an org literally named "." reaching
+    // engine paths through the no-param session default: dots survive
+    // encodeURIComponent and /orgs/../x URL-normalizes into traversal.
+    for (const dots of [".", ".."]) {
+      const fetchSpy = spyFetch();
+      const res = await handleConfig(
+        makeRequest("GET", "/api/config/modes"),
+        env,
+        makeSession({ org: dots, isAdmin: true }),
+        "/api/config/modes"
+      );
+      expect(res.status).toBe(400);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      vi.restoreAllMocks();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Same-org ?org= for every caller (#247)
 // ---------------------------------------------------------------------------
 //

@@ -175,10 +175,15 @@ async function fetchResourceState(
   org: string,
   name: string
 ): Promise<ResourceState> {
+  // Takes the RAW org and encodes here (#253 review): callers used to
+  // disagree — the rename preflights passed the pre-encoded handleConfig
+  // local while gateConfigMutation passed raw resolved.org, so a
+  // slash-named org's PUT gate looked up /orgs/team/alpha/... and the
+  // engine's 404 silently rerouted the mutation to creation semantics.
   const enginePath =
     kind === "language"
-      ? `/api/v1/admin/orgs/${org}/languages/${encodeURIComponent(name)}`
-      : `/api/v1/admin/orgs/${org}/modes/${encodeURIComponent(name)}`;
+      ? `/api/v1/admin/orgs/${encodeURIComponent(org)}/languages/${encodeURIComponent(name)}`
+      : `/api/v1/admin/orgs/${encodeURIComponent(org)}/modes/${encodeURIComponent(name)}`;
   const res = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
     headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
   });
@@ -435,41 +440,49 @@ function resolveOrg(
   session: SessionData
 ): { crossOrg: boolean; org: string } | { error: Response } {
   const orgParam = new URL(request.url).searchParams.get("org");
+
+  // Slash-named orgs are addressable: org names are free-text (stored
+  // values may predate admin.ts's shape guard), and every engine-URL
+  // interpolation of the resolved org is encodeURIComponent'd (the
+  // handleConfig local for proxy paths, fetchResourceState internally
+  // for the gate's lookups), which neutralizes "/". Rejecting the shape
+  // here would re-break the dialogs' list fetches (the #247 symptom)
+  // for anyone operating on such an org.
+  let resolved: { crossOrg: boolean; org: string };
   if (orgParam === null) {
-    return { crossOrg: false, org: session.org };
+    resolved = { crossOrg: false, org: session.org };
+  } else {
+    const trimmed = orgParam.trim();
+    if (!trimmed) {
+      return { error: errorResponse("Invalid org parameter", 400) };
+    }
+    if (trimmed === session.org) {
+      resolved = { crossOrg: false, org: session.org };
+    } else if (session.isSuperAdmin !== true) {
+      return {
+        error: errorResponse(
+          "Cross-org config access requires isSuperAdmin",
+          403
+        ),
+      };
+    } else {
+      resolved = { crossOrg: true, org: trimmed };
+    }
   }
 
-  // Org names are free-text (worker/admin.ts only trims at create/
-  // rename), so slashes and other path-looking shapes are creatable and
-  // MUST resolve — rejecting them re-breaks the dialogs' list fetches
-  // (the #247 symptom) for anyone operating on such an org, same-org or
-  // cross-org. Path safety doesn't depend on this reject: every URL
-  // interpolation of the resolved org goes through the single
-  // encodeURIComponent in handleConfig, which neutralizes "/" (and the
-  // non-URL uses are KV-scoped, where any string is inert). The two
-  // shapes encoding can't neutralize are bare "." and ".." — dots
-  // survive encodeURIComponent and the URL parser normalizes dot
-  // segments, so those stay rejected. They can't be real org names
-  // without being indistinguishable from traversal.
-  const trimmed = orgParam.trim();
-  if (!trimmed || trimmed === "." || trimmed === "..") {
-    return { error: errorResponse("Invalid org parameter", 400) };
+  // The one shape encoding can't neutralize: bare "." / ".." survive
+  // encodeURIComponent and URL parsers normalize the dot segment into
+  // traversal (/orgs/../x → /x). Validated on the RESOLVED org — the
+  // no-param session default included — because a param-only check
+  // misses an org literally named "." reaching engine paths through
+  // session.org (#253 review P2). admin.ts rejects these at user
+  // create/move, but stored values predating that guard must still be
+  // stopped here.
+  if (resolved.org === "." || resolved.org === "..") {
+    return { error: errorResponse("Invalid org", 400) };
   }
 
-  if (trimmed === session.org) {
-    return { crossOrg: false, org: session.org };
-  }
-
-  if (session.isSuperAdmin !== true) {
-    return {
-      error: errorResponse(
-        "Cross-org config access requires isSuperAdmin",
-        403
-      ),
-    };
-  }
-
-  return { crossOrg: true, org: trimmed };
+  return resolved;
 }
 
 export async function handleConfig(
@@ -583,9 +596,11 @@ export async function handleConfig(
     // newName that is THIS mode's own alias returns the same mode and
     // falls through — that's the engine's valid promote-own-alias
     // un-rename.
+    // Raw resolved.org — fetchResourceState encodes internally; passing
+    // the pre-encoded `org` local would double-encode (#253 review).
     const [source, target] = await Promise.all([
-      preflightMode(env, org, modeName),
-      preflightMode(env, org, newName),
+      preflightMode(env, resolved.org, modeName),
+      preflightMode(env, resolved.org, newName),
     ]);
     // Source-first evaluation, FULLY: the source's definitive answers
     // (missing → 404, alias-addressed → 409) take precedence over a
@@ -694,7 +709,7 @@ export async function handleConfig(
     } else if (engineRes.status >= 400 && engineRes.status < 500) {
       await contractOrgModeRights(env, migrationRecords, newName, modeName);
     } else {
-      const probe = await preflightMode(env, org, modeName);
+      const probe = await preflightMode(env, resolved.org, modeName);
       if (probe.status === "found" && probe.mode.name === newName) {
         await contractOrgModeRights(env, migrationRecords, modeName, newName);
       } else {
