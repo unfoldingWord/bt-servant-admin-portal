@@ -3123,6 +3123,170 @@ describe("#247 language bootstrap create", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("zero-rights admin, EXISTING row, empty-diff body → 403, no proxy (#256 rd-2/rd-3 F0)", async () => {
+    // The widening both later review rounds confirmed: a body echoing
+    // the current state (or omitting fields) computes ZERO required
+    // verbs, and without the zeroRightsOnRow guard the gate returned
+    // ok — putting an engine write on a row PR #185 says a zero-rights
+    // admin must never touch. Main answered 403.
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_edit_rights: [],
+      language_publish_rights: [],
+    });
+    const currentDoc = "## Identity\n";
+    const fetchSpy = spyFetchBootstrap(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            language: { document: currentDoc, published: false },
+          }),
+          { status: 200 }
+        )
+      )
+    );
+
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/languages/english", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        // Exactly equals the mocked current state → zero required verbs.
+        body: JSON.stringify({ document: currentDoc, published: false }),
+      }),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/english"
+    );
+    expect(res.status).toBe(403);
+    // Only the existence probe fired — the proxy PUT never did.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // And no grant was written.
+    const after = await readRightsUser("admin@acme.com");
+    expect(after.language_edit_rights).toEqual([]);
+  });
+
+  it("zero-rights admin, MISSING row, empty body {} → still a bootstrap create with grant (not an ungoverned pass-through)", async () => {
+    // An empty body against a missing row also computes zero required
+    // verbs; the zeroRightsOnRow guard must route it through the
+    // carve-out (grant + flag), never the ordinary allow.
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_edit_rights: [],
+      language_publish_rights: [],
+    });
+    const fetchSpy = spyFetchBootstrap(missing);
+
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/languages/swahili", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBe("1");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const after = await readRightsUser("admin@acme.com");
+    expect(after.language_edit_rights).toEqual(["swahili"]);
+    expect(after.language_publish_rights).toEqual(["swahili"]);
+  });
+
+  it("bootstrap create response carries X-Bootstrap-Grant: 1", async () => {
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_edit_rights: [],
+      language_publish_rights: [],
+    });
+    spyFetchBootstrap(missing);
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBe("1");
+  });
+
+  it("ORDINARY create (edit wildcard) → no header, no grant (#256 rd-3: the client mirror keys on this)", async () => {
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_edit_rights: "*",
+      language_publish_rights: [],
+    });
+    const fetchSpy = spyFetchBootstrap(missing);
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_edit_rights: "*",
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const after = await readRightsUser("admin@acme.com");
+    // No grant: publish stays an explicit deny.
+    expect(after.language_edit_rights).toBe("*");
+    expect(after.language_publish_rights).toEqual([]);
+  });
+
+  it("engine 4xx on a bootstrap create → no X-Bootstrap-Grant header alongside the compensation", async () => {
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_edit_rights: [],
+      language_publish_rights: [],
+    });
+    spyFetchBootstrap(missing, () =>
+      Promise.resolve(new Response("bad", { status: 400 }))
+    );
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(400);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBeNull();
+  });
+
   it("mixed shape edit=[] + publish='*' → carve-out still reachable on a missing name (#256 review F2)", async () => {
     // The wildcard on one verb bypasses the zero-rights early-deny, so
     // the carve-out must live on the PUT diff's deny path — nested

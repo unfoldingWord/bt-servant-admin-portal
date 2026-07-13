@@ -1,5 +1,6 @@
 import {
   effectiveLanguageEditRights,
+  hasAdminPowers,
   hasAnyRights,
   type LanguageRightsCarrier,
 } from "./permissions";
@@ -37,16 +38,23 @@ export function isCrossOrgTarget({
 }
 
 interface Args extends CrossOrgArgs {
-  caller: LanguageRightsCarrier | null | undefined;
+  caller:
+    | (LanguageRightsCarrier & { isAdmin?: boolean; isSuperAdmin?: boolean })
+    | null
+    | undefined;
 }
 
 // #247: true when the caller can create the FIRST language draft in
 // `targetOrg`. Mirrors the Languages page's `canCreate` gate:
 //   - Cross-org super-admin: bypasses per-row rights via worker's PR A
 //     carve-out (#166).
-//   - Everyone else (home-org, or same-org super-admin): needs some
-//     effective `language_edit_rights` — undefined counts as legacy
-//     full access, [] doesn't.
+//   - Same-org admins: always — the worker's bootstrap carve-out lets
+//     them create drafts that don't exist yet (and auto-grants both
+//     verbs). Added with the carve-out itself (#256 rd-2 F4: this gate
+//     had drifted from the page's canCreate, hiding the empty-drafts
+//     CTA from exactly the zero-rights-admin population #247 unblocks).
+//   - Everyone else: needs some effective `language_edit_rights` —
+//     undefined counts as legacy full access, [] doesn't.
 export function canBootstrapLanguage({
   caller,
   callerOrg,
@@ -63,5 +71,7 @@ export function canBootstrapLanguage({
   if (isCrossOrgTarget({ callerOrg, callerIsSuperAdmin, targetOrg })) {
     return true;
   }
-  return hasAnyRights(effectiveLanguageEditRights(caller));
+  return (
+    hasAdminPowers(caller) || hasAnyRights(effectiveLanguageEditRights(caller))
+  );
 }

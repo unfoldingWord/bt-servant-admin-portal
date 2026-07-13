@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { faLanguage } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Eye, EyeOff, Plus, Send, SendHorizontal, Trash2 } from "lucide-react";
@@ -125,7 +125,13 @@ export function LanguageSelector({
     );
   }, [onDeleteLanguage, selectedLanguage]);
 
-  const languages = languagesData?.languages ?? [];
+  // Memoized: handleCreate's collision check depends on this, and the
+  // `?? []` fallback would otherwise mint a fresh array identity every
+  // render (react-hooks/exhaustive-deps).
+  const languages = useMemo(
+    () => languagesData?.languages ?? [],
+    [languagesData]
+  );
   const selectedData =
     languages.find((l) => l.name === selectedLanguage) ?? null;
   const selectedIsPublished = selectedData ? isPublished(selectedData) : false;
@@ -142,13 +148,18 @@ export function LanguageSelector({
       .replace(/[^a-z0-9\-_]/g, "")
       .replace(/^-+|-+$/g, "");
     if (!slug) return;
-    // Collision check against the UNFILTERED org list: the rows the
-    // user can't see (no verb rights) still own their names, and the
-    // worker will 403 a PUT against them. Client-side only — the
-    // worker's existence probe remains the enforcement.
-    if (takenNames.includes(slug)) {
+    // Collision check against the UNFILTERED org list, but only for
+    // names HIDDEN from this user: rows they hold no verb on still own
+    // their names, and the worker will 403 a PUT against them — without
+    // this, the create affordance hands an admin with an empty filtered
+    // list a bare "Forbidden". Names in the user's own (filtered) list
+    // pass through: a rights-holding shepherd re-creating their own
+    // language is the pre-existing PUT-over-existing re-scaffold flow,
+    // not a permission error (#256 rd-3). Client-side only — the
+    // worker's gate remains the enforcement.
+    if (takenNames.includes(slug) && !languages.some((l) => l.name === slug)) {
       setCreateError(
-        `A language named "${slug}" already exists in this org. Pick a different name, or ask its shepherd (or an admin) for access.`
+        `A language named "${slug}" already exists in this org, but you don't have access to it. Pick a different name, or ask a shepherd or admin for access.`
       );
       return;
     }
@@ -157,7 +168,7 @@ export function LanguageSelector({
     setNewLabel("");
     setShowCreate(false);
     setCreateError(null);
-  }, [newName, newLabel, onCreateLanguage, takenNames]);
+  }, [newName, newLabel, onCreateLanguage, takenNames, languages]);
 
   return (
     <div className="space-y-3">

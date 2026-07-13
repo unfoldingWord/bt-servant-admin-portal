@@ -8,7 +8,7 @@ import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
 import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
-  applyLocalBootstrapGrant,
+  mirrorBootstrapGrant,
   effectiveLanguageEditRights,
   effectiveLanguagePublishRights,
   filterByAnyRights,
@@ -119,6 +119,14 @@ export function LanguagesPage() {
       ),
     };
   }, [languagesQuery.data, editRights, publishRights]);
+
+  // Every keystroke re-renders this page (the editor draft lives in
+  // component state), so the raw-name list for the create-dialog
+  // collision check must keep a stable identity between data changes.
+  const takenNames = useMemo(
+    () => languagesQuery.data?.languages.map((l) => l.name) ?? [],
+    [languagesQuery.data]
+  );
 
   // Local document draft (auto-save target).
   //
@@ -361,38 +369,31 @@ export function LanguagesPage() {
           },
         },
         {
-          onSuccess: () => {
+          onSuccess: (data) => {
             setSelectedLanguage(name);
-            // #247 — a BOOTSTRAP create auto-grants the creator both
-            // verbs on the new slug server-side, but the session user in
-            // the auth store still carries the pre-grant rights, and the
-            // page's list filter + edit gates read from it. Mirror the
-            // grant locally instead of refetching /me: KV read-after-
-            // write isn't guaranteed, so an immediate refetch could
-            // re-store the STALE pre-grant record (and a late-resolving
-            // refetch could repopulate the store after a logout).
-            // applyLocalBootstrapGrant infers WHETHER the carve-out
-            // fired (null = ordinary create, worker granted nothing —
-            // mirroring then would invent permissions, #256 review
-            // round 2) and reproduces the server-side grant when it
-            // did; the next full session hydration converges on the
-            // server state either way.
-            if (!isCrossOrg && user) {
-              const granted = applyLocalBootstrapGrant(user, name);
-              if (granted) setUser(granted);
+            // #247 — when the worker's bootstrap carve-out created this
+            // draft, it auto-granted the creator both verbs server-side,
+            // but the session user in the auth store still carries the
+            // pre-grant rights, and the page's list filter + edit gates
+            // read from it. Mirror the grant locally, keyed STRICTLY on
+            // the worker's X-Bootstrap-Grant signal — an ordinary create
+            // performs no server grant, and inferring the carve-out from
+            // the local rights snapshot broke under session skew and
+            // published:true shapes (#256 rds 2–3). Local mirror rather
+            // than a /me refetch because KV read-after-write isn't
+            // guaranteed: an immediate refetch could re-store the STALE
+            // pre-grant record. Read the store at callback time, not
+            // the render snapshot — a slow create must not clobber
+            // store writes that landed mid-flight (#256 rd-3).
+            if (data.bootstrapGranted && !isCrossOrg) {
+              const current = useAuthStore.getState().user;
+              if (current) setUser(mirrorBootstrapGrant(current, name));
             }
           },
         }
       );
     },
-    [
-      saveLanguage,
-      scaffoldQuery.data,
-      setSelectedLanguage,
-      setUser,
-      user,
-      isCrossOrg,
-    ]
+    [saveLanguage, scaffoldQuery.data, setSelectedLanguage, setUser, isCrossOrg]
   );
 
   const handleSetPublished = useCallback(
@@ -498,9 +499,7 @@ export function LanguagesPage() {
               canDeleteSelected={canDeleteSelected}
               isScaffoldReady={scaffoldQuery.isSuccess}
               scaffoldError={scaffoldQuery.isError}
-              takenNames={
-                languagesQuery.data?.languages.map((l) => l.name) ?? []
-              }
+              takenNames={takenNames}
             />
           </div>
 
@@ -580,7 +579,8 @@ export function LanguagesPage() {
           <EmptyState
             canCreate={canCreate}
             hasAny={(authorizedLanguagesData?.languages.length ?? 0) > 0}
-            hasHidden={(languagesQuery.data?.languages.length ?? 0) > 0}
+            hasHidden={takenNames.length > 0}
+            isAdmin={isAdmin}
           />
         ) : (
           <>
@@ -702,19 +702,32 @@ interface EmptyStateProps {
       even when drafts exist — telling them "No languages yet" would
       misrepresent the org and invite name collisions. */
   hasHidden: boolean;
+  /** Only admins may create a NEW name in an org whose drafts are all
+      hidden from them (the worker's carve-out is admin-only) — a
+      non-admin whose rights are all inert entries would 403 on any
+      new slug, so the copy must not invite them to create (#256 rd-2
+      F2). */
+  isAdmin: boolean;
 }
 
-function EmptyState({ canCreate, hasAny, hasHidden }: EmptyStateProps) {
+function EmptyState({
+  canCreate,
+  hasAny,
+  hasHidden,
+  isAdmin,
+}: EmptyStateProps) {
   return (
     <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
       <p className="text-sm">
         {hasAny
           ? "Pick a language above to start editing."
-          : canCreate
-            ? hasHidden
-              ? "This org has languages, but none you have access to. Create a new draft, or ask a shepherd or admin for access to an existing one."
-              : "No languages yet. Create one to get started."
-            : "No languages are available for your account."}
+          : hasHidden
+            ? isAdmin
+              ? "This org has languages, but none you have access to. Create a new draft, or ask a shepherd for access to an existing one."
+              : "This org has languages, but none you have access to. Ask a shepherd or admin for access."
+            : canCreate
+              ? "No languages yet. Create one to get started."
+              : "No languages are available for your account."}
       </p>
     </div>
   );

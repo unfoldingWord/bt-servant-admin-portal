@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  applyLocalBootstrapGrant,
+  mirrorBootstrapGrant,
   effectiveLanguageEditRights,
   effectiveLanguagePublishRights,
   effectiveModeEditRights,
@@ -397,37 +397,44 @@ describe("renameSlugInRights (#240 client mirror)", () => {
   });
 });
 
-// #247 / #256 review round 2 — local mirror of the worker's bootstrap
-// auto-grant. The null-vs-grant split is the whole point: mirroring
-// after an ORDINARY create (edit rights already covered the slug, so
-// the worker granted nothing) invents local permissions whose controls
-// then 403.
+// #247 / #256 rds 2-3 — local mirror of the worker's bootstrap
+// auto-grant, driven strictly by the worker's X-Bootstrap-Grant wire
+// signal (no client-side inference — every inference variant broke
+// under some rights shape: session skew, published:true creates).
+// These tests pin that the mirror reproduces exactly what the
+// server-side grant wrote for each shape.
 
-describe("applyLocalBootstrapGrant", () => {
-  it("null when effective edit already covers the slug — ordinary create, worker granted nothing", async () => {
-    // The review-round-2 scenario: edit "*" passes the ordinary gate;
-    // publish [] must NOT gain the slug locally.
+describe("mirrorBootstrapGrant", () => {
+  it("mirrors both verbs (explicit empty rights)", () => {
     expect(
-      applyLocalBootstrapGrant(
-        { language_edit_rights: "*", language_publish_rights: [] },
+      mirrorBootstrapGrant(
+        { language_edit_rights: [], language_publish_rights: [] },
         "sw"
       )
-    ).toBeNull();
-    // Legacy full-access user (all fields unset).
-    expect(applyLocalBootstrapGrant({}, "sw")).toBeNull();
-    // Explicit array already naming the slug.
-    expect(
-      applyLocalBootstrapGrant(
-        { language_edit_rights: ["sw"], language_publish_rights: [] },
-        "sw"
-      )
-    ).toBeNull();
+    ).toEqual({
+      language_edit_rights: ["sw"],
+      language_publish_rights: ["sw"],
+    });
   });
 
-  it("mirrors both verbs after a carve-out create (explicit empty rights)", () => {
+  it("full-access fields pass through untouched (server grant no-ops too)", () => {
     expect(
-      applyLocalBootstrapGrant(
-        { language_edit_rights: [], language_publish_rights: [] },
+      mirrorBootstrapGrant(
+        { language_edit_rights: "*", language_publish_rights: "*" },
+        "sw"
+      )
+    ).toEqual({ language_edit_rights: "*", language_publish_rights: "*" });
+    // Legacy full-access user (all fields unset) → stays unset.
+    expect(mirrorBootstrapGrant({}, "sw")).toEqual({
+      language_edit_rights: undefined,
+      language_publish_rights: undefined,
+    });
+  });
+
+  it("idempotent when a verb already names the slug", () => {
+    expect(
+      mirrorBootstrapGrant(
+        { language_edit_rights: ["sw"], language_publish_rights: [] },
         "sw"
       )
     ).toEqual({
@@ -438,7 +445,7 @@ describe("applyLocalBootstrapGrant", () => {
 
   it("split wildcard: edit [] + publish '*' → edit gains the slug, wildcard untouched", () => {
     expect(
-      applyLocalBootstrapGrant(
+      mirrorBootstrapGrant(
         { language_edit_rights: [], language_publish_rights: "*" },
         "sw"
       )
@@ -447,7 +454,7 @@ describe("applyLocalBootstrapGrant", () => {
 
   it("partner-deny shape: publish explicit, edit unset → edit materializes [slug], not legacy", () => {
     expect(
-      applyLocalBootstrapGrant(
+      mirrorBootstrapGrant(
         { language_rights: ["x"], language_publish_rights: ["x"] },
         "sw"
       )
@@ -459,27 +466,24 @@ describe("applyLocalBootstrapGrant", () => {
   });
 
   it("restricted legacy-only user → both verbs materialize legacy + slug (matches server grant)", () => {
-    expect(applyLocalBootstrapGrant({ language_rights: ["en"] }, "sw")).toEqual(
-      {
-        language_rights: ["en"],
-        language_edit_rights: ["en", "sw"],
-        language_publish_rights: ["en", "sw"],
-      }
-    );
+    expect(mirrorBootstrapGrant({ language_rights: ["en"] }, "sw")).toEqual({
+      language_rights: ["en"],
+      language_edit_rights: ["en", "sw"],
+      language_publish_rights: ["en", "sw"],
+    });
   });
 
-  it("preserves unrelated fields on the user object", () => {
+  it("preserves unrelated fields and does not mutate the input", () => {
     const user = {
       email: "a@acme.com",
       isAdmin: true,
       language_edit_rights: [] as string[],
       language_publish_rights: [] as string[],
     };
-    expect(applyLocalBootstrapGrant(user, "sw")).toMatchObject({
+    expect(mirrorBootstrapGrant(user, "sw")).toMatchObject({
       email: "a@acme.com",
       isAdmin: true,
     });
-    // Input is not mutated.
     expect(user.language_edit_rights).toEqual([]);
   });
 });

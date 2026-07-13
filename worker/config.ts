@@ -294,7 +294,13 @@ function computeRequiredVerbsForPut(
 //      or existing rows, so the PR #185 "admin doesn't trump per-row
 //      languages" rule holds for everything that already exists. The
 //      caller pairs it with an auto-grant of both verbs to the creator
-//      (rights-migration.ts).
+//      (rights-migration.ts). Failure-surface note for the exempted
+//      shape (zero-rights same-org admin): malformed JSON answers 400
+//      and an engine outage during the probe propagates as a request
+//      failure, where main answered a bodyless 403 — both are still
+//      fail-closed (no mutation), and the caller is a same-org admin
+//      to whom the row's existence is already visible via the ungated
+//      GET; accepted.
 async function gateConfigMutation(
   request: Request,
   env: Env,
@@ -382,19 +388,34 @@ async function gateConfigMutation(
     // the diff but can never widen admin creation onto an existing row.
     const state = await fetchResourceState(env, kind, org, name);
     const current = state.status === "found" ? state.mode : null;
+    // Zero rights on the row can only reach this point via the
+    // adminLanguageCreatePath exemption (the early-deny catches everyone
+    // else). Such callers must NEVER take the ordinary allow below: an
+    // empty diff (body echoing current state, or omitting fields)
+    // computes zero required verbs, which on main was unreachable for
+    // them — letting it through would put an engine write on a row the
+    // PR #185 rule says they can't touch (#256 rd-2 F0). Their only
+    // allowed outcome is the bootstrap carve-out; it also tags an
+    // empty-diff PUT against a MISSING row as a bootstrap create, so
+    // the creator auto-grant can never be skipped on a creation.
+    const zeroRightsOnRow =
+      !hasRights(rightsFor(session, kind, "edit"), name) &&
+      !hasRights(rightsFor(session, kind, "publish"), name);
     const denied = computeRequiredVerbsForPut(body, current).some(
       (verb) => !hasRights(rightsFor(session, kind, verb), name)
     );
-    if (!denied) return { ok: true, parsedBody: body };
-    // #247 bootstrap carve-out — see the gate's doc comment (check 6).
-    // TOCTOU: a same-name create landing between the "missing" read and
-    // the engine PUT means one admin's scaffold overwrites the other's
-    // seconds-old scaffold — same-org, admin-only, and bounded to
-    // brand-new drafts; accepted.
-    if (adminLanguageCreatePath && state.status === "missing") {
-      return { ok: true, parsedBody: body, adminBootstrapCreate: true };
+    if (denied || zeroRightsOnRow) {
+      // #247 bootstrap carve-out — see the gate's doc comment (check 6).
+      // TOCTOU: a same-name create landing between the "missing" read
+      // and the engine PUT means one admin's scaffold overwrites the
+      // other's seconds-old scaffold — same-org, admin-only, and
+      // bounded to brand-new drafts; accepted.
+      if (adminLanguageCreatePath && state.status === "missing") {
+        return { ok: true, parsedBody: body, adminBootstrapCreate: true };
+      }
+      return { error: errorResponse("Forbidden", 403) };
     }
-    return { error: errorResponse("Forbidden", 403) };
+    return { ok: true, parsedBody: body };
   }
 
   return { ok: true };
@@ -904,6 +925,16 @@ export async function handleConfig(
           languageName,
           grantedFields
         );
+      }
+      // Tell the client the bootstrap grant happened so it can mirror
+      // the new rights into its session user without refetching /me
+      // (KV read-after-write) and without inferring the carve-out from
+      // its own rights snapshot — every inference variant broke under
+      // some shape (session skew, published:true creates; #256 rd-3).
+      if (gate.adminBootstrapCreate && engineRes.ok) {
+        const flagged = new Response(engineRes.body, engineRes);
+        flagged.headers.set("X-Bootstrap-Grant", "1");
+        return flagged;
       }
       return engineRes;
     }
