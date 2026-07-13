@@ -494,10 +494,25 @@ describe("mirrorBootstrapGrant", () => {
 // mirrorBootstrapGrant above for the history).
 
 describe("mirrorModeGrant", () => {
-  it("adds the slug to both verb fields, materializing unset fields as [slug]", () => {
-    expect(mirrorModeGrant({ mode_edit_rights: ["spoken"] }, "sw")).toEqual({
+  it("adds the slug to both verb fields when includePublish, materializing unset fields as [slug]", () => {
+    expect(
+      mirrorModeGrant({ mode_edit_rights: ["spoken"] }, "sw", true)
+    ).toEqual({
       mode_edit_rights: ["spoken", "sw"],
       mode_publish_rights: ["sw"],
+    });
+  });
+
+  it("edit-only mirror: publish untouched when includePublish is false (#258 rd-1)", () => {
+    expect(
+      mirrorModeGrant(
+        { mode_edit_rights: ["spoken"], mode_publish_rights: [] },
+        "sw",
+        false
+      )
+    ).toEqual({
+      mode_edit_rights: ["spoken", "sw"],
+      mode_publish_rights: [],
     });
   });
 
@@ -505,7 +520,8 @@ describe("mirrorModeGrant", () => {
     expect(
       mirrorModeGrant(
         { mode_edit_rights: "*", mode_publish_rights: ["sw"] },
-        "sw"
+        "sw",
+        true
       )
     ).toEqual({ mode_edit_rights: "*", mode_publish_rights: ["sw"] });
   });
@@ -515,7 +531,9 @@ describe("mirrorModeGrant", () => {
       email: "a@acme.com",
       mode_edit_rights: ["spoken"] as string[],
     };
-    expect(mirrorModeGrant(user, "sw")).toMatchObject({ email: "a@acme.com" });
+    expect(mirrorModeGrant(user, "sw", true)).toMatchObject({
+      email: "a@acme.com",
+    });
     expect(user.mode_edit_rights).toEqual(["spoken"]);
   });
 });

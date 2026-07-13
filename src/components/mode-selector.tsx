@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { faLayerGroup } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -277,7 +277,10 @@ export function ModeSelector({
     );
   }, [onRenameMode, renameValue, selectedMode]);
 
-  const modes = modesData?.modes ?? [];
+  // Memoized: eligibleRetireTargets depends on this, and the `?? []`
+  // fallback would otherwise mint a fresh array identity every render
+  // (react-hooks/exhaustive-deps).
+  const modes = useMemo(() => modesData?.modes ?? [], [modesData]);
   const selectedModeData = modes.find((m) => m.name === selectedMode) ?? null;
   const selectedIsPublished = selectedModeData
     ? isPublished(selectedModeData)
@@ -287,6 +290,16 @@ export function ModeSelector({
   // orphan the user's selection.
   const visibleModes = modes.filter(
     (m) => showDrafts || isPublished(m) || m.name === selectedMode
+  );
+
+  // #257 — the retire dialog's eligible forward targets: everything
+  // except the mode being retired, restricted to modes the caller can
+  // EDIT (the worker's target gate). Single source for both the option
+  // list and the empty-state check.
+  const eligibleRetireTargets = useMemo(
+    () =>
+      modes.filter((m) => m.name !== selectedMode && canEditTargetMode(m.name)),
+    [modes, selectedMode, canEditTargetMode]
   );
 
   const handleCreate = useCallback(() => {
@@ -699,35 +712,26 @@ export function ModeSelector({
                         <SelectValue placeholder="Pick a target mode" />
                       </SelectTrigger>
                       <SelectContent>
-                        {modes
-                          .filter(
-                            (m) =>
-                              m.name !== selectedMode &&
-                              canEditTargetMode(m.name)
-                          )
-                          .map((m) => (
-                            <SelectItem key={m.name} value={m.name}>
-                              <span className="flex items-center gap-2">
-                                <span className="truncate">
-                                  {m.label || m.name}
-                                </span>
-                                {!isPublished(m) && (
-                                  <Badge
-                                    variant="outline"
-                                    className="px-1.5 py-0 text-[10px]"
-                                  >
-                                    Draft
-                                  </Badge>
-                                )}
+                        {eligibleRetireTargets.map((m) => (
+                          <SelectItem key={m.name} value={m.name}>
+                            <span className="flex items-center gap-2">
+                              <span className="truncate">
+                                {m.label || m.name}
                               </span>
-                            </SelectItem>
-                          ))}
+                              {!isPublished(m) && (
+                                <Badge
+                                  variant="outline"
+                                  className="px-1.5 py-0 text-[10px]"
+                                >
+                                  Draft
+                                </Badge>
+                              )}
+                            </span>
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
-                    {modes.filter(
-                      (m) =>
-                        m.name !== selectedMode && canEditTargetMode(m.name)
-                    ).length === 0 && (
+                    {eligibleRetireTargets.length === 0 && (
                       <p className="text-muted-foreground text-xs">
                         {modes.filter((m) => m.name !== selectedMode).length ===
                         0

@@ -449,7 +449,10 @@ describe("grantModeSlugToUser", () => {
       mode_edit_rights: ["spoken"],
       mode_publish_rights: [],
     });
-    const fields = await grantModeSlugToUser(env, "cloner@acme.com", "sw");
+    const fields = await grantModeSlugToUser(env, "cloner@acme.com", "sw", [
+      "mode_edit_rights",
+      "mode_publish_rights",
+    ]);
     expect(fields).toEqual(["mode_edit_rights", "mode_publish_rights"]);
     const after = await read("cloner@acme.com");
     expect(after.mode_edit_rights).toEqual(["spoken", "sw"]);
@@ -458,9 +461,26 @@ describe("grantModeSlugToUser", () => {
 
   it("materializes an UNSET field as [slug] (no-access, not full-access)", async () => {
     await seed("unset@acme.com", "acme", { mode_edit_rights: ["spoken"] });
-    await grantModeSlugToUser(env, "unset@acme.com", "sw");
+    await grantModeSlugToUser(env, "unset@acme.com", "sw", [
+      "mode_edit_rights",
+      "mode_publish_rights",
+    ]);
     const after = await read("unset@acme.com");
     expect(after.mode_publish_rights).toEqual(["sw"]);
+  });
+
+  it("grants ONLY the requested fields — edit-only cloners never gain publish (#258 rd-1)", async () => {
+    await seed("editonly@acme.com", "acme", {
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: [],
+    });
+    const fields = await grantModeSlugToUser(env, "editonly@acme.com", "sw", [
+      "mode_edit_rights",
+    ]);
+    expect(fields).toEqual(["mode_edit_rights"]);
+    const after = await read("editonly@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken", "sw"]);
+    expect(after.mode_publish_rights).toEqual([]);
   });
 
   it("wildcards pass through untouched; already-held slugs are idempotent", async () => {
@@ -468,7 +488,10 @@ describe("grantModeSlugToUser", () => {
       mode_edit_rights: "*",
       mode_publish_rights: ["sw"],
     });
-    const fields = await grantModeSlugToUser(env, "wild@acme.com", "sw");
+    const fields = await grantModeSlugToUser(env, "wild@acme.com", "sw", [
+      "mode_edit_rights",
+      "mode_publish_rights",
+    ]);
     expect(fields).toEqual([]);
     const after = await read("wild@acme.com");
     expect(after.mode_edit_rights).toBe("*");
@@ -477,7 +500,7 @@ describe("grantModeSlugToUser", () => {
 
   it("throws when the stored user is missing", async () => {
     await expect(
-      grantModeSlugToUser(env, "ghost@acme.com", "sw")
+      grantModeSlugToUser(env, "ghost@acme.com", "sw", ["mode_edit_rights"])
     ).rejects.toThrow(/no stored user/);
   });
 });

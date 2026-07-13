@@ -175,7 +175,7 @@ export async function revokeLanguageSlugFromUser(
   }
 }
 
-// #257 — clone auto-grant: give a single user both MODE verbs on a
+// #257 — clone auto-grant: give a single user MODE verbs on a
 // just-cloned slug. Sibling of grantLanguageSlugToUser (#247) with mode
 // semantics instead of language semantics: modes have NO legacy-rights
 // fallback and `undefined` means "no access" for non-admins (the
@@ -185,10 +185,17 @@ export async function revokeLanguageSlugFromUser(
 // language grant: call BEFORE the engine op; throws abort the clone;
 // the returned field list scopes definitive-failure compensation so a
 // pre-existing entry can never be stripped.
+//
+// `fields` names the verbs to grant — the caller passes the verbs the
+// cloner holds on the SOURCE mode, so cloning preserves the shepherd's
+// capability profile instead of widening it (#258 review rd-1: the
+// unconditional both-verbs grant handed publish rights to edit-only
+// shepherds, a capability their admin had explicitly withheld).
 export async function grantModeSlugToUser(
   env: Env,
   email: string,
-  slug: string
+  slug: string,
+  fields: readonly RightsField[]
 ): Promise<RightsField[]> {
   const key = `user:${email}`;
   const user = await env.AUTH_KV.get<StoredUser>(key, { type: "json" });
@@ -196,7 +203,7 @@ export async function grantModeSlugToUser(
     throw new Error(`clone grant: no stored user for ${key}`);
   }
   const changed: RightsField[] = [];
-  for (const field of MODE_RIGHTS_FIELDS) {
+  for (const field of fields) {
     const rights = user[field];
     if (rights === "*") continue;
     if (rights !== undefined && rights.includes(slug)) continue;

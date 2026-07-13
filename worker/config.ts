@@ -789,22 +789,35 @@ export async function handleConfig(
   // Cloner auto-grant (#257): mode_edit_rights / mode_publish_rights
   // are slug-scoped and no shepherd holds rights on the fresh slug, so
   // a non-admin clone would otherwise land on a mode its own creator
-  // can't edit. Non-admin same-org cloners are granted both verbs on
-  // the new slug BEFORE the engine call (#240 expand-first model: a
-  // failure after the grant leaves an inert entry, never a lockout);
-  // compensation runs only on a definitive engine 4xx (e.g. the slug-
-  // collision 409) — ambiguity keeps the superset. Admin/cross-org
-  // callers need no grant (mode admin trump). Successful grants are
-  // signalled via X-Bootstrap-Grant so the client mirrors the rights
-  // without a /me refetch or inference (#256 rds 2–3 rationale).
+  // can't edit. Non-admin same-org cloners are granted, on the new
+  // slug, exactly the verbs they hold on the SOURCE (edit always — the
+  // gate requires it; publish only if they hold it there), BEFORE the
+  // engine call (#240 expand-first model). Compensation runs only on a
+  // definitive engine 4xx — ambiguity keeps the superset. Admin/cross-
+  // org callers need no grant (mode admin trump). Shepherd clones that
+  // succeed are signalled via X-Bootstrap-Grant — keyed on the OUTCOME
+  // (shepherd + engine 2xx), not on whether this request's grant wrote
+  // anything, so a retry after an ambiguous first attempt (grant
+  // already in KV) still tells the client to mirror (#258 rd-1).
   //
-  // No canonical-slug preflight, deliberately: the engine resolves an
-  // alias-addressed source, but clone neither mutates the source nor
-  // keys any rights on it — the grant attaches to the FRESH slug, and
-  // mode content is already readable by any session via the ungated
-  // GET — so alias addressing isn't capturable here (contrast _rename
-  // and _retire). Matched above the catch-all for the same regex-
-  // ordering reason as _rename; `[^/]+` likewise.
+  // Collision preflight (#258 rd-1 P1, same threat as the rename arm's
+  // preflight 2): the grant MUST NOT run until the engine confirms
+  // `newName` is unused — the engine GET resolves canonical names AND
+  // aliases, so a found result 409s before any rights mutation.
+  // Without this, a shepherd could "clone onto" a live mode's slug and
+  // hold real KV rights on it for the grant→409→compensate window —
+  // permanently, if compensation's best-effort write failed. The
+  // preflight fails CLOSED (engine error → 502, nothing mutated); the
+  // engine's own 409 remains the backstop for the TOCTOU race between
+  // preflight and create, with compensation covering that path.
+  //
+  // No canonical-slug preflight on the SOURCE, deliberately: the
+  // engine resolves an alias-addressed source, but clone neither
+  // mutates the source nor keys any rights on it — the grant attaches
+  // to the FRESH slug, and mode content is already readable by any
+  // session via the ungated GET — so alias addressing isn't capturable
+  // here (contrast _rename and _retire). Matched above the catch-all
+  // for the same regex-ordering reason as _rename; `[^/]+` likewise.
   const modeCloneMatch = pathname.match(
     /^\/api\/config\/modes\/([^/]+)\/_clone$/
   );
@@ -839,8 +852,37 @@ export async function handleConfig(
     const isShepherdClone = !resolved.crossOrg && !hasAdminPowers(session);
     let grantedFields: RightsField[] = [];
     if (isShepherdClone) {
+      // P1 preflight — see the arm comment. Runs only on the shepherd
+      // path; admin clones keep the preflight-free fast path (no grant
+      // to protect, and the engine's 409 already handles collisions).
+      const collision = await preflightMode(env, resolved.org, newName);
+      if (collision.status === "error") {
+        return errorResponse(
+          "Engine unreachable; clone not attempted. Retry the clone.",
+          502
+        );
+      }
+      if (collision.status === "found") {
+        return errorResponse(
+          `A mode named "${newName}" already exists (as a mode or alias)`,
+          409
+        );
+      }
+      // Grant exactly the verbs held on the SOURCE slug (edit is
+      // guaranteed by the gate above; publish only if held there).
+      const grantFields: RightsField[] = hasRights(
+        rightsFor(session, "mode", "publish"),
+        modeName
+      )
+        ? ["mode_edit_rights", "mode_publish_rights"]
+        : ["mode_edit_rights"];
       try {
-        grantedFields = await grantModeSlugToUser(env, session.email, newName);
+        grantedFields = await grantModeSlugToUser(
+          env,
+          session.email,
+          newName,
+          grantFields
+        );
       } catch (err) {
         console.error(
           `clone: rights grant failed for ${session.email} ("${newName}")`,
@@ -849,13 +891,30 @@ export async function handleConfig(
         return errorResponse("Failed to grant cloner rights", 502);
       }
     }
-    const engineRes = await proxyToEngine(
-      request,
-      env,
-      `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_clone`,
-      ["POST"],
-      cloneBody
-    );
+    // Wrapped so a thrown engine fetch after the grant surfaces as the
+    // 502-retry contract instead of an unhandled 500 (#258 rd-1); the
+    // grant is kept — ambiguity never contracts rights.
+    let engineRes: Response;
+    try {
+      engineRes = await proxyToEngine(
+        request,
+        env,
+        `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_clone`,
+        ["POST"],
+        // Forward the TRIMMED newName — the same value the grant used
+        // (rename-arm Frank rd-1 P2 parity; #258 rd-1).
+        { ...cloneBody, newName }
+      );
+    } catch (err) {
+      console.error(
+        `clone: engine call failed after grant for ${session.email} ("${newName}")`,
+        err
+      );
+      return errorResponse(
+        "Engine unreachable; the clone may not have been created. Retry the clone.",
+        502
+      );
+    }
     if (
       grantedFields.length > 0 &&
       engineRes.status >= 400 &&
@@ -863,7 +922,11 @@ export async function handleConfig(
     ) {
       await revokeModeSlugFromUser(env, session.email, newName, grantedFields);
     }
-    if (isShepherdClone && grantedFields.length > 0 && engineRes.ok) {
+    // Keyed on the OUTCOME (shepherd + engine 2xx), not on whether THIS
+    // request's grant wrote anything — a retry after an ambiguous first
+    // attempt finds the grant already in KV (grantedFields []) and must
+    // still tell the client to mirror (#258 rd-1).
+    if (isShepherdClone && engineRes.ok) {
       const flagged = new Response(engineRes.body, engineRes);
       flagged.headers.set("X-Bootstrap-Grant", "1");
       return flagged;
@@ -972,7 +1035,9 @@ export async function handleConfig(
       env,
       `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_retire`,
       ["POST"],
-      retireBody
+      // Forward the TRIMMED forwardTo — the value the preflights
+      // authorized (#258 rd-1; rename-arm parity).
+      { forwardTo }
     );
   }
 

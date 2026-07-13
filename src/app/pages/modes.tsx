@@ -456,11 +456,20 @@ export function ModesPage() {
       // used only for selection.
       if (data.bootstrapGranted) {
         const current = useAuthStore.getState().user;
-        if (current) setUser(mirrorModeGrant(current, newName.trim()));
+        // includePublish mirrors the worker's rule: the grant carries
+        // publish only when the cloner holds publish on the SOURCE.
+        if (current)
+          setUser(
+            mirrorModeGrant(
+              current,
+              newName.trim(),
+              hasRights(modePublishRights, name)
+            )
+          );
       }
       handleSelectMode(data.name);
     },
-    [cloneMode, handleSelectMode, setUser]
+    [cloneMode, handleSelectMode, setUser, modePublishRights]
   );
 
   const handleRetireMode = useCallback(

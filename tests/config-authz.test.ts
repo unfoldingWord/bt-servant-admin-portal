@@ -1754,6 +1754,33 @@ function makeCloneRequest(name: string, body: object): Request {
   );
 }
 
+// Routed engine mock for the shepherd clone path: the collision
+// preflight GET is answered per `preflight` ("missing" | "found" |
+// "error"), the proxy POST per `post`.
+function spyFetchCloneEngine(
+  preflight: "missing" | "found" | "error",
+  post: { status: number } | "throw" = { status: 200 }
+) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+    const method = (init as RequestInit | undefined)?.method ?? "GET";
+    if (method === "POST") {
+      if (post === "throw") return Promise.reject(new Error("engine down"));
+      return Promise.resolve(new Response("{}", { status: post.status }));
+    }
+    if (preflight === "found") {
+      return Promise.resolve(
+        new Response(JSON.stringify({ mode: { name: "spoken-v2" } }), {
+          status: 200,
+        })
+      );
+    }
+    if (preflight === "error") {
+      return Promise.resolve(new Response("", { status: 500 }));
+    }
+    return Promise.resolve(new Response("", { status: 404 }));
+  });
+}
+
 describe("config authz — #241 PR B mode clone (_clone)", () => {
   it("admin → proxies POST to engine _clone path", async () => {
     const fetchSpy = spyFetch();
@@ -1795,14 +1822,14 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("shepherd with EDIT on the source → 200, cloner auto-granted both verbs, X-Bootstrap-Grant set (#257)", async () => {
+  it("edit-only shepherd → 200, granted EDIT ONLY on the new slug (no publish widening, #258 rd-1), header set", async () => {
     await seedRightsUser({
       email: "shepherd@acme.com",
       org: "acme",
       mode_edit_rights: ["spoken"],
       mode_publish_rights: [],
     });
-    const fetchSpy = spyFetch();
+    const fetchSpy = spyFetchCloneEngine("missing");
     const res = await handleConfig(
       makeCloneRequest("spoken", { newName: "spoken-v2" }),
       env,
@@ -1815,13 +1842,140 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("X-Bootstrap-Grant")).toBe("1");
-    // Clone has NO preflights — one fetch, the proxy POST.
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("POST");
+    // Collision preflight GET + proxy POST.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect((fetchSpy.mock.calls[1]![1] as RequestInit).method).toBe("POST");
 
     const after = await readRightsUser("shepherd@acme.com");
     expect(after.mode_edit_rights).toEqual(["spoken", "spoken-v2"]);
-    expect(after.mode_publish_rights).toEqual(["spoken-v2"]);
+    // Publish was explicitly withheld on the source — the clone must
+    // not widen it.
+    expect(after.mode_publish_rights).toEqual([]);
+  });
+
+  it("edit+publish shepherd on the source → granted BOTH verbs on the new slug", async () => {
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: ["spoken"],
+    });
+    spyFetchCloneEngine("missing");
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        email: "shepherd@acme.com",
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(200);
+    const after = await readRightsUser("shepherd@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken", "spoken-v2"]);
+    expect(after.mode_publish_rights).toEqual(["spoken", "spoken-v2"]);
+  });
+
+  it("newName collides with an existing mode/alias → 409 with NO grant written and no engine POST (#258 rd-1 P1)", async () => {
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: ["spoken"],
+    });
+    const fetchSpy = spyFetchCloneEngine("found");
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        email: "shepherd@acme.com",
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(409);
+    // Preflight only — no grant, no engine POST, no escalation window.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const after = await readRightsUser("shepherd@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken"]);
+    expect(after.mode_publish_rights).toEqual(["spoken"]);
+  });
+
+  it("collision preflight engine error → 502 fail closed, no grant, no POST", async () => {
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: [],
+    });
+    const fetchSpy = spyFetchCloneEngine("error");
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        email: "shepherd@acme.com",
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: [],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(502);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(
+      (await readRightsUser("shepherd@acme.com")).mode_edit_rights
+    ).toEqual(["spoken"]);
+  });
+
+  it("retry after an ambiguous first attempt (grant already in KV) → header STILL set (#258 rd-1)", async () => {
+    // First attempt granted and the engine 5xx'd; the slug is already
+    // in both fields, so this request's grant writes nothing — the
+    // client must still be told to mirror.
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken", "spoken-v2"],
+      mode_publish_rights: ["spoken", "spoken-v2"],
+    });
+    spyFetchCloneEngine("missing");
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        email: "shepherd@acme.com",
+        mode_edit_rights: ["spoken", "spoken-v2"],
+        mode_publish_rights: ["spoken", "spoken-v2"],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    // NOTE: preflight is mocked "missing" — the ambiguous first attempt
+    // never created the mode.
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBe("1");
+  }, 10000);
+
+  it("engine POST throws after the grant → 502 retry contract, grant kept (#258 rd-1)", async () => {
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: [],
+    });
+    spyFetchCloneEngine("missing", "throw");
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        email: "shepherd@acme.com",
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: [],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(502);
+    const after = await readRightsUser("shepherd@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken", "spoken-v2"]);
   });
 
   it("publish-only shepherd on the source → 403, no grant, no proxy (cloning is edit-side)", async () => {
@@ -1839,16 +1993,14 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("engine rejects the clone with 409 → grant compensated, no header", async () => {
+  it("TOCTOU race — preflight missing but engine 409s the create → grant compensated, no header", async () => {
     await seedRightsUser({
       email: "shepherd@acme.com",
       org: "acme",
       mode_edit_rights: ["spoken"],
       mode_publish_rights: [],
     });
-    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-      Promise.resolve(new Response("slug taken", { status: 409 }))
-    );
+    spyFetchCloneEngine("missing", { status: 409 });
     const res = await handleConfig(
       makeCloneRequest("spoken", { newName: "spoken-v2" }),
       env,
@@ -1873,9 +2025,7 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
       mode_edit_rights: ["spoken"],
       mode_publish_rights: [],
     });
-    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-      Promise.resolve(new Response("", { status: 500 }))
-    );
+    spyFetchCloneEngine("missing", { status: 500 });
     const res = await handleConfig(
       makeCloneRequest("spoken", { newName: "spoken-v2" }),
       env,
@@ -1919,8 +2069,8 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
     expect(after.mode_publish_rights).toEqual([]);
   });
 
-  it("stored user missing at grant time → 502, engine never called", async () => {
-    const fetchSpy = spyFetch();
+  it("stored user missing at grant time → 502, engine POST never fires", async () => {
+    const fetchSpy = spyFetchCloneEngine("missing");
     const res = await handleConfig(
       makeCloneRequest("spoken", { newName: "spoken-v2" }),
       env,
@@ -1932,7 +2082,23 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
       "/api/config/modes/spoken/_clone"
     );
     expect(res.status).toBe(502);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // Only the collision preflight ran.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("padded newName → engine receives the TRIMMED value the grant used (#258 rd-1)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "  spoken-v2  " }),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(200);
+    const sent = JSON.parse(
+      String((fetchSpy.mock.calls[0]![1] as RequestInit).body)
+    ) as { newName: string };
+    expect(sent.newName).toBe("spoken-v2");
   });
 
   it("missing newName → 400; invalid JSON → 400; non-POST → 405 — all before any engine traffic", async () => {
@@ -2258,16 +2424,20 @@ describe("config authz — #241 PR C mode retire (_retire)", () => {
     expect(res.status).toBe(502);
   });
 
-  it("admin retire skips the preflights (single proxy fetch, unchanged fast path)", async () => {
+  it("admin retire skips the preflights (single proxy fetch, unchanged fast path) and forwards trimmed forwardTo", async () => {
     const fetchSpy = spyFetch();
     const res = await handleConfig(
-      makeRetireRequest("spoken", { forwardTo: "conversation" }),
+      makeRetireRequest("spoken", { forwardTo: "  conversation  " }),
       env,
       makeSession({ isAdmin: true }),
       "/api/config/modes/spoken/_retire"
     );
     expect(res.status).toBe(200);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse(
+      String((fetchSpy.mock.calls[0]![1] as RequestInit).body)
+    ) as { forwardTo: string };
+    expect(sent.forwardTo).toBe("conversation");
   });
 
   it("missing forwardTo → 400; invalid JSON → 400; non-POST → 405", async () => {
