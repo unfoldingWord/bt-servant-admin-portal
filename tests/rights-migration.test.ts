@@ -12,7 +12,10 @@ import {
   contractOrgModeRights,
   expandOrgModeRights,
   expandRights,
+  grantLanguageSlugToUser,
+  grantSlug,
   removeSlugIfPartnerPresent,
+  revokeLanguageSlugFromUser,
 } from "../worker/rights-migration";
 import type { StoredUser } from "../worker/types";
 
@@ -96,7 +99,14 @@ async function seed(
   email: string,
   org: string,
   fields: Partial<
-    Pick<StoredUser, "mode_edit_rights" | "mode_publish_rights">
+    Pick<
+      StoredUser,
+      | "mode_edit_rights"
+      | "mode_publish_rights"
+      | "language_rights"
+      | "language_edit_rights"
+      | "language_publish_rights"
+    >
   > = {}
 ): Promise<string> {
   const key = `user:${email}`;
@@ -291,5 +301,105 @@ describe("contractOrgModeRights", () => {
         "b"
       )
     ).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #247 — bootstrap auto-grant (single-user, both language verb fields)
+// ---------------------------------------------------------------------------
+
+describe("grantSlug", () => {
+  it("appends to an explicit array, ignoring the fallback", () => {
+    expect(grantSlug([], ["legacy"], "swahili")).toEqual(["swahili"]);
+    expect(grantSlug(["en"], undefined, "swahili")).toEqual(["en", "swahili"]);
+  });
+
+  it("materializes from the legacy fallback when the field is unset", () => {
+    // Mirrors worker/auth.ts lazy migration: explicit ?? legacy.
+    expect(grantSlug(undefined, ["en"], "swahili")).toEqual(["en", "swahili"]);
+    expect(grantSlug(undefined, [], "swahili")).toEqual(["swahili"]);
+  });
+
+  it("null when effective rights are already full (undefined / '*')", () => {
+    expect(grantSlug(undefined, undefined, "swahili")).toBeNull();
+    expect(grantSlug("*", [], "swahili")).toBeNull();
+    expect(grantSlug(undefined, "*", "swahili")).toBeNull();
+  });
+
+  it("null when the slug is already held (idempotent)", () => {
+    expect(grantSlug(["swahili"], undefined, "swahili")).toBeNull();
+    expect(grantSlug(undefined, ["swahili"], "swahili")).toBeNull();
+  });
+});
+
+describe("grantLanguageSlugToUser", () => {
+  it("grants both verb fields and returns the modified fields", async () => {
+    await seed("boot@acme.com", "acme", {
+      language_edit_rights: [],
+      language_publish_rights: [],
+    });
+    const fields = await grantLanguageSlugToUser(env, "boot@acme.com", "sw");
+    expect(fields).toEqual(["language_edit_rights", "language_publish_rights"]);
+    const after = await read("boot@acme.com");
+    expect(after.language_edit_rights).toEqual(["sw"]);
+    expect(after.language_publish_rights).toEqual(["sw"]);
+  });
+
+  it("materializes explicit fields from restricted legacy rights", async () => {
+    await seed("legacy@acme.com", "acme", { language_rights: ["en"] });
+    const fields = await grantLanguageSlugToUser(env, "legacy@acme.com", "sw");
+    expect(fields).toEqual(["language_edit_rights", "language_publish_rights"]);
+    const after = await read("legacy@acme.com");
+    expect(after.language_edit_rights).toEqual(["en", "sw"]);
+    expect(after.language_publish_rights).toEqual(["en", "sw"]);
+    // Legacy field itself is untouched — it stays the lazy-migration
+    // source of truth for anything else that still reads it.
+    expect(after.language_rights).toEqual(["en"]);
+  });
+
+  it("no-ops (and does not write) for full-access users", async () => {
+    await seed("full@acme.com", "acme", { language_edit_rights: "*" });
+    const fields = await grantLanguageSlugToUser(env, "full@acme.com", "sw");
+    // publish field is undefined with no legacy fallback → full access.
+    expect(fields).toEqual([]);
+    const after = await read("full@acme.com");
+    expect(after.language_edit_rights).toBe("*");
+    expect(after.language_publish_rights).toBeUndefined();
+  });
+
+  it("throws when the stored user is missing", async () => {
+    await expect(
+      grantLanguageSlugToUser(env, "ghost@acme.com", "sw")
+    ).rejects.toThrow(/no stored user/);
+  });
+});
+
+describe("revokeLanguageSlugFromUser", () => {
+  it("removes the slug from exactly the recorded fields", async () => {
+    await seed("rev@acme.com", "acme", {
+      language_edit_rights: ["en", "sw"],
+      language_publish_rights: ["sw"],
+    });
+    await revokeLanguageSlugFromUser(env, "rev@acme.com", "sw", [
+      "language_edit_rights",
+    ]);
+    const after = await read("rev@acme.com");
+    expect(after.language_edit_rights).toEqual(["en"]);
+    // Not recorded → untouched, even though it holds the slug.
+    expect(after.language_publish_rights).toEqual(["sw"]);
+  });
+
+  it("tolerates a vanished user and drifted fields", async () => {
+    await expect(
+      revokeLanguageSlugFromUser(env, "gone@acme.com", "sw", [
+        "language_edit_rights",
+      ])
+    ).resolves.toBeUndefined();
+
+    await seed("drift@acme.com", "acme", { language_edit_rights: "*" });
+    await revokeLanguageSlugFromUser(env, "drift@acme.com", "sw", [
+      "language_edit_rights",
+    ]);
+    expect((await read("drift@acme.com")).language_edit_rights).toBe("*");
   });
 });

@@ -1344,8 +1344,12 @@ describe("PUT gate — thrown engine GET propagates (rd-5 parity)", () => {
 interface SeedRightsUser {
   email: string;
   org: string;
+  isAdmin?: boolean;
   mode_edit_rights?: StoredUser["mode_edit_rights"];
   mode_publish_rights?: StoredUser["mode_publish_rights"];
+  language_rights?: StoredUser["language_rights"];
+  language_edit_rights?: StoredUser["language_edit_rights"];
+  language_publish_rights?: StoredUser["language_publish_rights"];
 }
 
 async function seedRightsUser(input: SeedRightsUser): Promise<void> {
@@ -1358,9 +1362,12 @@ async function seedRightsUser(input: SeedRightsUser): Promise<void> {
     // the seed cheap (no PBKDF2 per test).
     passwordHash: "x",
     salt: "x",
-    isAdmin: false,
+    isAdmin: input.isAdmin ?? false,
     mode_edit_rights: input.mode_edit_rights,
     mode_publish_rights: input.mode_publish_rights,
+    language_rights: input.language_rights,
+    language_edit_rights: input.language_edit_rights,
+    language_publish_rights: input.language_publish_rights,
   };
   await env.AUTH_KV.put(`user:${input.email}`, JSON.stringify(stored));
 }
@@ -2313,7 +2320,14 @@ describe("config authz — cross-org via ?org= (#166)", () => {
       "/api/config/languages/english"
     );
     expect(res.status).toBe(403);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // One fetch: the #247 bootstrap carve-out's existence probe (the
+    // caller has admin powers and zero rights on this row). The spy's
+    // 200 reads as "exists", so the carve-out declines — the proxy PUT
+    // must never fire.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(
+      (fetchSpy.mock.calls[0]![1] as RequestInit | undefined)?.method
+    ).toBeUndefined();
   });
 
   it("super-admin with ?org=<own org> + matching language_rights → 200 (treated as same-org)", async () => {
@@ -2362,7 +2376,13 @@ describe("config authz — cross-org via ?org= (#166)", () => {
       "/api/config/languages/english"
     );
     expect(res.status).toBe(403);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // Same-org admin + zero rights on the row → the #247 carve-out
+    // probes existence once; the spy's 200 reads as "exists" so the
+    // deny stands and the proxy PUT never fires.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(
+      (fetchSpy.mock.calls[0]![1] as RequestInit | undefined)?.method
+    ).toBeUndefined();
   });
 
   it("super-admin GET languages list with ?org=other → proxies to /orgs/other/languages", async () => {
@@ -2764,5 +2784,334 @@ describe("config authz — same-org ?org= (#247)", () => {
     expect(String(fetchSpy.mock.calls[0]![0])).toContain(
       "/api/v1/admin/orgs/ACME/languages"
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #247 — language bootstrap create carve-out
+// ---------------------------------------------------------------------------
+//
+// A same-org admin with NO per-row language rights may CREATE a language
+// that doesn't exist yet; the worker auto-grants them both verbs on the
+// new slug before the engine call. Everything else about the PR #185
+// "no admin trump on languages" rule stays intact: existing rows,
+// DELETE, non-admins, and any ambiguous engine state all still 403.
+
+// First fetch = the gate's existence probe, second = the proxy PUT.
+function spyFetchBootstrap(
+  probe: () => Promise<Response>,
+  proxy: () => Promise<Response> = () =>
+    Promise.resolve(new Response("{}", { status: 200 }))
+) {
+  let call = 0;
+  return vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+    call++;
+    return call === 1 ? probe() : proxy();
+  });
+}
+
+function makeCreateRequest(name: string): Request {
+  return new Request(
+    `https://portal.example.test/api/config/languages/${name}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document: "## Identity\n", published: false }),
+    }
+  );
+}
+
+const missing = () => Promise.resolve(new Response("", { status: 404 }));
+
+describe("#247 language bootstrap create", () => {
+  it("same-org admin with explicit empty rights + missing language → 200, creator granted both verbs", async () => {
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_edit_rights: [],
+      language_publish_rights: [],
+    });
+    const fetchSpy = spyFetchBootstrap(missing);
+
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect((fetchSpy.mock.calls[1]![1] as RequestInit).method).toBe("PUT");
+
+    const after = await readRightsUser("admin@acme.com");
+    expect(after.language_edit_rights).toEqual(["swahili"]);
+    expect(after.language_publish_rights).toEqual(["swahili"]);
+  });
+
+  it("grant materializes from restricted legacy language_rights", async () => {
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_rights: ["en"],
+    });
+    const fetchSpy = spyFetchBootstrap(missing);
+
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_rights: ["en"],
+        // validateSession lazy-migrates legacy → verb fields on the
+        // session; mirror that here so the gate sees what it would in
+        // production.
+        language_edit_rights: ["en"],
+        language_publish_rights: ["en"],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    const after = await readRightsUser("admin@acme.com");
+    expect(after.language_edit_rights).toEqual(["en", "swahili"]);
+    expect(after.language_publish_rights).toEqual(["en", "swahili"]);
+    expect(after.language_rights).toEqual(["en"]);
+  });
+
+  it("existing language → 403, no grant, no proxy (PR #185 rule intact)", async () => {
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_edit_rights: [],
+      language_publish_rights: [],
+    });
+    const fetchSpy = spyFetchBootstrap(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ language: { document: "x" } }), {
+          status: 200,
+        })
+      )
+    );
+
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const after = await readRightsUser("admin@acme.com");
+    expect(after.language_edit_rights).toEqual([]);
+  });
+
+  it("existence probe 5xx → 403 (fail closed)", async () => {
+    const fetchSpy = spyFetchBootstrap(() =>
+      Promise.resolve(new Response("", { status: 500 }))
+    );
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("existence probe throws → 403 (fail closed)", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => Promise.reject(new Error("network down")));
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("non-admin with empty rights → 403 before any engine traffic", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        isAdmin: false,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("admin DELETE without rights → 403 (carve-out is PUT-only)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRequest("DELETE", "/api/config/languages/swahili"),
+      env,
+      makeSession({
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("engine rejects the create with 4xx → grant compensated", async () => {
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_edit_rights: [],
+      language_publish_rights: [],
+    });
+    const fetchSpy = spyFetchBootstrap(missing, () =>
+      Promise.resolve(new Response("bad name", { status: 400 }))
+    );
+
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(400);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const after = await readRightsUser("admin@acme.com");
+    expect(after.language_edit_rights).toEqual([]);
+    expect(after.language_publish_rights).toEqual([]);
+  });
+
+  it("engine 5xx on the create → grant kept (ambiguity never contracts)", async () => {
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_edit_rights: [],
+      language_publish_rights: [],
+    });
+    spyFetchBootstrap(missing, () =>
+      Promise.resolve(new Response("", { status: 500 }))
+    );
+
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(500);
+    const after = await readRightsUser("admin@acme.com");
+    expect(after.language_edit_rights).toEqual(["swahili"]);
+    expect(after.language_publish_rights).toEqual(["swahili"]);
+  });
+
+  it("stored user missing at grant time → 502, engine never called", async () => {
+    // No seed for this email — grant aborts the create.
+    const fetchSpy = spyFetchBootstrap(missing);
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        email: "ghost@acme.com",
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(502);
+    // Only the existence probe fired; the proxy PUT never did.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("bootstrap create with published: true → allowed (creator holds both verbs)", async () => {
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_edit_rights: [],
+      language_publish_rights: [],
+    });
+    const fetchSpy = spyFetchBootstrap(missing);
+
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/languages/swahili", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: "## Identity\n", published: true }),
+      }),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalid JSON body on the carve-out path → 400", async () => {
+    const fetchSpy = spyFetchBootstrap(missing);
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/languages/swahili", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: "{not json",
+      }),
+      env,
+      makeSession({
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: [],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(400);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });

@@ -3,6 +3,9 @@ import { errorResponse, isPathShapedOrg } from "./helpers";
 import {
   contractOrgModeRights,
   expandOrgModeRights,
+  grantLanguageSlugToUser,
+  revokeLanguageSlugFromUser,
+  type LanguageVerbRightsField,
   type MigrationRecord,
 } from "./rights-migration";
 import type { LanguageRights, SessionData } from "./types";
@@ -293,7 +296,17 @@ function computeRequiredVerbsForPut(
 //   4. Early-deny — if the caller has zero rights on this row across
 //      both verbs, reject before consuming the body. Keeps bodyless
 //      probes (DELETE, GET-with-method-override, malformed PUTs) on
-//      the 403 path rather than a downstream 400.
+//      the 403 path rather than a downstream 400. One carve-out (#247):
+//      a same-org admin's language PUT is allowed through IF the engine
+//      confirms the target doesn't exist yet — pure creation. Without
+//      it, an org whose users all hold explicit (non-"*") language
+//      rights can never create its FIRST draft: rights can only name
+//      drafts that exist, and creating a draft requires rights — a
+//      deadlock. The carve-out fails CLOSED (found/error/thrown state
+//      lookup → 403) and never applies to DELETE or existing rows, so
+//      the PR #185 "admin doesn't trump per-row languages" rule holds
+//      for everything that already exists. The caller pairs it with an
+//      auto-grant of both verbs to the creator (rights-migration.ts).
 //   5. DELETE → requires BOTH edit + publish on the row. Deletion is
 //      strictly more destructive than either alone.
 //   6. PUT → diff body vs current and require the union of verbs the
@@ -307,7 +320,10 @@ async function gateConfigMutation(
   kind: ResourceKind,
   name: string,
   crossOrg: boolean
-): Promise<{ ok: true; parsedBody?: ResourceShape } | { error: Response }> {
+): Promise<
+  | { ok: true; parsedBody?: ResourceShape; adminBootstrapCreate?: boolean }
+  | { error: Response }
+> {
   if (crossOrg) return { ok: true };
 
   // Admin trumps PER-MODE rights only. Pre-#181, modes were admin-only
@@ -342,6 +358,36 @@ async function gateConfigMutation(
     !hasRights(rightsFor(session, kind, "edit"), name) &&
     !hasRights(rightsFor(session, kind, "publish"), name)
   ) {
+    // #247 bootstrap carve-out — see the gate's doc comment (check 4).
+    // Ordering note: the state lookup runs only on the path that would
+    // otherwise 403, so rights-holding callers never pay the extra
+    // engine GET. TOCTOU: a same-name create landing between this
+    // "missing" read and the engine PUT means one admin's scaffold
+    // overwrites the other's seconds-old scaffold — same-org, admin-
+    // only, and bounded to brand-new drafts; accepted.
+    if (
+      kind === "language" &&
+      request.method === "PUT" &&
+      hasAdminPowers(session)
+    ) {
+      let state: ResourceState;
+      try {
+        state = await fetchResourceState(env, kind, org, name);
+      } catch {
+        // Thrown fetch / malformed 2xx body — ambiguous, fail closed
+        // (same mapping as preflightMode).
+        state = { status: "error" };
+      }
+      if (state.status === "missing") {
+        let body: ResourceShape;
+        try {
+          body = (await request.json()) as ResourceShape;
+        } catch {
+          return { error: errorResponse("Invalid JSON", 400) };
+        }
+        return { ok: true, parsedBody: body, adminBootstrapCreate: true };
+      }
+    }
     return { error: errorResponse("Forbidden", 403) };
   }
 
@@ -838,13 +884,52 @@ export async function handleConfig(
         resolved.crossOrg
       );
       if ("error" in gate) return gate.error;
-      return proxyToEngine(
+      // #247 bootstrap create — grant the creator both verbs on the new
+      // slug BEFORE the engine call (#240 expand-first model: a failure
+      // after the grant leaves an inert entry for a slug that doesn't
+      // exist, never a lockout). Grant failure aborts the create — the
+      // engine hasn't been touched, and creating a draft the creator
+      // can't see would re-manifest the very bug this fixes.
+      let grantedFields: LanguageVerbRightsField[] = [];
+      if (gate.adminBootstrapCreate) {
+        try {
+          grantedFields = await grantLanguageSlugToUser(
+            env,
+            session.email,
+            languageName
+          );
+        } catch (err) {
+          console.error(
+            `bootstrap create: rights grant failed for ${session.email} ("${languageName}")`,
+            err
+          );
+          return errorResponse("Failed to grant creator rights", 502);
+        }
+      }
+      const engineRes = await proxyToEngine(
         request,
         env,
         `/api/v1/admin/orgs/${encodedOrg}/languages/${encodeURIComponent(languageName)}`,
         ["GET", "PUT", "DELETE"],
         gate.parsedBody
       );
+      // Compensate ONLY on a definitive engine rejection (4xx). A 5xx
+      // or transport failure is ambiguous — the create may have landed —
+      // so the grant superset is kept (same rule as the #240 rename
+      // compensation: ambiguity never contracts rights).
+      if (
+        grantedFields.length > 0 &&
+        engineRes.status >= 400 &&
+        engineRes.status < 500
+      ) {
+        await revokeLanguageSlugFromUser(
+          env,
+          session.email,
+          languageName,
+          grantedFields
+        );
+      }
+      return engineRes;
     }
     return proxyToEngine(
       request,
