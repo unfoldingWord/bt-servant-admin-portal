@@ -19,6 +19,7 @@ import {
   hasAdminPowers,
   hasAnyRights,
   hasRights,
+  mirrorModeGrant,
 } from "@/lib/permissions";
 import { useUiStore } from "@/lib/ui-store";
 import { OrgContextSelector } from "@/components/org-context-selector";
@@ -120,16 +121,26 @@ export function ModesPage() {
   // canEditSelected here (both resolve modeEditRights to "*") but stay
   // explicit to keep the gate's intent readable.
   const canRenameSelected = isAdmin || isCrossOrg || canEditSelected;
-  // Clone rides the same gate as rename today (#241 PR B). The clone
-  // has no rights pre-assigned, so a non-admin cloning would land on a
-  // mode they can't edit. Kept as a separate boolean so the gate can
-  // loosen independently once rights-migration lands (#240).
-  const canCloneSelected = isAdmin || isCrossOrg;
-  // Retire rides the same gate (#241 PR C). Deleting a mode + widening
-  // the target's alias set are org-wide config changes at the same
-  // trust bar as rename. Loosen independently when rights-migration
-  // (#240) exists.
-  const canRetireSelected = isAdmin || isCrossOrg;
+  // Clone opens to shepherds with EDIT rights on the source (#257) —
+  // rename parity. The worker auto-grants the cloner both verbs on the
+  // new slug (X-Bootstrap-Grant), so the clone no longer lands on a
+  // mode its creator can't edit; handleCloneMode mirrors that grant
+  // into the session user.
+  const canCloneSelected = isAdmin || isCrossOrg || canEditSelected;
+  // Retire opens to shepherds at DELETE parity on the source (#257):
+  // edit + publish, same as canDeleteSelected — retire is strictly more
+  // destructive than delete. The worker additionally requires EDIT on
+  // the CANONICAL forward target (its alias set is being widened);
+  // the retire dialog mirrors that by filtering target options through
+  // canEditModeName below.
+  const canRetireSelected = isAdmin || isCrossOrg || canDeleteSelected;
+  // Per-row edit predicate for the retire dialog's target list.
+  // modeEditRights already resolves to "*" for admin/cross-org, so a
+  // plain hasRights read mirrors the worker's target gate.
+  const canEditModeName = useCallback(
+    (name: string) => hasRights(modeEditRights, name),
+    [modeEditRights]
+  );
 
   // Local document draft (auto-save target).
   //
@@ -433,9 +444,23 @@ export function ModesPage() {
       // picks discard-or-cancel). Uses data.name so an engine slug
       // canonicalization is picked up too. Belt-and-suspenders for
       // Frank F1 on #241 PR B.
+      //
+      // #257 — a shepherd clone comes back with bootstrapGranted: the
+      // worker granted this user both verbs on the new slug, but the
+      // auth store still holds pre-grant rights and the per-row gates
+      // + dropdown filter read from it. Mirror the grant synchronously
+      // (same pattern and rationale as the #240 rename mirror below:
+      // /me re-reads eventually-consistent KV and could clobber the
+      // patch with the pre-grant snapshot). Keyed on the newName we
+      // sent — that is exactly what the worker granted; data.name is
+      // used only for selection.
+      if (data.bootstrapGranted) {
+        const current = useAuthStore.getState().user;
+        if (current) setUser(mirrorModeGrant(current, newName.trim()));
+      }
       handleSelectMode(data.name);
     },
-    [cloneMode, handleSelectMode]
+    [cloneMode, handleSelectMode, setUser]
   );
 
   const handleRetireMode = useCallback(
@@ -544,6 +569,7 @@ export function ModesPage() {
               onRenameMode={handleRenameMode}
               onCloneMode={handleCloneMode}
               onRetireMode={handleRetireMode}
+              canEditTargetMode={canEditModeName}
               isCreating={saveMode.isPending}
               isDeleting={deleteMode.isPending}
               isRenaming={renameMode.isPending}

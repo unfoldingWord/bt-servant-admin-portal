@@ -107,6 +107,13 @@ interface ModeSelectorProps {
       route through `handleSelectMode` in modes.tsx defends the race
       window when focus escapes the modal. */
   retireDisabledReason: string | null;
+  /** Per-row edit predicate for the retire dialog's "Forward to" list
+      (#257). The worker requires EDIT rights on the CANONICAL forward
+      target (retire widens its alias array), so the dialog must not
+      offer targets the caller can't edit — a shepherd picking one
+      would just get a worker 403 after confirming. Admin/cross-org
+      callers resolve to "*" upstream and see every target. */
+  canEditTargetMode: (name: string) => boolean;
 }
 
 function isPublished(mode: Pick<PromptMode, "published">): boolean {
@@ -153,6 +160,7 @@ export function ModeSelector({
   renameDisabledReason,
   cloneDisabledReason,
   retireDisabledReason,
+  canEditTargetMode,
 }: ModeSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -692,7 +700,11 @@ export function ModeSelector({
                       </SelectTrigger>
                       <SelectContent>
                         {modes
-                          .filter((m) => m.name !== selectedMode)
+                          .filter(
+                            (m) =>
+                              m.name !== selectedMode &&
+                              canEditTargetMode(m.name)
+                          )
                           .map((m) => (
                             <SelectItem key={m.name} value={m.name}>
                               <span className="flex items-center gap-2">
@@ -712,10 +724,15 @@ export function ModeSelector({
                           ))}
                       </SelectContent>
                     </Select>
-                    {modes.filter((m) => m.name !== selectedMode).length ===
-                      0 && (
+                    {modes.filter(
+                      (m) =>
+                        m.name !== selectedMode && canEditTargetMode(m.name)
+                    ).length === 0 && (
                       <p className="text-muted-foreground text-xs">
-                        No other modes exist to forward to. Create one first.
+                        {modes.filter((m) => m.name !== selectedMode).length ===
+                        0
+                          ? "No other modes exist to forward to. Create one first."
+                          : "No forward targets you can edit. Retiring requires edit access on the target mode — ask an admin."}
                       </p>
                     )}
                   </div>

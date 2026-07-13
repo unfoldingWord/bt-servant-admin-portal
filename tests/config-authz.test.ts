@@ -1735,12 +1735,13 @@ describe("#240 rename rights migration", () => {
 // ---------------------------------------------------------------------------
 //
 // Clone creates a new mode (draft, distinct slug + optional label) via the
-// engine `_clone` op. The BFF proxies POST + `{ newName, newLabel? }` to
-// the engine, admin-gated on the same basis as _rename: per-user
-// mode_edit_rights / mode_publish_rights are slug-scoped, and the clone's
-// fresh slug has no rights pre-assigned, so a non-admin cloner would land
-// on a mode they can't edit. Matched before the generic `modes/{name}` arm
-// for the same regex-ordering reason as _rename.
+// engine `_clone` op. #257 opened it to shepherds at rename parity (EDIT
+// on the source slug); non-admin same-org cloners are auto-granted both
+// verbs on the new slug before the engine call (expand-first), with
+// compensation only on a definitive engine 4xx and an X-Bootstrap-Grant
+// response header so the client can mirror the grant. Matched before the
+// generic `modes/{name}` arm for the same regex-ordering reason as
+// _rename.
 
 function makeCloneRequest(name: string, body: object): Request {
   return new Request(
@@ -1794,21 +1795,183 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("non-admin with BOTH edit+publish on the source row → 403 (clone is admin-only, same reasoning as rename)", async () => {
-    // Clone's new slug carries no per-user rights, so a shepherd cloning
-    // would produce a mode they can't edit. Gating this to admins/cross-
-    // org avoids that trap; loosen when rights-migration exists (#240).
+  it("shepherd with EDIT on the source → 200, cloner auto-granted both verbs, X-Bootstrap-Grant set (#257)", async () => {
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: [],
+    });
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeCloneRequest("spoken", { newName: "spoken-v2" }),
       env,
       makeSession({
+        email: "shepherd@acme.com",
         mode_edit_rights: ["spoken"],
+        mode_publish_rights: [],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBe("1");
+    // Clone has NO preflights — one fetch, the proxy POST.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("POST");
+
+    const after = await readRightsUser("shepherd@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken", "spoken-v2"]);
+    expect(after.mode_publish_rights).toEqual(["spoken-v2"]);
+  });
+
+  it("publish-only shepherd on the source → 403, no grant, no proxy (cloning is edit-side)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        mode_edit_rights: [],
         mode_publish_rights: ["spoken"],
       }),
       "/api/config/modes/spoken/_clone"
     );
     expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("engine rejects the clone with 409 → grant compensated, no header", async () => {
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: [],
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(new Response("slug taken", { status: 409 }))
+    );
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        email: "shepherd@acme.com",
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: [],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(409);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBeNull();
+    const after = await readRightsUser("shepherd@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken"]);
+    expect(after.mode_publish_rights).toEqual([]);
+  });
+
+  it("engine 5xx on the clone → grant kept (ambiguity never contracts), no header", async () => {
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: [],
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(new Response("", { status: 500 }))
+    );
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        email: "shepherd@acme.com",
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: [],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(500);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBeNull();
+    const after = await readRightsUser("shepherd@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken", "spoken-v2"]);
+  });
+
+  it("admin clone → NO grant and no header (mode admin trump covers)", async () => {
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      mode_edit_rights: [],
+      mode_publish_rights: [],
+    });
+    spyFetch();
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        mode_edit_rights: [],
+        mode_publish_rights: [],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBeNull();
+    const after = await readRightsUser("admin@acme.com");
+    expect(after.mode_edit_rights).toEqual([]);
+    expect(after.mode_publish_rights).toEqual([]);
+  });
+
+  it("stored user missing at grant time → 502, engine never called", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        email: "ghost@acme.com",
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: [],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(502);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("missing newName → 400; invalid JSON → 400; non-POST → 405 — all before any engine traffic", async () => {
+    const fetchSpy = spyFetch();
+    const noName = await handleConfig(
+      makeCloneRequest("spoken", {}),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(noName.status).toBe(400);
+
+    const badJson = await handleConfig(
+      new Request(
+        "https://portal.example.test/api/config/modes/spoken/_clone",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{nope",
+        }
+      ),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(badJson.status).toBe(400);
+
+    const wrongMethod = await handleConfig(
+      new Request(
+        "https://portal.example.test/api/config/modes/spoken/_clone",
+        {
+          method: "GET",
+        }
+      ),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(wrongMethod.status).toBe(405);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -1868,10 +2031,41 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
 // Retire moves the source mode's canonical slug (+ its own aliases) onto the
 // target mode's aliases array, then deletes the source. Users assigned to
 // the source (or resolving via one of its previous aliases) silently
-// resolve to the target. Same admin/cross-org gate as _rename and _clone —
-// deleting a mode is an org-wide config change at the same trust bar as
-// today's PUT/DELETE modes. Regex is segment-anchored so a duplicated
+// resolve to the target. #257 opened it to shepherds at DELETE-parity-
+// plus: edit+publish on the source AND edit on the CANONICAL forward
+// target, with two fail-closed preflights (canonical source addressing;
+// target resolved to canonical before the rights check) so stale aliases
+// can't capture or launder either side. Admin/cross-org callers keep the
+// preflight-free fast path. Regex is segment-anchored so a duplicated
 // suffix falls through to the generic arm and 405s at the BFF.
+
+// URL-routing engine mock for the shepherd retire path: preflight GETs
+// answered per-slug, the proxy POST answered 200. `slugStates` maps a
+// slug to a found-name, "missing", or "error".
+function spyFetchRetireEngine(
+  slugStates: Record<string, string | "missing" | "error">
+) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const method = (init as RequestInit | undefined)?.method ?? "GET";
+    if (method === "POST") {
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }
+    const url = String(input);
+    const slug = decodeURIComponent(url.split("/modes/")[1] ?? "");
+    const state = slugStates[slug];
+    if (state === undefined || state === "missing") {
+      return Promise.resolve(new Response("", { status: 404 }));
+    }
+    if (state === "error") {
+      return Promise.resolve(new Response("", { status: 500 }));
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify({ mode: { name: state, document: "x" } }), {
+        status: 200,
+      })
+    );
+  });
+}
 
 function makeRetireRequest(name: string, body: object): Request {
   return new Request(
@@ -1925,22 +2119,199 @@ describe("config authz — #241 PR C mode retire (_retire)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("non-admin with BOTH edit+publish on the source row → 403 (retire is admin-only)", async () => {
-    // Same reasoning as rename/clone: retire deletes a mode + widens the
-    // target's alias set (org-wide change), and the target's rights
-    // aren't necessarily aligned with the source's — a shepherd who
-    // could edit the source might have no rights on the target.
+  it("shepherd with edit+publish on source AND edit on target → 200 via preflights (#257)", async () => {
+    const fetchSpy = spyFetchRetireEngine({
+      spoken: "spoken",
+      conversation: "conversation",
+    });
+    const res = await handleConfig(
+      makeRetireRequest("spoken", { forwardTo: "conversation" }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken", "conversation"],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(200);
+    // Two preflight GETs + the proxy POST.
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(
+      (fetchSpy.mock.calls[2]![1] as RequestInit | undefined)?.method
+    ).toBe("POST");
+  });
+
+  it("shepherd edit-only on source (no publish) → 403 before any engine traffic (#257: DELETE parity)", async () => {
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeRetireRequest("spoken", { forwardTo: "conversation" }),
       env,
       makeSession({
         mode_edit_rights: ["spoken", "conversation"],
-        mode_publish_rights: ["spoken", "conversation"],
+        mode_publish_rights: [],
       }),
       "/api/config/modes/spoken/_retire"
     );
     expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("shepherd lacking edit on the forward target → 403 after preflights, no proxy (#257)", async () => {
+    const fetchSpy = spyFetchRetireEngine({
+      spoken: "spoken",
+      conversation: "conversation",
+    });
+    const res = await handleConfig(
+      makeRetireRequest("spoken", { forwardTo: "conversation" }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(403);
+    // Preflights ran, proxy POST did not.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("alias-addressed source → 409, no proxy (stale-alias capture blocked, #257)", async () => {
+    // Shepherd holds rights on the stale alias slug; the engine would
+    // resolve it to the canonical mode and retire THAT. The canonical
+    // preflight refuses.
+    const fetchSpy = spyFetchRetireEngine({
+      "old-alias": "spoken",
+      conversation: "conversation",
+    });
+    const res = await handleConfig(
+      makeRetireRequest("old-alias", { forwardTo: "conversation" }),
+      env,
+      makeSession({
+        mode_edit_rights: ["old-alias", "conversation"],
+        mode_publish_rights: ["old-alias"],
+      }),
+      "/api/config/modes/old-alias/_retire"
+    );
+    expect(res.status).toBe(409);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("forwardTo alias resolving to an unauthorized canonical target → 403 (alias laundering blocked, #257)", async () => {
+    // Shepherd holds edit on the alias STRING but not on the canonical
+    // mode it resolves to; the rights check keys on the canonical name.
+    const fetchSpy = spyFetchRetireEngine({
+      spoken: "spoken",
+      "target-alias": "conversation",
+    });
+    const res = await handleConfig(
+      makeRetireRequest("spoken", { forwardTo: "target-alias" }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken", "target-alias"],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("shepherd preflight failure modes: source missing → 404, target missing → 404, engine error → 502 (fail closed)", async () => {
+    const sourceMissing = spyFetchRetireEngine({
+      conversation: "conversation",
+    });
+    let res = await handleConfig(
+      makeRetireRequest("spoken", { forwardTo: "conversation" }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken", "conversation"],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(404);
+    sourceMissing.mockRestore();
+
+    const targetMissing = spyFetchRetireEngine({ spoken: "spoken" });
+    res = await handleConfig(
+      makeRetireRequest("spoken", { forwardTo: "conversation" }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken", "conversation"],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(404);
+    targetMissing.mockRestore();
+
+    spyFetchRetireEngine({ spoken: "error", conversation: "conversation" });
+    res = await handleConfig(
+      makeRetireRequest("spoken", { forwardTo: "conversation" }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken", "conversation"],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(502);
+  });
+
+  it("admin retire skips the preflights (single proxy fetch, unchanged fast path)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeRetireRequest("spoken", { forwardTo: "conversation" }),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_retire"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("missing forwardTo → 400; invalid JSON → 400; non-POST → 405", async () => {
+    const fetchSpy = spyFetch();
+    expect(
+      (
+        await handleConfig(
+          makeRetireRequest("spoken", {}),
+          env,
+          makeSession({ isAdmin: true }),
+          "/api/config/modes/spoken/_retire"
+        )
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await handleConfig(
+          new Request(
+            "https://portal.example.test/api/config/modes/spoken/_retire",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: "{nope",
+            }
+          ),
+          env,
+          makeSession({ isAdmin: true }),
+          "/api/config/modes/spoken/_retire"
+        )
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await handleConfig(
+          new Request(
+            "https://portal.example.test/api/config/modes/spoken/_retire",
+            { method: "GET" }
+          ),
+          env,
+          makeSession({ isAdmin: true }),
+          "/api/config/modes/spoken/_retire"
+        )
+      ).status
+    ).toBe(405);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

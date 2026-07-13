@@ -244,12 +244,22 @@ export async function renameMode(
 // clone lands as a draft. Rejects with 409 if the new slug collides with any
 // existing mode's canonical name OR alias in the org (Ian's #232
 // reconciliation §4).
+//
+// #257 — a clone performed by a non-admin shepherd comes back flagged
+// (X-Bootstrap-Grant header): the worker auto-granted the cloner
+// edit + publish on the new slug, and the client mirrors that into its
+// session user. An explicit wire signal, NOT client-side inference —
+// same rationale as the #247 language-create grant (#256 rds 2–3).
+export interface CloneModeResult extends PromptMode {
+  bootstrapGranted: boolean;
+}
+
 export async function cloneMode(
   name: string,
   body: { newName: string; newLabel?: string },
   signal?: AbortSignal,
   org?: string | null
-): Promise<PromptMode> {
+): Promise<CloneModeResult> {
   const res = await fetch(
     buildConfigUrl(`/api/config/modes/${encodeURIComponent(name)}/_clone`, org),
     {
@@ -266,7 +276,11 @@ export async function cloneMode(
     );
   }
 
-  return unwrapModeResponse((await res.json()) as Record<string, unknown>);
+  const bootstrapGranted = res.headers.get("X-Bootstrap-Grant") === "1";
+  return {
+    ...unwrapModeResponse((await res.json()) as Record<string, unknown>),
+    bootstrapGranted,
+  };
 }
 
 // Retire the source mode and forward users onto `forwardTo` via the

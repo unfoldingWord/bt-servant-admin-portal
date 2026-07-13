@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   mirrorBootstrapGrant,
+  mirrorModeGrant,
   effectiveLanguageEditRights,
   effectiveLanguagePublishRights,
   effectiveModeEditRights,
@@ -485,5 +486,36 @@ describe("mirrorBootstrapGrant", () => {
       isAdmin: true,
     });
     expect(user.language_edit_rights).toEqual([]);
+  });
+});
+
+// #257 — local mirror of the worker's clone auto-grant, driven strictly
+// by the X-Bootstrap-Grant wire signal (no inference — see
+// mirrorBootstrapGrant above for the history).
+
+describe("mirrorModeGrant", () => {
+  it("adds the slug to both verb fields, materializing unset fields as [slug]", () => {
+    expect(mirrorModeGrant({ mode_edit_rights: ["spoken"] }, "sw")).toEqual({
+      mode_edit_rights: ["spoken", "sw"],
+      mode_publish_rights: ["sw"],
+    });
+  });
+
+  it("wildcards pass through untouched; held slugs are idempotent", () => {
+    expect(
+      mirrorModeGrant(
+        { mode_edit_rights: "*", mode_publish_rights: ["sw"] },
+        "sw"
+      )
+    ).toEqual({ mode_edit_rights: "*", mode_publish_rights: ["sw"] });
+  });
+
+  it("preserves unrelated fields and does not mutate the input", () => {
+    const user = {
+      email: "a@acme.com",
+      mode_edit_rights: ["spoken"] as string[],
+    };
+    expect(mirrorModeGrant(user, "sw")).toMatchObject({ email: "a@acme.com" });
+    expect(user.mode_edit_rights).toEqual(["spoken"]);
   });
 });

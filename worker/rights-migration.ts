@@ -175,6 +175,72 @@ export async function revokeLanguageSlugFromUser(
   }
 }
 
+// #257 — clone auto-grant: give a single user both MODE verbs on a
+// just-cloned slug. Sibling of grantLanguageSlugToUser (#247) with mode
+// semantics instead of language semantics: modes have NO legacy-rights
+// fallback and `undefined` means "no access" for non-admins (the
+// pre-#181 admin-only baseline), so an unset field simply materializes
+// as [slug] — there is no partner-aware or legacy rule to consult.
+// Wildcards pass through untouched. Same expand-first contract as the
+// language grant: call BEFORE the engine op; throws abort the clone;
+// the returned field list scopes definitive-failure compensation so a
+// pre-existing entry can never be stripped.
+export async function grantModeSlugToUser(
+  env: Env,
+  email: string,
+  slug: string
+): Promise<RightsField[]> {
+  const key = `user:${email}`;
+  const user = await env.AUTH_KV.get<StoredUser>(key, { type: "json" });
+  if (!user) {
+    throw new Error(`clone grant: no stored user for ${key}`);
+  }
+  const changed: RightsField[] = [];
+  for (const field of MODE_RIGHTS_FIELDS) {
+    const rights = user[field];
+    if (rights === "*") continue;
+    if (rights !== undefined && rights.includes(slug)) continue;
+    user[field] = [...(rights ?? []), slug];
+    changed.push(field);
+  }
+  if (changed.length > 0) {
+    await env.AUTH_KV.put(key, JSON.stringify(user));
+  }
+  return changed;
+}
+
+// #257 — compensate a clone grant after a DEFINITIVE engine rejection
+// (4xx, e.g. the slug-collision 409). Best-effort, recorded-fields-only,
+// same contract as revokeLanguageSlugFromUser.
+export async function revokeModeSlugFromUser(
+  env: Env,
+  email: string,
+  slug: string,
+  fields: RightsField[]
+): Promise<void> {
+  const key = `user:${email}`;
+  try {
+    const user = await env.AUTH_KV.get<StoredUser>(key, { type: "json" });
+    if (!user) return;
+    let dirty = false;
+    for (const field of fields) {
+      const rights = user[field];
+      if (rights !== undefined && rights !== "*" && rights.includes(slug)) {
+        user[field] = rights.filter((s) => s !== slug);
+        dirty = true;
+      }
+    }
+    if (dirty) {
+      await env.AUTH_KV.put(key, JSON.stringify(user));
+    }
+  } catch (err) {
+    console.error(
+      `rights-migration: clone grant compensation failed for ${key} (slug "${slug}") — stale entry remains`,
+      err
+    );
+  }
+}
+
 // Remove `remove` — but ONLY when `keep` is present in the same array.
 // This single guard is what makes contract and compensate safe to run
 // against any intermediate state: the removal can never take away a
