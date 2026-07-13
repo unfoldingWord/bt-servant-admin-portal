@@ -133,33 +133,10 @@ interface ResourceShape {
   published?: boolean;
 }
 
-async function fetchCurrentResource(
-  env: Env,
-  kind: ResourceKind,
-  org: string,
-  name: string
-): Promise<ResourceShape | null> {
-  // Any non-found RESPONSE → null. 404 means the resource doesn't
-  // exist yet (creation); other non-2xx statuses (auth, engine 5xx)
-  // are DELIBERATELY collapsed to null too, so the PUT gate falls
-  // through to creation semantics — which demand at minimum edit on
-  // any editorial field and publish on `published: true`, stricter
-  // than the diff path would have produced.
-  //
-  // A THROWN fetch or malformed 2xx body is NOT collapsed: it
-  // propagates and fails the request, exactly as on main (rd-5
-  // review; pinned by test). Do not add a catch here or in
-  // fetchResourceState — swallowing throws widens the creation
-  // fallback and lets an edit-only shepherd unpublish a live mode
-  // during an engine blip.
-  const state = await fetchResourceState(env, kind, org, name);
-  return state.status === "found" ? state.mode : null;
-}
-
 // Tri-state resource lookup — the single copy of the engine GET +
-// envelope unwrap (rd-4 review: preflightMode and fetchCurrentResource
-// had drifted into near-duplicates of it). Callers layer their own
-// error semantics on top.
+// envelope unwrap (rd-4 review: the preflights and the PUT gate's
+// current-state read had drifted into near-duplicates of it). Callers
+// layer their own error semantics on top.
 //
 // Deliberately does NOT catch: a thrown fetch (network) or a malformed
 // 2xx body (json parse) PROPAGATES. The PUT gate has always let those
@@ -203,10 +180,10 @@ async function fetchResourceState(
   return { status: "found", mode };
 }
 
-// Preflight lookup for the rename arm. Unlike fetchCurrentResource
-// (whose null-on-any-error is deliberately lax — the PUT gate falls
-// through to stricter creation semantics), the preflights are SECURITY
-// checks and must fail CLOSED: a transient engine 5xx during the
+// Preflight lookup for the rename arm. Unlike the PUT gate's current-
+// state read (whose error-collapses-to-null is deliberately lax — the
+// gate falls through to stricter creation semantics), the preflights
+// are SECURITY checks and must fail CLOSED: a transient engine 5xx during the
 // collision check must abort the rename, not read as "slug is free"
 // and reopen the escalation window it guards (rd-3 review). A found
 // mode whose payload lacks a string `name` is treated as an error for
@@ -296,22 +273,28 @@ function computeRequiredVerbsForPut(
 //   4. Early-deny — if the caller has zero rights on this row across
 //      both verbs, reject before consuming the body. Keeps bodyless
 //      probes (DELETE, GET-with-method-override, malformed PUTs) on
-//      the 403 path rather than a downstream 400. One carve-out (#247):
-//      a same-org admin's language PUT is allowed through IF the engine
-//      confirms the target doesn't exist yet — pure creation. Without
-//      it, an org whose users all hold explicit (non-"*") language
-//      rights can never create its FIRST draft: rights can only name
-//      drafts that exist, and creating a draft requires rights — a
-//      deadlock. The carve-out fails CLOSED (found/error/thrown state
-//      lookup → 403) and never applies to DELETE or existing rows, so
-//      the PR #185 "admin doesn't trump per-row languages" rule holds
-//      for everything that already exists. The caller pairs it with an
-//      auto-grant of both verbs to the creator (rights-migration.ts).
+//      the 403 path rather than a downstream 400. Same-org-admin
+//      language PUTs are exempted — they fall through to check 6,
+//      whose #247 carve-out must see them.
 //   5. DELETE → requires BOTH edit + publish on the row. Deletion is
 //      strictly more destructive than either alone.
 //   6. PUT → diff body vs current and require the union of verbs the
 //      diff implies (`edit` if any editorial field changed, `publish`
-//      if the published flag flipped).
+//      if the published flag flipped). When the diff denies, one
+//      carve-out (#247): a same-org admin's language PUT is allowed IF
+//      the engine CONFIRMED the target doesn't exist — pure creation.
+//      Without it, an org whose users all hold explicit (non-"*")
+//      language rights can never create its FIRST draft: rights can
+//      only name drafts that exist, and creating a draft requires
+//      rights — a deadlock. The carve-out sits on the deny path of the
+//      diff (not inside check 4) so mixed shapes like edit=[] +
+//      publish="*" — which pass the zero-rights screen on one verb yet
+//      still fail creation's edit demand — reach it too. It fails
+//      CLOSED (found or probe-error → 403) and never applies to DELETE
+//      or existing rows, so the PR #185 "admin doesn't trump per-row
+//      languages" rule holds for everything that already exists. The
+//      caller pairs it with an auto-grant of both verbs to the creator
+//      (rights-migration.ts).
 async function gateConfigMutation(
   request: Request,
   env: Env,
@@ -349,45 +332,26 @@ async function gateConfigMutation(
     return { error: errorResponse("Forbidden", 403) };
   }
 
+  // #247 — the shape eligible for the bootstrap carve-out in the PUT
+  // path below. Computed once: it also exempts these requests from the
+  // early-deny, which would otherwise 403 the zero-rights-admin case
+  // before the creation probe could run.
+  const adminLanguageCreatePath =
+    kind === "language" && request.method === "PUT" && hasAdminPowers(session);
+
   // Early-deny: if the caller has zero rights on this row across both
   // verbs, no PUT diff can let them through. Rejecting before reading
   // the body keeps the gate side-effect-free in the impossible case and
   // preserves the pre-#181 same-org "restricted shepherd → 403 on any
-  // unauthorized row" behavior even for bodyless probes.
+  // unauthorized row" behavior even for bodyless probes. Same-org-admin
+  // language PUTs fall through instead — for them the PUT diff CAN
+  // allow (creation via the #247 carve-out), at the cost of a body
+  // parse + existence probe on what may still end as a 403.
   if (
+    !adminLanguageCreatePath &&
     !hasRights(rightsFor(session, kind, "edit"), name) &&
     !hasRights(rightsFor(session, kind, "publish"), name)
   ) {
-    // #247 bootstrap carve-out — see the gate's doc comment (check 4).
-    // Ordering note: the state lookup runs only on the path that would
-    // otherwise 403, so rights-holding callers never pay the extra
-    // engine GET. TOCTOU: a same-name create landing between this
-    // "missing" read and the engine PUT means one admin's scaffold
-    // overwrites the other's seconds-old scaffold — same-org, admin-
-    // only, and bounded to brand-new drafts; accepted.
-    if (
-      kind === "language" &&
-      request.method === "PUT" &&
-      hasAdminPowers(session)
-    ) {
-      let state: ResourceState;
-      try {
-        state = await fetchResourceState(env, kind, org, name);
-      } catch {
-        // Thrown fetch / malformed 2xx body — ambiguous, fail closed
-        // (same mapping as preflightMode).
-        state = { status: "error" };
-      }
-      if (state.status === "missing") {
-        let body: ResourceShape;
-        try {
-          body = (await request.json()) as ResourceShape;
-        } catch {
-          return { error: errorResponse("Invalid JSON", 400) };
-        }
-        return { ok: true, parsedBody: body, adminBootstrapCreate: true };
-      }
-    }
     return { error: errorResponse("Forbidden", 403) };
   }
 
@@ -408,17 +372,29 @@ async function gateConfigMutation(
     } catch {
       return { error: errorResponse("Invalid JSON", 400) };
     }
-    // `fetchCurrentResource` returns null for any engine non-2xx
-    // (including 5xx / network errors) — the gate then treats the PUT
-    // as a creation, which is conservative (every editorial field
-    // present demands edit; published: true demands publish).
-    const current = await fetchCurrentResource(env, kind, org, name);
-    for (const verb of computeRequiredVerbsForPut(body, current)) {
-      if (!hasRights(rightsFor(session, kind, verb), name)) {
-        return { error: errorResponse("Forbidden", 403) };
-      }
+    // Tri-state lookup. A thrown fetch or malformed 2xx body PROPAGATES
+    // and fails the request, exactly as on main (rd-5 review; pinned by
+    // test) — do not add a catch here. An "error" status collapses to
+    // null for the verb diff, treating the PUT as a creation, which is
+    // conservative (every editorial field present demands edit;
+    // published: true demands publish). The #247 carve-out is stricter:
+    // it requires a CONFIRMED "missing", so an engine blip can tighten
+    // the diff but can never widen admin creation onto an existing row.
+    const state = await fetchResourceState(env, kind, org, name);
+    const current = state.status === "found" ? state.mode : null;
+    const denied = computeRequiredVerbsForPut(body, current).some(
+      (verb) => !hasRights(rightsFor(session, kind, verb), name)
+    );
+    if (!denied) return { ok: true, parsedBody: body };
+    // #247 bootstrap carve-out — see the gate's doc comment (check 6).
+    // TOCTOU: a same-name create landing between the "missing" read and
+    // the engine PUT means one admin's scaffold overwrites the other's
+    // seconds-old scaffold — same-org, admin-only, and bounded to
+    // brand-new drafts; accepted.
+    if (adminLanguageCreatePath && state.status === "missing") {
+      return { ok: true, parsedBody: body, adminBootstrapCreate: true };
     }
-    return { ok: true, parsedBody: body };
+    return { error: errorResponse("Forbidden", 403) };
   }
 
   return { ok: true };

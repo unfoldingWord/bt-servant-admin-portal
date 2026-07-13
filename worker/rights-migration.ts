@@ -1,3 +1,4 @@
+import { lazyMigrateLanguageRights } from "./auth";
 import type { Env } from "./helpers";
 import { listKvKeys } from "./helpers";
 import type { LanguageRights, StoredUser } from "./types";
@@ -84,26 +85,6 @@ export function expandRights(
   return [...rights, to];
 }
 
-// #247 bootstrap auto-grant transform — add `slug` to one verb field.
-// `explicit` is the field's stored value; `legacyFallback` is the
-// user's legacy `language_rights`, consulted only when the field is
-// unset (mirroring the lazy-migration rule in worker/auth.ts). When
-// the grant fires against a fallback-derived array, the explicit field
-// is materialized with the fallback's entries plus the new slug — the
-// same materialization validateSession performs at read time.
-// Returns the new array, or null when no write is needed (effective
-// rights are full — undefined/"*" — or already include the slug).
-export function grantSlug(
-  explicit: LanguageRights | undefined,
-  legacyFallback: LanguageRights | undefined,
-  slug: string
-): string[] | null {
-  const effective = explicit ?? legacyFallback;
-  if (effective === undefined || effective === "*") return null;
-  if (effective.includes(slug)) return null;
-  return [...effective, slug];
-}
-
 // #247 — grant the creator both language verbs on a just-bootstrapped
 // slug. Follows the #240 expand-first model: the caller invokes this
 // BEFORE the engine create, so a crash between grant and create leaves
@@ -112,6 +93,25 @@ export function grantSlug(
 // inherit is the admin who was allowed to create it anyway. Throws on
 // read/write failure — the caller must abort the create (nothing has
 // touched the engine yet).
+//
+// The grant operates on the user's EFFECTIVE rights per the canonical
+// partner-aware rule (lazyMigrateLanguageRights, worker/auth.ts): the
+// legacy `language_rights` fallback applies only when BOTH verb fields
+// are unset; an explicit partner makes the unset field a deliberate
+// deny ([]), which the grant materializes as [slug] — never as legacy
+// entries. Getting this wrong in either direction is an authz bug: the
+// naive per-field `explicit ?? legacy` fallback both under-grants (an
+// unset-partner field reads as "full", so no grant is written while
+// every session sees [] — the creator is locked out of the draft they
+// just made) and over-grants (legacy entries materialize into a
+// partner-denied field, durably restoring access the rule had revoked).
+//
+// Concurrency: this is a whole-record read-modify-write over KV, which
+// has no CAS — two writes racing the same user record are last-write-
+// wins, the same acceptance as the #240 org-wide migration. The window
+// here is one admin's own record during their own create click; a lost
+// grant re-manifests as the (recoverable) read-only-draft symptom and
+// any admin can re-grant via the Users dialog now that the draft exists.
 //
 // Returns the fields actually modified, so definitive-failure
 // compensation operates only on what this grant touched and can never
@@ -127,13 +127,14 @@ export async function grantLanguageSlugToUser(
   if (!user) {
     throw new Error(`bootstrap grant: no stored user for ${key}`);
   }
+  const effective = lazyMigrateLanguageRights(user);
   const changed: LanguageVerbRightsField[] = [];
   for (const field of LANGUAGE_VERB_RIGHTS_FIELDS) {
-    const next = grantSlug(user[field], user.language_rights, slug);
-    if (next !== null) {
-      user[field] = next;
-      changed.push(field);
-    }
+    const rights = effective[field];
+    if (rights === undefined || rights === "*") continue;
+    if (rights.includes(slug)) continue;
+    user[field] = [...rights, slug];
+    changed.push(field);
   }
   if (changed.length > 0) {
     await env.AUTH_KV.put(key, JSON.stringify(user));

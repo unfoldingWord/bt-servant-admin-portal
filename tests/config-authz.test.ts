@@ -2366,7 +2366,11 @@ describe("config authz — cross-org via ?org= (#166)", () => {
   it("no ?org= + non-super with restricted language_rights → still 403 (same-org gate intact)", async () => {
     const fetchSpy = spyFetch();
     const res = await handleConfig(
-      makeRequest("PUT", "/api/config/languages/english"),
+      new Request("https://portal.example.test/api/config/languages/english", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document: "# English\n" }),
+      }),
       env,
       makeSession({
         org: "acme",
@@ -2938,21 +2942,24 @@ describe("#247 language bootstrap create", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("existence probe throws → 403 (fail closed)", async () => {
+  it("existence probe throws → request fails, no grant, no proxy (rd-5 parity)", async () => {
+    // Thrown fetch propagates on the PUT path, same as for rights-
+    // holding callers — still fail-closed: nothing is mutated.
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(() => Promise.reject(new Error("network down")));
-    const res = await handleConfig(
-      makeCreateRequest("swahili"),
-      env,
-      makeSession({
-        isAdmin: true,
-        language_edit_rights: [],
-        language_publish_rights: [],
-      }),
-      "/api/config/languages/swahili"
-    );
-    expect(res.status).toBe(403);
+    await expect(
+      handleConfig(
+        makeCreateRequest("swahili"),
+        env,
+        makeSession({
+          isAdmin: true,
+          language_edit_rights: [],
+          language_publish_rights: [],
+        }),
+        "/api/config/languages/swahili"
+      )
+    ).rejects.toThrow("network down");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -3095,7 +3102,7 @@ describe("#247 language bootstrap create", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("invalid JSON body on the carve-out path → 400", async () => {
+  it("invalid JSON body on the carve-out path → 400 before any engine traffic", async () => {
     const fetchSpy = spyFetchBootstrap(missing);
     const res = await handleConfig(
       new Request("https://portal.example.test/api/config/languages/swahili", {
@@ -3112,6 +3119,76 @@ describe("#247 language bootstrap create", () => {
       "/api/config/languages/swahili"
     );
     expect(res.status).toBe(400);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // Body parse precedes the existence probe on the PUT path.
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("mixed shape edit=[] + publish='*' → carve-out still reachable on a missing name (#256 review F2)", async () => {
+    // The wildcard on one verb bypasses the zero-rights early-deny, so
+    // the carve-out must live on the PUT diff's deny path — nested
+    // inside early-deny it never ran for this shape and the bootstrap
+    // deadlock persisted.
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_edit_rights: [],
+      language_publish_rights: "*",
+    });
+    const fetchSpy = spyFetchBootstrap(missing);
+
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_edit_rights: [],
+        language_publish_rights: "*",
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    const after = await readRightsUser("admin@acme.com");
+    expect(after.language_edit_rights).toEqual(["swahili"]);
+    // The wildcard side needs no entry and must not be narrowed.
+    expect(after.language_publish_rights).toBe("*");
+  });
+
+  it("partner-deny shape (publish explicit, edit unset) → creator granted BOTH verbs, legacy never leaks (#256 review F1)", async () => {
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_rights: ["x"],
+      language_publish_rights: ["x"],
+    });
+    const fetchSpy = spyFetchBootstrap(missing);
+
+    const res = await handleConfig(
+      makeCreateRequest("swahili"),
+      env,
+      // Session mirrors lazyMigrateLanguageRights: explicit publish,
+      // partner-denied edit ([]), legacy carried alongside.
+      makeSession({
+        email: "admin@acme.com",
+        isAdmin: true,
+        language_rights: ["x"],
+        language_edit_rights: [],
+        language_publish_rights: ["x"],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    const after = await readRightsUser("admin@acme.com");
+    // Edit was a deliberate deny: it materializes as [slug] only — the
+    // legacy "x" must NOT reappear (that would durably restore revoked
+    // access; the escalation face of review F1).
+    expect(after.language_edit_rights).toEqual(["swahili"]);
+    expect(after.language_publish_rights).toEqual(["x", "swahili"]);
   });
 });

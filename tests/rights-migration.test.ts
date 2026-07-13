@@ -13,7 +13,6 @@ import {
   expandOrgModeRights,
   expandRights,
   grantLanguageSlugToUser,
-  grantSlug,
   removeSlugIfPartnerPresent,
   revokeLanguageSlugFromUser,
 } from "../worker/rights-migration";
@@ -308,30 +307,6 @@ describe("contractOrgModeRights", () => {
 // #247 — bootstrap auto-grant (single-user, both language verb fields)
 // ---------------------------------------------------------------------------
 
-describe("grantSlug", () => {
-  it("appends to an explicit array, ignoring the fallback", () => {
-    expect(grantSlug([], ["legacy"], "swahili")).toEqual(["swahili"]);
-    expect(grantSlug(["en"], undefined, "swahili")).toEqual(["en", "swahili"]);
-  });
-
-  it("materializes from the legacy fallback when the field is unset", () => {
-    // Mirrors worker/auth.ts lazy migration: explicit ?? legacy.
-    expect(grantSlug(undefined, ["en"], "swahili")).toEqual(["en", "swahili"]);
-    expect(grantSlug(undefined, [], "swahili")).toEqual(["swahili"]);
-  });
-
-  it("null when effective rights are already full (undefined / '*')", () => {
-    expect(grantSlug(undefined, undefined, "swahili")).toBeNull();
-    expect(grantSlug("*", [], "swahili")).toBeNull();
-    expect(grantSlug(undefined, "*", "swahili")).toBeNull();
-  });
-
-  it("null when the slug is already held (idempotent)", () => {
-    expect(grantSlug(["swahili"], undefined, "swahili")).toBeNull();
-    expect(grantSlug(undefined, ["swahili"], "swahili")).toBeNull();
-  });
-});
-
 describe("grantLanguageSlugToUser", () => {
   it("grants both verb fields and returns the modified fields", async () => {
     await seed("boot@acme.com", "acme", {
@@ -358,13 +333,67 @@ describe("grantLanguageSlugToUser", () => {
   });
 
   it("no-ops (and does not write) for full-access users", async () => {
-    await seed("full@acme.com", "acme", { language_edit_rights: "*" });
-    const fields = await grantLanguageSlugToUser(env, "full@acme.com", "sw");
-    // publish field is undefined with no legacy fallback → full access.
-    expect(fields).toEqual([]);
-    const after = await read("full@acme.com");
-    expect(after.language_edit_rights).toBe("*");
+    // Truly full = both wildcards, or both unset with no legacy (the
+    // pre-rights default). Neither needs a stored grant.
+    await seed("full@acme.com", "acme", {
+      language_edit_rights: "*",
+      language_publish_rights: "*",
+    });
+    expect(await grantLanguageSlugToUser(env, "full@acme.com", "sw")).toEqual(
+      []
+    );
+    expect((await read("full@acme.com")).language_edit_rights).toBe("*");
+
+    await seed("unset@acme.com", "acme");
+    expect(await grantLanguageSlugToUser(env, "unset@acme.com", "sw")).toEqual(
+      []
+    );
+    const after = await read("unset@acme.com");
+    expect(after.language_edit_rights).toBeUndefined();
     expect(after.language_publish_rights).toBeUndefined();
+  });
+
+  it("partner-aware: an unset field with an explicit partner is a DENY, so the grant materializes [slug] — not full access, not legacy (#256 review F1)", async () => {
+    // Under-grant face of the bug: publish explicit, edit unset. The
+    // naive `explicit ?? legacy` treated unset edit as full access and
+    // skipped the grant — while every session (worker/auth.ts
+    // lazyMigrateLanguageRights) saw edit=[] and locked the creator out
+    // of the draft they just made.
+    await seed("mixed@acme.com", "acme", {
+      language_publish_rights: ["es"],
+    });
+    const fields = await grantLanguageSlugToUser(env, "mixed@acme.com", "sw");
+    expect(fields).toEqual(["language_edit_rights", "language_publish_rights"]);
+    const after = await read("mixed@acme.com");
+    expect(after.language_edit_rights).toEqual(["sw"]);
+    expect(after.language_publish_rights).toEqual(["es", "sw"]);
+  });
+
+  it("partner-aware: legacy entries never materialize into a partner-denied field (#256 review F1, escalation face)", async () => {
+    // Over-grant face: publish explicit, edit unset, legacy holds "x".
+    // The partner-aware rule made edit a deliberate deny; the naive
+    // fallback would have written edit=["x","sw"], durably restoring
+    // access the rule had revoked.
+    await seed("esc@acme.com", "acme", {
+      language_rights: ["x"],
+      language_publish_rights: ["x"],
+    });
+    await grantLanguageSlugToUser(env, "esc@acme.com", "sw");
+    const after = await read("esc@acme.com");
+    expect(after.language_edit_rights).toEqual(["sw"]);
+    expect(after.language_publish_rights).toEqual(["x", "sw"]);
+  });
+
+  it("partner-aware: a one-sided wildcard leaves that side untouched and grants the denied side", async () => {
+    await seed("wild@acme.com", "acme", {
+      language_edit_rights: [],
+      language_publish_rights: "*",
+    });
+    const fields = await grantLanguageSlugToUser(env, "wild@acme.com", "sw");
+    expect(fields).toEqual(["language_edit_rights"]);
+    const after = await read("wild@acme.com");
+    expect(after.language_edit_rights).toEqual(["sw"]);
+    expect(after.language_publish_rights).toBe("*");
   });
 
   it("throws when the stored user is missing", async () => {

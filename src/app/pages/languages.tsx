@@ -4,7 +4,6 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
-import { fetchMe } from "@/lib/auth-api";
 import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
 import { LanguageForbiddenError } from "@/lib/languages-api";
@@ -366,23 +365,44 @@ export function LanguagesPage() {
             // #247 — a bootstrap create auto-grants the creator both
             // verbs on the new slug server-side, but the session user in
             // the auth store still carries the pre-grant rights, and the
-            // page's list filter + edit gates read from it. Refresh so
-            // the draft the admin just created doesn't render read-only
-            // (or vanish from the list) until the next full reload. A
-            // failed refresh is left alone — rights arrive on any later
-            // session hydration, and a null (401) means the session died,
-            // which the next API call surfaces through the usual path.
-            void fetchMe().then(
-              (fresh) => {
-                if (fresh) setUser(fresh);
-              },
-              () => undefined
-            );
+            // page's list filter + edit gates read from it. Mirror the
+            // grant locally instead of refetching /me: KV read-after-
+            // write isn't guaranteed, so an immediate refetch could
+            // re-store the STALE pre-grant record (and a late-resolving
+            // refetch could repopulate the store after a logout). The
+            // effective* helpers apply the same partner-aware rule the
+            // worker grants under, so materializing their result + slug
+            // reproduces the server-side outcome; the next full session
+            // hydration converges on the server state either way.
+            if (!isCrossOrg && user) {
+              const withSlug = (
+                rights: ReturnType<typeof effectiveLanguageEditRights>
+              ) =>
+                rights === undefined || rights === "*" || rights.includes(name)
+                  ? rights
+                  : [...rights, name];
+              setUser({
+                ...user,
+                language_edit_rights: withSlug(
+                  effectiveLanguageEditRights(user)
+                ),
+                language_publish_rights: withSlug(
+                  effectiveLanguagePublishRights(user)
+                ),
+              });
+            }
           },
         }
       );
     },
-    [saveLanguage, scaffoldQuery.data, setSelectedLanguage, setUser]
+    [
+      saveLanguage,
+      scaffoldQuery.data,
+      setSelectedLanguage,
+      setUser,
+      user,
+      isCrossOrg,
+    ]
   );
 
   const handleSetPublished = useCallback(
@@ -488,6 +508,9 @@ export function LanguagesPage() {
               canDeleteSelected={canDeleteSelected}
               isScaffoldReady={scaffoldQuery.isSuccess}
               scaffoldError={scaffoldQuery.isError}
+              takenNames={
+                languagesQuery.data?.languages.map((l) => l.name) ?? []
+              }
             />
           </div>
 
@@ -567,6 +590,7 @@ export function LanguagesPage() {
           <EmptyState
             canCreate={canCreate}
             hasAny={(authorizedLanguagesData?.languages.length ?? 0) > 0}
+            hasHidden={(languagesQuery.data?.languages.length ?? 0) > 0}
           />
         ) : (
           <>
@@ -681,17 +705,25 @@ export function LanguagesPage() {
 
 interface EmptyStateProps {
   canCreate: boolean;
+  /** The user's rights-filtered list has entries. */
   hasAny: boolean;
+  /** The org's RAW list has entries (visible to this user or not).
+      #247: an admin with no per-row rights sees an empty filtered list
+      even when drafts exist — telling them "No languages yet" would
+      misrepresent the org and invite name collisions. */
+  hasHidden: boolean;
 }
 
-function EmptyState({ canCreate, hasAny }: EmptyStateProps) {
+function EmptyState({ canCreate, hasAny, hasHidden }: EmptyStateProps) {
   return (
     <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
       <p className="text-sm">
         {hasAny
           ? "Pick a language above to start editing."
           : canCreate
-            ? "No languages yet. Create one to get started."
+            ? hasHidden
+              ? "This org has languages, but none you have access to. Create a new draft, or ask a shepherd or admin for access to an existing one."
+              : "No languages yet. Create one to get started."
             : "No languages are available for your account."}
       </p>
     </div>
