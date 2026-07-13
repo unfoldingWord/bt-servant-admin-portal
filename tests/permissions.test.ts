@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applyLocalBootstrapGrant,
   effectiveLanguageEditRights,
   effectiveLanguagePublishRights,
   effectiveModeEditRights,
@@ -393,5 +394,92 @@ describe("renameSlugInRights (#240 client mirror)", () => {
   it("wildcard and undefined pass through", () => {
     expect(renameSlugInRights("*", "spoken", "conv")).toBe("*");
     expect(renameSlugInRights(undefined, "spoken", "conv")).toBeUndefined();
+  });
+});
+
+// #247 / #256 review round 2 — local mirror of the worker's bootstrap
+// auto-grant. The null-vs-grant split is the whole point: mirroring
+// after an ORDINARY create (edit rights already covered the slug, so
+// the worker granted nothing) invents local permissions whose controls
+// then 403.
+
+describe("applyLocalBootstrapGrant", () => {
+  it("null when effective edit already covers the slug — ordinary create, worker granted nothing", async () => {
+    // The review-round-2 scenario: edit "*" passes the ordinary gate;
+    // publish [] must NOT gain the slug locally.
+    expect(
+      applyLocalBootstrapGrant(
+        { language_edit_rights: "*", language_publish_rights: [] },
+        "sw"
+      )
+    ).toBeNull();
+    // Legacy full-access user (all fields unset).
+    expect(applyLocalBootstrapGrant({}, "sw")).toBeNull();
+    // Explicit array already naming the slug.
+    expect(
+      applyLocalBootstrapGrant(
+        { language_edit_rights: ["sw"], language_publish_rights: [] },
+        "sw"
+      )
+    ).toBeNull();
+  });
+
+  it("mirrors both verbs after a carve-out create (explicit empty rights)", () => {
+    expect(
+      applyLocalBootstrapGrant(
+        { language_edit_rights: [], language_publish_rights: [] },
+        "sw"
+      )
+    ).toEqual({
+      language_edit_rights: ["sw"],
+      language_publish_rights: ["sw"],
+    });
+  });
+
+  it("split wildcard: edit [] + publish '*' → edit gains the slug, wildcard untouched", () => {
+    expect(
+      applyLocalBootstrapGrant(
+        { language_edit_rights: [], language_publish_rights: "*" },
+        "sw"
+      )
+    ).toEqual({ language_edit_rights: ["sw"], language_publish_rights: "*" });
+  });
+
+  it("partner-deny shape: publish explicit, edit unset → edit materializes [slug], not legacy", () => {
+    expect(
+      applyLocalBootstrapGrant(
+        { language_rights: ["x"], language_publish_rights: ["x"] },
+        "sw"
+      )
+    ).toEqual({
+      language_rights: ["x"],
+      language_edit_rights: ["sw"],
+      language_publish_rights: ["x", "sw"],
+    });
+  });
+
+  it("restricted legacy-only user → both verbs materialize legacy + slug (matches server grant)", () => {
+    expect(applyLocalBootstrapGrant({ language_rights: ["en"] }, "sw")).toEqual(
+      {
+        language_rights: ["en"],
+        language_edit_rights: ["en", "sw"],
+        language_publish_rights: ["en", "sw"],
+      }
+    );
+  });
+
+  it("preserves unrelated fields on the user object", () => {
+    const user = {
+      email: "a@acme.com",
+      isAdmin: true,
+      language_edit_rights: [] as string[],
+      language_publish_rights: [] as string[],
+    };
+    expect(applyLocalBootstrapGrant(user, "sw")).toMatchObject({
+      email: "a@acme.com",
+      isAdmin: true,
+    });
+    // Input is not mutated.
+    expect(user.language_edit_rights).toEqual([]);
   });
 });

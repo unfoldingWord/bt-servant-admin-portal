@@ -91,6 +91,38 @@ export function effectiveLanguagePublishRights(
   return user.language_rights;
 }
 
+// #247 — mirror the worker's bootstrap auto-grant into the local session
+// user after a successful same-org language create, WITHOUT a wire signal.
+// The inference: creation demands edit rights on the slug, so a create
+// that succeeded while the user's effective edit rights did NOT cover it
+// can only have passed via the admin bootstrap carve-out — which is
+// exactly (and only) when the worker grants the creator both verbs. If
+// edit already covered the slug, the ordinary gate passed and the worker
+// granted nothing; mirroring anyway would invent local permissions (e.g.
+// publish for an edit-"*"/publish-[] admin) whose controls then 403
+// (#256 review round 2).
+//
+// Returns the updated user, or null when no grant occurred. Wildcard /
+// undefined (full-access) fields pass through untouched, matching the
+// server-side grant's no-op rule.
+export function applyLocalBootstrapGrant<T extends LanguageRightsCarrier>(
+  user: T,
+  slug: string
+): T | null {
+  const edit = effectiveLanguageEditRights(user);
+  if (hasRights(edit, slug)) return null;
+  const publish = effectiveLanguagePublishRights(user);
+  const withSlug = (rights: LanguageRights | undefined) =>
+    rights === undefined || rights === "*" || rights.includes(slug)
+      ? rights
+      : [...rights, slug];
+  return {
+    ...user,
+    language_edit_rights: withSlug(edit),
+    language_publish_rights: withSlug(publish),
+  };
+}
+
 export function effectiveModeEditRights(
   user:
     | {

@@ -8,6 +8,7 @@ import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
 import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
+  applyLocalBootstrapGrant,
   effectiveLanguageEditRights,
   effectiveLanguagePublishRights,
   filterByAnyRights,
@@ -362,34 +363,23 @@ export function LanguagesPage() {
         {
           onSuccess: () => {
             setSelectedLanguage(name);
-            // #247 — a bootstrap create auto-grants the creator both
+            // #247 — a BOOTSTRAP create auto-grants the creator both
             // verbs on the new slug server-side, but the session user in
             // the auth store still carries the pre-grant rights, and the
             // page's list filter + edit gates read from it. Mirror the
             // grant locally instead of refetching /me: KV read-after-
             // write isn't guaranteed, so an immediate refetch could
             // re-store the STALE pre-grant record (and a late-resolving
-            // refetch could repopulate the store after a logout). The
-            // effective* helpers apply the same partner-aware rule the
-            // worker grants under, so materializing their result + slug
-            // reproduces the server-side outcome; the next full session
-            // hydration converges on the server state either way.
+            // refetch could repopulate the store after a logout).
+            // applyLocalBootstrapGrant infers WHETHER the carve-out
+            // fired (null = ordinary create, worker granted nothing —
+            // mirroring then would invent permissions, #256 review
+            // round 2) and reproduces the server-side grant when it
+            // did; the next full session hydration converges on the
+            // server state either way.
             if (!isCrossOrg && user) {
-              const withSlug = (
-                rights: ReturnType<typeof effectiveLanguageEditRights>
-              ) =>
-                rights === undefined || rights === "*" || rights.includes(name)
-                  ? rights
-                  : [...rights, name];
-              setUser({
-                ...user,
-                language_edit_rights: withSlug(
-                  effectiveLanguageEditRights(user)
-                ),
-                language_publish_rights: withSlug(
-                  effectiveLanguagePublishRights(user)
-                ),
-              });
+              const granted = applyLocalBootstrapGrant(user, name);
+              if (granted) setUser(granted);
             }
           },
         }
