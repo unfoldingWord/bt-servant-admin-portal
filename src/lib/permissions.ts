@@ -91,6 +91,33 @@ export function effectiveLanguagePublishRights(
   return user.language_rights;
 }
 
+// #247 — mirror the worker's bootstrap auto-grant (both verbs on `slug`)
+// into the local session user. Call ONLY when the worker signalled the
+// grant (X-Bootstrap-Grant on the create response → `bootstrapGranted`
+// on PutLanguageResult) — this helper deliberately performs no
+// inference about whether a grant occurred: every inference variant
+// broke under some rights shape (session skew after a mid-session
+// grant, published:true creates; #256 review rounds 2–3).
+//
+// Materializes via the partner-aware effective* helpers so the local
+// result matches what the worker's grant wrote (worker/rights-migration
+// grantLanguageSlugToUser). Wildcard / undefined (full-access) fields
+// pass through untouched, matching the server-side grant's no-op rule.
+export function mirrorBootstrapGrant<T extends LanguageRightsCarrier>(
+  user: T,
+  slug: string
+): T {
+  const withSlug = (rights: LanguageRights | undefined) =>
+    rights === undefined || rights === "*" || rights.includes(slug)
+      ? rights
+      : [...rights, slug];
+  return {
+    ...user,
+    language_edit_rights: withSlug(effectiveLanguageEditRights(user)),
+    language_publish_rights: withSlug(effectiveLanguagePublishRights(user)),
+  };
+}
+
 export function effectiveModeEditRights(
   user:
     | {

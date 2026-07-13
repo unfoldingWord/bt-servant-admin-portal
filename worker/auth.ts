@@ -163,7 +163,11 @@ export async function validateSession(
 
 // Shared between validateSession and handleLogin so the session shape is
 // identical whether the session is freshly minted or rehydrated from KV.
-function lazyMigrateLanguageRights(user: StoredUser): {
+// Exported for the #247 bootstrap auto-grant (worker/rights-migration.ts),
+// which must materialize explicit verb fields under EXACTLY this rule — a
+// third hand-rolled copy of the partner-aware fallback is how the original
+// #256 review bug happened.
+export function lazyMigrateLanguageRights(user: StoredUser): {
   language_edit_rights: LanguageRights | undefined;
   language_publish_rights: LanguageRights | undefined;
 } {

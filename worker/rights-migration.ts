@@ -1,3 +1,4 @@
+import { lazyMigrateLanguageRights } from "./auth";
 import type { Env } from "./helpers";
 import { listKvKeys } from "./helpers";
 import type { LanguageRights, StoredUser } from "./types";
@@ -48,14 +49,22 @@ export const MODE_RIGHTS_FIELDS = [
   "mode_publish_rights",
 ] as const satisfies readonly (keyof StoredUser)[];
 
-// A future language rename would add the three language fields here
-// (including the legacy `language_rights` bit, whose undefined-means-
-// full semantics differ from modes — the expandRights passthrough is
-// correct for it, but the consumer must decide how "*"-equivalent
-// legacy users interact with per-slug migration). Deliberately not
-// pre-declared: no consumer exists yet, and an unused constant would
-// assert semantics nobody has validated.
+// A future language rename would add the legacy `language_rights` bit
+// here too (its undefined-means-full semantics differ from modes — the
+// expandRights passthrough is correct for it, but the consumer must
+// decide how "*"-equivalent legacy users interact with per-slug
+// migration). The two VERB fields below are declared because the #247
+// bootstrap auto-grant consumes them; the legacy field stays
+// undeclared until a rename consumer validates its semantics.
 export type RightsField = (typeof MODE_RIGHTS_FIELDS)[number];
+
+export const LANGUAGE_VERB_RIGHTS_FIELDS = [
+  "language_edit_rights",
+  "language_publish_rights",
+] as const satisfies readonly (keyof StoredUser)[];
+
+export type LanguageVerbRightsField =
+  (typeof LANGUAGE_VERB_RIGHTS_FIELDS)[number];
 
 // Add `to` wherever `from` is held. `"*"` and `undefined` pass through
 // untouched — wildcard resolves at gate time and needs no entry; for
@@ -74,6 +83,96 @@ export function expandRights(
   if (!rights.includes(from)) return null;
   if (rights.includes(to)) return null;
   return [...rights, to];
+}
+
+// #247 — grant the creator both language verbs on a just-bootstrapped
+// slug. Follows the #240 expand-first model: the caller invokes this
+// BEFORE the engine create, so a crash between grant and create leaves
+// the user with an entry for a slug that doesn't exist — inert, and in
+// this case the "accidental shepherd" a future same-slug language would
+// inherit is the admin who was allowed to create it anyway. Throws on
+// read/write failure — the caller must abort the create (nothing has
+// touched the engine yet).
+//
+// The grant operates on the user's EFFECTIVE rights per the canonical
+// partner-aware rule (lazyMigrateLanguageRights, worker/auth.ts): the
+// legacy `language_rights` fallback applies only when BOTH verb fields
+// are unset; an explicit partner makes the unset field a deliberate
+// deny ([]), which the grant materializes as [slug] — never as legacy
+// entries. Getting this wrong in either direction is an authz bug: the
+// naive per-field `explicit ?? legacy` fallback both under-grants (an
+// unset-partner field reads as "full", so no grant is written while
+// every session sees [] — the creator is locked out of the draft they
+// just made) and over-grants (legacy entries materialize into a
+// partner-denied field, durably restoring access the rule had revoked).
+//
+// Concurrency: this is a whole-record read-modify-write over KV, which
+// has no CAS — two writes racing the same user record are last-write-
+// wins, the same acceptance as the #240 org-wide migration. The window
+// here is one admin's own record during their own create click; a lost
+// grant re-manifests as the (recoverable) read-only-draft symptom and
+// any admin can re-grant via the Users dialog now that the draft exists.
+//
+// Returns the fields actually modified, so definitive-failure
+// compensation operates only on what this grant touched and can never
+// strip a pre-existing entry (per-field recording, same rationale as
+// MigrationRecord).
+export async function grantLanguageSlugToUser(
+  env: Env,
+  email: string,
+  slug: string
+): Promise<LanguageVerbRightsField[]> {
+  const key = `user:${email}`;
+  const user = await env.AUTH_KV.get<StoredUser>(key, { type: "json" });
+  if (!user) {
+    throw new Error(`bootstrap grant: no stored user for ${key}`);
+  }
+  const effective = lazyMigrateLanguageRights(user);
+  const changed: LanguageVerbRightsField[] = [];
+  for (const field of LANGUAGE_VERB_RIGHTS_FIELDS) {
+    const rights = effective[field];
+    if (rights === undefined || rights === "*") continue;
+    if (rights.includes(slug)) continue;
+    user[field] = [...rights, slug];
+    changed.push(field);
+  }
+  if (changed.length > 0) {
+    await env.AUTH_KV.put(key, JSON.stringify(user));
+  }
+  return changed;
+}
+
+// #247 — compensate a bootstrap grant after a DEFINITIVE engine
+// rejection of the create (4xx). Best-effort by design, like
+// contractOrgModeRights: a failed removal leaves a harmless inert
+// entry (logged). Operates only on the fields the grant recorded.
+export async function revokeLanguageSlugFromUser(
+  env: Env,
+  email: string,
+  slug: string,
+  fields: LanguageVerbRightsField[]
+): Promise<void> {
+  const key = `user:${email}`;
+  try {
+    const user = await env.AUTH_KV.get<StoredUser>(key, { type: "json" });
+    if (!user) return;
+    let dirty = false;
+    for (const field of fields) {
+      const rights = user[field];
+      if (rights !== undefined && rights !== "*" && rights.includes(slug)) {
+        user[field] = rights.filter((s) => s !== slug);
+        dirty = true;
+      }
+    }
+    if (dirty) {
+      await env.AUTH_KV.put(key, JSON.stringify(user));
+    }
+  } catch (err) {
+    console.error(
+      `rights-migration: bootstrap grant compensation failed for ${key} (slug "${slug}") — stale entry remains`,
+      err
+    );
+  }
 }
 
 // Remove `remove` — but ONLY when `keep` is present in the same array.

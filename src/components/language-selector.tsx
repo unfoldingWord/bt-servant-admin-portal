@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { faLanguage } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Eye, EyeOff, Plus, Send, SendHorizontal, Trash2 } from "lucide-react";
@@ -59,6 +59,13 @@ interface LanguageSelectorProps {
       before the scaffold arrives would silently save a blank document. */
   isScaffoldReady: boolean;
   scaffoldError: boolean;
+  /** ALL language names in the org — unfiltered, unlike `languagesData`
+      (which the parent pre-filters to rows the user holds a verb on).
+      #247: admins can create drafts without holding rights on existing
+      rows, so their filtered list can be empty while names are taken; a
+      collision would otherwise surface as a bare worker 403 from an
+      affordance the UI offered. */
+  takenNames: string[];
 }
 
 function isPublished(lang: Pick<Language, "published">): boolean {
@@ -82,10 +89,12 @@ export function LanguageSelector({
   canDeleteSelected,
   isScaffoldReady,
   scaffoldError,
+  takenNames,
 }: LanguageSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newLabel, setNewLabel] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Destructive-confirmation dialogs are controlled so we can keep them
   // open on async failure and render the error inline (#102). Closing on
@@ -116,7 +125,13 @@ export function LanguageSelector({
     );
   }, [onDeleteLanguage, selectedLanguage]);
 
-  const languages = languagesData?.languages ?? [];
+  // Memoized: handleCreate's collision check depends on this, and the
+  // `?? []` fallback would otherwise mint a fresh array identity every
+  // render (react-hooks/exhaustive-deps).
+  const languages = useMemo(
+    () => languagesData?.languages ?? [],
+    [languagesData]
+  );
   const selectedData =
     languages.find((l) => l.name === selectedLanguage) ?? null;
   const selectedIsPublished = selectedData ? isPublished(selectedData) : false;
@@ -133,11 +148,27 @@ export function LanguageSelector({
       .replace(/[^a-z0-9\-_]/g, "")
       .replace(/^-+|-+$/g, "");
     if (!slug) return;
+    // Collision check against the UNFILTERED org list, but only for
+    // names HIDDEN from this user: rows they hold no verb on still own
+    // their names, and the worker will 403 a PUT against them — without
+    // this, the create affordance hands an admin with an empty filtered
+    // list a bare "Forbidden". Names in the user's own (filtered) list
+    // pass through: a rights-holding shepherd re-creating their own
+    // language is the pre-existing PUT-over-existing re-scaffold flow,
+    // not a permission error (#256 rd-3). Client-side only — the
+    // worker's gate remains the enforcement.
+    if (takenNames.includes(slug) && !languages.some((l) => l.name === slug)) {
+      setCreateError(
+        `A language named "${slug}" already exists in this org, but you don't have access to it. Pick a different name, or ask a shepherd or admin for access.`
+      );
+      return;
+    }
     onCreateLanguage(slug, newLabel.trim());
     setNewName("");
     setNewLabel("");
     setShowCreate(false);
-  }, [newName, newLabel, onCreateLanguage]);
+    setCreateError(null);
+  }, [newName, newLabel, onCreateLanguage, takenNames, languages]);
 
   return (
     <div className="space-y-3">
@@ -356,7 +387,10 @@ export function LanguageSelector({
               <Input
                 id="lang-name"
                 value={newName}
-                onChange={(e) => setNewName(e.target.value)}
+                onChange={(e) => {
+                  setNewName(e.target.value);
+                  setCreateError(null);
+                }}
                 placeholder="e.g. arabic"
                 className="h-8 text-sm"
               />
@@ -374,6 +408,11 @@ export function LanguageSelector({
               />
             </div>
           </div>
+          {createError && (
+            <p className="text-destructive mt-3 text-xs" role="alert">
+              {createError}
+            </p>
+          )}
           {!isScaffoldReady && (
             <p
               className={
@@ -393,7 +432,10 @@ export function LanguageSelector({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setShowCreate(false)}
+              onClick={() => {
+                setShowCreate(false);
+                setCreateError(null);
+              }}
             >
               Cancel
             </Button>

@@ -8,9 +8,11 @@ import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
 import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
+  mirrorBootstrapGrant,
   effectiveLanguageEditRights,
   effectiveLanguagePublishRights,
   filterByAnyRights,
+  hasAdminPowers,
   hasAnyLanguageAccess,
   hasAnyRights,
   hasRights,
@@ -49,6 +51,7 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 
 export function LanguagesPage() {
   const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
   const selectedLanguage = useUiStore((s) => s.selectedLanguage);
   const setSelectedLanguage = useUiStore((s) => s.setSelectedLanguage);
   const showDrafts = useUiStore((s) => s.showDrafts);
@@ -73,12 +76,19 @@ export function LanguagesPage() {
   // rd-2 P1).
   const editRights = isCrossOrg ? "*" : effectiveLanguageEditRights(user);
   const publishRights = isCrossOrg ? "*" : effectiveLanguagePublishRights(user);
-  const hasAccess = isCrossOrg || hasAnyLanguageAccess(user);
+  // #247 — admins always reach the page and the Create affordance: the
+  // worker allows a same-org admin to CREATE a draft that doesn't exist
+  // yet (and auto-grants them both verbs on it), which is the only way
+  // a fresh org's first draft can come into existence when every user
+  // holds explicit (non-"*") rights.
+  const isAdmin = hasAdminPowers(user);
+  const hasAccess = isCrossOrg || isAdmin || hasAnyLanguageAccess(user);
 
   // Per-row capability gates passed to LanguageSelector. Languages
-  // don't carry an admin trump (PR #185 enforced per-row even for
-  // super-admins), so these are pure verb-perm reads.
-  const canCreate = hasAnyRights(editRights);
+  // don't carry an admin trump for EXISTING rows (PR #185 enforced
+  // per-row even for super-admins), so the selected-row gates are pure
+  // verb-perm reads; only creation (#247 above) consults isAdmin.
+  const canCreate = hasAnyRights(editRights) || isAdmin;
   const canEditSelected =
     selectedLanguage !== null && hasRights(editRights, selectedLanguage);
   const canPublishSelected =
@@ -109,6 +119,14 @@ export function LanguagesPage() {
       ),
     };
   }, [languagesQuery.data, editRights, publishRights]);
+
+  // Every keystroke re-renders this page (the editor draft lives in
+  // component state), so the raw-name list for the create-dialog
+  // collision check must keep a stable identity between data changes.
+  const takenNames = useMemo(
+    () => languagesQuery.data?.languages.map((l) => l.name) ?? [],
+    [languagesQuery.data]
+  );
 
   // Local document draft (auto-save target).
   //
@@ -350,10 +368,32 @@ export function LanguagesPage() {
             published: false,
           },
         },
-        { onSuccess: () => setSelectedLanguage(name) }
+        {
+          onSuccess: (data) => {
+            setSelectedLanguage(name);
+            // #247 — when the worker's bootstrap carve-out created this
+            // draft, it auto-granted the creator both verbs server-side,
+            // but the session user in the auth store still carries the
+            // pre-grant rights, and the page's list filter + edit gates
+            // read from it. Mirror the grant locally, keyed STRICTLY on
+            // the worker's X-Bootstrap-Grant signal — an ordinary create
+            // performs no server grant, and inferring the carve-out from
+            // the local rights snapshot broke under session skew and
+            // published:true shapes (#256 rds 2–3). Local mirror rather
+            // than a /me refetch because KV read-after-write isn't
+            // guaranteed: an immediate refetch could re-store the STALE
+            // pre-grant record. Read the store at callback time, not
+            // the render snapshot — a slow create must not clobber
+            // store writes that landed mid-flight (#256 rd-3).
+            if (data.bootstrapGranted && !isCrossOrg) {
+              const current = useAuthStore.getState().user;
+              if (current) setUser(mirrorBootstrapGrant(current, name));
+            }
+          },
+        }
       );
     },
-    [saveLanguage, scaffoldQuery.data, setSelectedLanguage]
+    [saveLanguage, scaffoldQuery.data, setSelectedLanguage, setUser, isCrossOrg]
   );
 
   const handleSetPublished = useCallback(
@@ -459,6 +499,7 @@ export function LanguagesPage() {
               canDeleteSelected={canDeleteSelected}
               isScaffoldReady={scaffoldQuery.isSuccess}
               scaffoldError={scaffoldQuery.isError}
+              takenNames={takenNames}
             />
           </div>
 
@@ -538,6 +579,8 @@ export function LanguagesPage() {
           <EmptyState
             canCreate={canCreate}
             hasAny={(authorizedLanguagesData?.languages.length ?? 0) > 0}
+            hasHidden={takenNames.length > 0}
+            isAdmin={isAdmin}
           />
         ) : (
           <>
@@ -652,18 +695,39 @@ export function LanguagesPage() {
 
 interface EmptyStateProps {
   canCreate: boolean;
+  /** The user's rights-filtered list has entries. */
   hasAny: boolean;
+  /** The org's RAW list has entries (visible to this user or not).
+      #247: an admin with no per-row rights sees an empty filtered list
+      even when drafts exist — telling them "No languages yet" would
+      misrepresent the org and invite name collisions. */
+  hasHidden: boolean;
+  /** Only admins may create a NEW name in an org whose drafts are all
+      hidden from them (the worker's carve-out is admin-only) — a
+      non-admin whose rights are all inert entries would 403 on any
+      new slug, so the copy must not invite them to create (#256 rd-2
+      F2). */
+  isAdmin: boolean;
 }
 
-function EmptyState({ canCreate, hasAny }: EmptyStateProps) {
+function EmptyState({
+  canCreate,
+  hasAny,
+  hasHidden,
+  isAdmin,
+}: EmptyStateProps) {
   return (
     <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
       <p className="text-sm">
         {hasAny
           ? "Pick a language above to start editing."
-          : canCreate
-            ? "No languages yet. Create one to get started."
-            : "No languages are available for your account."}
+          : hasHidden
+            ? isAdmin
+              ? "This org has languages, but none you have access to. Create a new draft, or ask a shepherd for access to an existing one."
+              : "This org has languages, but none you have access to. Ask a shepherd or admin for access."
+            : canCreate
+              ? "No languages yet. Create one to get started."
+              : "No languages are available for your account."}
       </p>
     </div>
   );

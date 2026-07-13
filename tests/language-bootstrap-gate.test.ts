@@ -302,3 +302,55 @@ describe("isCrossOrgTarget", () => {
     ).toBe(false);
   });
 });
+
+// #256 rd-2 F4 — the gate must include the same-org admin trump the
+// Languages page's canCreate gained with the #247 worker carve-out;
+// without it the empty-drafts CTA hides from exactly the zero-rights
+// admins the carve-out unblocks.
+
+describe("canBootstrapLanguage — same-org admin trump (#247 carve-out)", () => {
+  it("same-org admin with explicit empty rights → true", () => {
+    expect(
+      canBootstrapLanguage({
+        caller: {
+          isAdmin: true,
+          language_edit_rights: [],
+          language_publish_rights: [],
+        },
+        callerOrg: "acme",
+        callerIsSuperAdmin: false,
+        targetOrg: "acme",
+      })
+    ).toBe(true);
+  });
+
+  it("same-org super-admin with explicit empty rights → true (admin powers, not the cross-org trump)", () => {
+    expect(
+      canBootstrapLanguage({
+        caller: {
+          isSuperAdmin: true,
+          language_edit_rights: [],
+          language_publish_rights: [],
+        },
+        callerOrg: "acme",
+        callerIsSuperAdmin: true,
+        targetOrg: "acme",
+      })
+    ).toBe(true);
+  });
+
+  it("non-admin with explicit empty rights → false (worker would 403 their create)", () => {
+    expect(
+      canBootstrapLanguage({
+        caller: {
+          isAdmin: false,
+          language_edit_rights: [],
+          language_publish_rights: [],
+        },
+        callerOrg: "acme",
+        callerIsSuperAdmin: false,
+        targetOrg: "acme",
+      })
+    ).toBe(false);
+  });
+});

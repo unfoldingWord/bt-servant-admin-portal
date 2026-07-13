@@ -48,7 +48,29 @@ describe("putLanguage", () => {
       label: "Arabic",
       document: "## Tone\n",
       published: false,
+      // #247 — no X-Bootstrap-Grant header on the mocked response.
+      bootstrapGranted: false,
     });
+  });
+
+  it("surfaces the worker's X-Bootstrap-Grant header as bootstrapGranted", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          org: "uw",
+          language: { name: "swahili", document: "## Tone\n" },
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "X-Bootstrap-Grant": "1",
+          },
+        }
+      )
+    );
+    const result = await putLanguage("swahili", { document: "## Tone\n" });
+    expect(result.bootstrapGranted).toBe(true);
   });
 
   it("returns an already-unwrapped response unchanged (back-compat)", async () => {
