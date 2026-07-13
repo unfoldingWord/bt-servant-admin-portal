@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   clearUserMode,
+  CloneCollisionError,
   cloneMode,
   deleteMode,
   deleteUserMemory,
@@ -446,18 +447,67 @@ describe("cloneMode", () => {
     expect(spy.mock.calls[0]![0]).toBe("/api/config/modes/kids%20mode/_clone");
   });
 
-  it("surfaces the engine's JSON `{ error }` message on a slug collision", async () => {
+  it("surfaces the engine's JSON `{ error }` message on a slug collision, as a CloneCollisionError", async () => {
     // Engine returns 409 for a collision against another mode's name OR
     // alias. Dialog shows this inline; the message must be the engine
     // string, not the raw JSON blob.
     mockFetchOnce(409, {
       error: 'Slug "conversation" already belongs to another mode in this org',
     });
-    await expect(
-      cloneMode("spoken", { newName: "conversation" })
-    ).rejects.toThrow(
+    const err = await cloneMode("spoken", { newName: "conversation" }).then(
+      () => null,
+      (e: unknown) => e
+    );
+    expect(err).toBeInstanceOf(CloneCollisionError);
+    expect((err as CloneCollisionError).message).toMatch(
       /Failed to clone mode \(409\): Slug "conversation" already belongs/
     );
+    // Bare 409 (no header) → no verbs to reconcile.
+    expect((err as CloneCollisionError).grantedVerbs).toBeNull();
+  });
+
+  it("parses X-Bootstrap-Grant verb lists on success (#257/#258)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ mode: { name: "new", document: "" } }), {
+        status: 200,
+        headers: { "X-Bootstrap-Grant": "edit,publish" },
+      })
+    );
+    const result = await cloneMode("spoken", { newName: "new" });
+    expect(result.grantedVerbs).toEqual({ edit: true, publish: true });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ mode: { name: "new2", document: "" } }), {
+        status: 200,
+        headers: { "X-Bootstrap-Grant": "edit" },
+      })
+    );
+    const editOnly = await cloneMode("spoken", { newName: "new2" });
+    expect(editOnly.grantedVerbs).toEqual({ edit: true, publish: false });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ mode: { name: "new3", document: "" } }))
+    );
+    const admin = await cloneMode("spoken", { newName: "new3" });
+    expect(admin.grantedVerbs).toBeNull();
+  });
+
+  it("ambiguous-commit reconciliation: a 409 carrying held verbs surfaces them on the CloneCollisionError (#258 rd-2 P2)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "exists" }), {
+        status: 409,
+        headers: { "X-Bootstrap-Grant": "edit" },
+      })
+    );
+    const err = await cloneMode("spoken", { newName: "mine" }).then(
+      () => null,
+      (e: unknown) => e
+    );
+    expect(err).toBeInstanceOf(CloneCollisionError);
+    expect((err as CloneCollisionError).grantedVerbs).toEqual({
+      edit: true,
+      publish: false,
+    });
   });
 
   it("falls back to raw text when the error body isn't JSON", async () => {

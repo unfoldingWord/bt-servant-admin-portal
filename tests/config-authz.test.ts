@@ -1841,7 +1841,8 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
       "/api/config/modes/spoken/_clone"
     );
     expect(res.status).toBe(200);
-    expect(res.headers.get("X-Bootstrap-Grant")).toBe("1");
+    // Verb-list header: edit only — publish was withheld on the source.
+    expect(res.headers.get("X-Bootstrap-Grant")).toBe("edit");
     // Collision preflight GET + proxy POST.
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect((fetchSpy.mock.calls[1]![1] as RequestInit).method).toBe("POST");
@@ -1872,6 +1873,7 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
       "/api/config/modes/spoken/_clone"
     );
     expect(res.status).toBe(200);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBe("edit,publish");
     const after = await readRightsUser("shepherd@acme.com");
     expect(after.mode_edit_rights).toEqual(["spoken", "spoken-v2"]);
     expect(after.mode_publish_rights).toEqual(["spoken", "spoken-v2"]);
@@ -1896,11 +1898,51 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
       "/api/config/modes/spoken/_clone"
     );
     expect(res.status).toBe(409);
+    // No rights on the colliding slug → bare 409, no header.
+    expect(res.headers.get("X-Bootstrap-Grant")).toBeNull();
     // Preflight only — no grant, no engine POST, no escalation window.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const after = await readRightsUser("shepherd@acme.com");
     expect(after.mode_edit_rights).toEqual(["spoken"]);
     expect(after.mode_publish_rights).toEqual(["spoken"]);
+  });
+
+  it("ambiguous-commit reconciliation: engine committed on a lost response, retry collides → 409 CARRIES the held verbs (#258 rd-2 P2)", async () => {
+    // Attempt 1: grant written, engine created the mode, response lost
+    // (worker returned 502, grant kept). The retry's live session
+    // carries the kept grant; the collision preflight now finds the
+    // mode. The 409 must name the caller's held verbs so the client
+    // can mirror and surface the interrupted clone.
+    const fetchSpy = spyFetchCloneEngine("found");
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken", "spoken-v2"],
+        mode_publish_rights: ["spoken", "spoken-v2"],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(409);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBe("edit,publish");
+    // Preflight only — no engine POST.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('ambiguous-commit reconciliation, edit-only variant → 409 carries "edit"', async () => {
+    const fetchSpy = spyFetchCloneEngine("found");
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken", "spoken-v2"],
+        mode_publish_rights: [],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(409);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBe("edit");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("collision preflight engine error → 502 fail closed, no grant, no POST", async () => {
@@ -1950,9 +1992,10 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
       "/api/config/modes/spoken/_clone"
     );
     // NOTE: preflight is mocked "missing" — the ambiguous first attempt
-    // never created the mode.
+    // never created the mode. (The created-but-response-lost variant is
+    // covered by the ambiguous-commit reconciliation tests above.)
     expect(res.status).toBe(200);
-    expect(res.headers.get("X-Bootstrap-Grant")).toBe("1");
+    expect(res.headers.get("X-Bootstrap-Grant")).toBe("edit,publish");
   }, 10000);
 
   it("engine POST throws after the grant → 502 retry contract, grant kept (#258 rd-1)", async () => {

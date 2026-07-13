@@ -246,12 +246,42 @@ export async function renameMode(
 // reconciliation §4).
 //
 // #257 — a clone performed by a non-admin shepherd comes back flagged
-// (X-Bootstrap-Grant header): the worker auto-granted the cloner
-// edit + publish on the new slug, and the client mirrors that into its
-// session user. An explicit wire signal, NOT client-side inference —
-// same rationale as the #247 language-create grant (#256 rds 2–3).
+// (X-Bootstrap-Grant header) with the VERBS the caller now holds on the
+// new slug (e.g. "edit" or "edit,publish"); the client mirrors exactly
+// those into its session user. An explicit wire signal, NOT client-side
+// inference — same rationale as the #247 language-create grant (#256
+// rds 2–3; the verb list replaced a client-side recomputation in #258
+// rd-2).
+export interface CloneGrantedVerbs {
+  edit: boolean;
+  publish: boolean;
+}
+
 export interface CloneModeResult extends PromptMode {
-  bootstrapGranted: boolean;
+  grantedVerbs: CloneGrantedVerbs | null;
+}
+
+// A 409 slug collision. When a prior clone attempt COMMITTED on the
+// engine but its response was lost, the kept auto-grant makes the
+// retry collide here — `grantedVerbs` (from the same header, attached
+// to the 409) carries the rights the caller's live session holds on
+// the colliding slug so the UI can reconcile instead of stranding an
+// invisible, uneditable mode (#258 rd-2 P2).
+export class CloneCollisionError extends Error {
+  constructor(
+    message: string,
+    readonly grantedVerbs: CloneGrantedVerbs | null
+  ) {
+    super(message);
+    this.name = "CloneCollisionError";
+  }
+}
+
+function parseGrantedVerbs(res: Response): CloneGrantedVerbs | null {
+  const header = res.headers.get("X-Bootstrap-Grant");
+  if (!header) return null;
+  const verbs = header.split(",");
+  return { edit: verbs.includes("edit"), publish: verbs.includes("publish") };
 }
 
 export async function cloneMode(
@@ -271,15 +301,16 @@ export async function cloneMode(
   );
 
   if (!res.ok) {
-    throw new Error(
-      `Failed to clone mode (${res.status}): ${await readModeOpError(res)}`
-    );
+    const message = `Failed to clone mode (${res.status}): ${await readModeOpError(res)}`;
+    if (res.status === 409) {
+      throw new CloneCollisionError(message, parseGrantedVerbs(res));
+    }
+    throw new Error(message);
   }
 
-  const bootstrapGranted = res.headers.get("X-Bootstrap-Grant") === "1";
   return {
     ...unwrapModeResponse((await res.json()) as Record<string, unknown>),
-    bootstrapGranted,
+    grantedVerbs: parseGrantedVerbs(res),
   };
 }
 

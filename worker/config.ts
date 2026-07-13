@@ -850,6 +850,11 @@ export async function handleConfig(
     }
 
     const isShepherdClone = !resolved.crossOrg && !hasAdminPowers(session);
+    // Whether the cloner holds PUBLISH on the source — drives both the
+    // grant shape and the response header's verb list.
+    const sourcePublishHeld =
+      isShepherdClone &&
+      hasRights(rightsFor(session, "mode", "publish"), modeName);
     let grantedFields: RightsField[] = [];
     if (isShepherdClone) {
       // P1 preflight — see the arm comment. Runs only on the shepherd
@@ -863,17 +868,35 @@ export async function handleConfig(
         );
       }
       if (collision.status === "found") {
-        return errorResponse(
+        const conflict = errorResponse(
           `A mode named "${newName}" already exists (as a mode or alias)`,
           409
         );
+        // Ambiguous-commit reconciliation (#258 rd-2 P2): if a prior
+        // attempt's engine create COMMITTED but its response was lost,
+        // the grant was kept (ambiguity never contracts) and the retry
+        // lands here — without a signal, the session could never learn
+        // the rights it already holds and the interrupted clone stays
+        // invisible until re-login. The live session is re-hydrated
+        // from KV per request, so it already carries any kept grant:
+        // surface the caller's ACTUAL verbs on the colliding slug on
+        // the 409. This never invents rights — it names exactly what
+        // the session holds; a caller with no rights on the slug gets
+        // the bare 409.
+        if (hasRights(rightsFor(session, "mode", "edit"), newName)) {
+          const verbs = ["edit"];
+          if (hasRights(rightsFor(session, "mode", "publish"), newName)) {
+            verbs.push("publish");
+          }
+          const flagged = new Response(conflict.body, conflict);
+          flagged.headers.set("X-Bootstrap-Grant", verbs.join(","));
+          return flagged;
+        }
+        return conflict;
       }
       // Grant exactly the verbs held on the SOURCE slug (edit is
       // guaranteed by the gate above; publish only if held there).
-      const grantFields: RightsField[] = hasRights(
-        rightsFor(session, "mode", "publish"),
-        modeName
-      )
+      const grantFields: RightsField[] = sourcePublishHeld
         ? ["mode_edit_rights", "mode_publish_rights"]
         : ["mode_edit_rights"];
       try {
@@ -925,10 +948,21 @@ export async function handleConfig(
     // Keyed on the OUTCOME (shepherd + engine 2xx), not on whether THIS
     // request's grant wrote anything — a retry after an ambiguous first
     // attempt finds the grant already in KV (grantedFields []) and must
-    // still tell the client to mirror (#258 rd-1).
+    // still tell the client to mirror (#258 rd-1). The value names the
+    // verbs the caller now holds on the new slug: the ones this grant
+    // ensured, plus publish if the pre-grant session already carried it
+    // there — precise, so the client mirrors truth instead of
+    // recomputing it (#258 rd-2).
     if (isShepherdClone && engineRes.ok) {
+      const verbs = ["edit"];
+      if (
+        sourcePublishHeld ||
+        hasRights(rightsFor(session, "mode", "publish"), newName)
+      ) {
+        verbs.push("publish");
+      }
       const flagged = new Response(engineRes.body, engineRes);
-      flagged.headers.set("X-Bootstrap-Grant", "1");
+      flagged.headers.set("X-Bootstrap-Grant", verbs.join(","));
       return flagged;
     }
     return engineRes;

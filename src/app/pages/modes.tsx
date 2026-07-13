@@ -6,6 +6,7 @@ import { useBlocker } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
+import { CloneCollisionError, type CloneModeResult } from "@/lib/config-api";
 import {
   buildModeExportContent,
   buildModeExportFilename,
@@ -426,11 +427,31 @@ export function ModesPage() {
       // review comment: the engine never sees a bare `""` that could
       // be interpreted as either "user cleared" or "unset".
       const trimmedLabel = newLabel.trim();
-      const data = await cloneMode.mutateAsync({
-        name,
-        newName,
-        newLabel: trimmedLabel ? trimmedLabel : undefined,
-      });
+      let data: CloneModeResult;
+      try {
+        data = await cloneMode.mutateAsync({
+          name,
+          newName,
+          newLabel: trimmedLabel ? trimmedLabel : undefined,
+        });
+      } catch (err) {
+        // #258 rd-2 P2 — a collision carrying granted verbs means a
+        // prior attempt's engine create committed while its response
+        // was lost: the auto-grant was kept, and the colliding mode is
+        // OURS but invisible to the stale session snapshot. Mirror the
+        // header's verbs (server truth) before rethrowing so the mode
+        // surfaces in the selector; the dialog still shows the
+        // collision message.
+        if (err instanceof CloneCollisionError && err.grantedVerbs) {
+          const current = useAuthStore.getState().user;
+          if (current) {
+            setUser(
+              mirrorModeGrant(current, newName.trim(), err.grantedVerbs.publish)
+            );
+          }
+        }
+        throw err;
+      }
       // Route through handleSelectMode (not raw setSelectedMode) so
       // the switch-guard fires if the source draft dirtied while the
       // modal was open. The Clone button is disabled up-front by
@@ -454,22 +475,19 @@ export function ModesPage() {
       // patch with the pre-grant snapshot). Keyed on the newName we
       // sent — that is exactly what the worker granted; data.name is
       // used only for selection.
-      if (data.bootstrapGranted) {
+      if (data.grantedVerbs) {
         const current = useAuthStore.getState().user;
-        // includePublish mirrors the worker's rule: the grant carries
-        // publish only when the cloner holds publish on the SOURCE.
+        // The header names the verbs the caller now holds on the new
+        // slug — mirror exactly those (server truth; replaces the
+        // client-side source-rights recomputation, #258 rd-2).
         if (current)
           setUser(
-            mirrorModeGrant(
-              current,
-              newName.trim(),
-              hasRights(modePublishRights, name)
-            )
+            mirrorModeGrant(current, newName.trim(), data.grantedVerbs.publish)
           );
       }
       handleSelectMode(data.name);
     },
-    [cloneMode, handleSelectMode, setUser, modePublishRights]
+    [cloneMode, handleSelectMode, setUser]
   );
 
   const handleRetireMode = useCallback(
