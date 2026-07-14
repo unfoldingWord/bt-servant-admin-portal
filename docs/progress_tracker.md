@@ -4,10 +4,10 @@
 
 ## Current Status
 
-**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **#247 reopen root-caused and FIXED 2026-07-02 evening** (PRs #252 `5cbeb5b` + #253 `b0334682`, staging **v1.10.3**) — the real bug was the BFF 403ing same-org `?org=` for every non-super-admin (Elsy's "no language available" was the query-error render); the fix arc also closed a pre-existing **chat `user_id` IDOR** and settled org-shape handling (slash orgs legitimate + encoded everywhere; `.`/`..` rejected at every choke point). **Issue #247 stays open awaiting Elsy's v1.10.3 re-test.** #240 shepherd rights-migration shipped earlier same day (PR #250 = `7e17ff3`); **#232 now closeable** pending Ian's staging verify. #249 (language visibility design) awaiting Elsy + Ian. Clone/retire un-gating are small follow-ups (migration primitives ready).
-**Last Updated**: 2026-07-02
+**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **2026-07-13 was a shipping day**: the #247 reopen (Elsy's v1.10.3 admin-lockout re-test) was root-caused as the rights↔drafts bootstrap deadlock itself and FIXED (PR #256, 4 review rounds, **v1.10.4**) — admins can now always create language drafts, with a creator auto-grant and an explicit `X-Bootstrap-Grant` wire signal replacing all client-side rights inference. The **#241 clone/retire un-gating** shipped same day (issue #257 / PR #258, 3 review rounds incl. a P1 collision-escalation and P2 ambiguous-commit reconciliation): clone opens to edit-rights shepherds with a per-verb cloner auto-grant; retire opens at delete-parity + target-edit with canonical-slug preflights. **#230 contract signed off** — Ian is building worker#257's aggregated resources endpoint. **#254 (Baruch → Opus)** implemented in unfoldingWord/baruch PR #20, awaiting Ian. #247 stays open for Elsy's v1.10.4 re-test; #249 still awaiting Elsy + Ian.
+**Last Updated**: 2026-07-13 (EOD written just past local midnight, 07-14)
 **Demo target**: June 9 (passed) — outcome to be summarized
-**Last prod deploy**: 2026-06-24 (HEAD `3bebe24` / v1.9.0). Staging is **14 commits ahead** at `b033468` / **v1.10.3** (adds #252 + #253 — the #247 fix arc + IDOR fix — on top of the prior 12)
+**Last prod deploy**: a Deploy Production run went out **2026-07-08** (run `28967840957`) — main HEAD at the time was `b033468`, so prod is presumably **v1.10.3** (verify with Ian; tracker previously said 2026-06-24/v1.9.0). Staging is at `6b3d3bf` / **v1.10.4** + #257 un-gating.
 
 ## Milestones
 
@@ -45,6 +45,9 @@
 | #230 resource visibility panel                          | 5%       | Assigned 2026-06-24 by Elsy; design memo posted with 6 open questions for Elsy + Ian. Blocked on worker #257 (MCP resource-list endpoint, Ian's lane) before substantive portal work                                                  |
 | #232 mode rename/reslug                                 | 75%      | Rename shipped 2026-06-26 (PR #238 = `52e8894`, **v1.10.0**) via engine `_rename` op (worker#285/v2.28.0). Issue scope (3 of 4 boxes; 4th N/A) covered, but admin-only pending shepherd rights-migration follow-up — issue stays open |
 | #241 umbrella — clone / alias display / retire / export | 100%     | Fully shipped 2026-07-01. PR A (#242 = `776c36c`, aliases type + badges + export round-trip) + PR B (#244 = `a82f52c`, clone) + PR C (#245 = `e9c4e02`, retire-and-forward). All admin/cross-org gated pending #240. 408/408 tests.   |
+| #247 admin bootstrap carve-out                          | 100%     | Shipped 2026-07-13 (PR #256 = `d4a6c56`, v1.10.4). Admins always able to create language drafts; creator auto-grant; X-Bootstrap-Grant wire signal. Issue open pending Elsy re-test.                                                  |
+| #257 clone/retire un-gating for shepherds               | 100%     | Shipped 2026-07-13 (PR #258 = `6b3d3bf`). Clone: rename-parity gate + per-verb cloner auto-grant. Retire: delete-parity + target-edit, canonical-slug preflights. Rights inheritance on retire = explicit v1 non-goal.                |
+| #254 Baruch Sonnet → Opus                               | 90%      | unfoldingWord/baruch PR #20 (CI green, + in-range hono bump for audit advisories) — awaiting Ian's review/merge.                                                                                                                      |
 
 ### Per-PR ephemeral CF Workers — Shipped
 
@@ -96,6 +99,38 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-07-13 — #247 deadlock fixed for real (PR #256, v1.10.4); #257 clone/retire un-gating shipped (PR #258); #230 signed off; #254 PR in baruch
+
+**Context entering the session:** tracker current through 07-02; PR #251 (07-02 EOD docs) still open; #247 awaiting Elsy's v1.10.3 re-test. Since then (found via assignee sweep): Elsy re-tested 07-08 — still broken, different symptom; Ian answered the #230 design questions 07-07; a Deploy Production run went out 07-08.
+
+**Completed:**
+
+- **#251 merged** — 07-02 EOD tracker entry landed (docs-only; staging deploy correctly skipped via `paths-ignore`).
+- **#247 root-caused and fixed — PR #256 (`d4a6c56`, v1.10.4).** Elsy's admin lockout was not the v1.10.3 query-error residue: an org whose users all hold explicit (non-`"*"`) language rights could NEVER create its first draft (rights can only name existing drafts; creating required rights), and languages deliberately carry no admin trump (PR #185) — so sidebar, page, and worker all locked the admin out. Fix: a create-only worker carve-out (same-org admin + engine-confirmed-missing → allowed, fail-closed otherwise), creator auto-grant of both verbs via new single-user primitives in `rights-migration.ts`, and UI enablement. **Four review rounds, each finding real authz bugs in the previous round's fix**: rd-1 caught a partner-aware-rule violation in the grant (canonical `lazyMigrateLanguageRights` now reused, not re-implemented); rd-2 caught the optimistic mirror inventing publish rights; rd-3 caught an empty-diff widening (zero-rights admin PUT on an existing row reached the engine) + killed the whole client-inference class by introducing the **X-Bootstrap-Grant wire signal**; rd-4/Codex approved. Elsy asked to re-test on staging v1.10.4.
+- **#230 contract signed off** — Ian's evidence-based Q4–Q6 answers accepted (canonical `{[subject]: ResourceItem[]}` + adapters; single aggregated endpoint with `servers[]` status block; `resourcePriority` on `PromptMode` with prompt-bias + hard-filter levers). Ian unblocked to build worker#257 item 1; portal panel work waits on his endpoint.
+- **#257 filed AND shipped — PR #258 (`6b3d3bf`).** The #241 follow-up the tracker carried: clone opens to shepherds with EDIT on the source, retire at delete-parity + edit-on-canonical-target. Composes #240's expand-first primitives with #256's wire-signal pattern. **Three review rounds**: rd-1 caught a real P1 — the clone grant ran on a shepherd-chosen slug with no collision preflight, letting a shepherd "clone onto" a live mode's slug and hold rights on it (fixed: preflight-before-grant, engine 409 as TOCTOU backstop) — plus publish-widening to edit-only shepherds (grant now per-verb, mirroring source rights) and engine-throw/header/trim contract fixes; rd-2 (Codex) caught the ambiguous-commit reconciliation gap — engine commits, response lost, retry hits the new preflight and 409s with the session never learning its kept rights (fixed: the header became a **verb list**, attached to the collision 409, naming the caller's live-session rights; client mirrors + refetches the list); rd-3 approved. Staging deployed.
+- **#254 implemented** — unfoldingWord/baruch PR #20: `DEFAULT_MODEL` → `claude-opus-4-8` per the team-meeting rulebook-transfer decision. Verified no request-shape fallout (Baruch sends no sampling/thinking params, which Opus 4.7+ rejects). Rode along: in-range hono bump to 4.12.25 (repo audit hook fails on new CORS/bodyLimit advisories). CI green; awaiting Ian.
+- **#255 cross-link** — connected Ian's new Priority/High (portal language tuning not reaching the web client) to the verified portal mechanism (test chat prepends `#mode @lang` per turn via `applyTriggerPrefix`) and the standing tracker #175; the web-client-sends-no-token hypothesis labeled as inference.
+- **Engine #201/#202 housekeeping** — proposed closing as superseded by portal #230 / refiling the diagram as a post-#230 portal enhancement; awaiting Ian's blessing.
+
+**Patterns / decisions captured:**
+
+- **Wire signals beat client inference for server-side grants — and verb lists beat booleans.** Three #256 rounds each broke a different client-side inference of "did the grant happen" (naive mirror → session skew → published:true shapes); the mechanism was deleted in favor of `X-Bootstrap-Grant`. #258 rd-2 then showed even a boolean under-informs on reconciliation paths — the header now names the exact verbs the live session holds, so the client only ever converges local state toward server truth.
+- **Expand-first grants need a collision preflight when the subject names the slug.** #240's expand-first model is safe for renames (slugs are pre-validated by preflights) but was an escalation when composed with a user-chosen slug (#258 P1): grant-before-create on an attacker-chosen name = rights on any existing mode. Rule: if the grantee picks the slug, confirm it's unclaimed before any rights mutation.
+- **A multi-agent review that dies mid-run is not a clean bill.** #258 rd-2's workflow review reported "0 findings" but 12/16 agents failed on a spend limit, silently dropping 14 unverified candidates — treated it as an outage, said so on the PR, and substituted a manual pass + Codex rounds. Read the failure block before trusting an empty findings list.
+
+**Blockers:**
+
+- Workflow-review lane (multi-agent) exhausted its monthly spend limit mid-#258 — unavailable until reset/raise; Codex remains the verification lane.
+- #230 portal panel blocked on Ian's worker#257 endpoint (now unblocked on his side).
+
+**Next Steps:**
+
+- **#247** — watch for Elsy's v1.10.4 re-test; close if green (and revisit #249 with Ian/Elsy when they weigh in).
+- **#254** — watch for Ian's review on baruch PR #20; consider the adaptive-thinking follow-up noted in the PR once merged.
+- **Engine #201/#202** — action whichever disposition Ian blesses.
+- **Staging → prod**: staging now carries v1.10.4 + #257 un-gating over (presumed) prod v1.10.3 — flag for Ian's next promotion once Elsy verifies #247.
 
 ### 2026-07-02 — #248 CTA + #240 rights-migration shipped; #247 reopened, root-caused (BFF same-org ?org= 403) and fixed (PRs #252 + #253, v1.10.3); chat user_id IDOR closed
 
