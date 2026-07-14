@@ -217,6 +217,19 @@ export function useCloneMode(org?: string | null) {
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
       void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
     },
+    onError: (error) => {
+      // #258 rd-2 P2 — a collision carrying granted verbs means a prior
+      // attempt's engine create COMMITTED while its response was lost:
+      // the colliding mode exists server-side but this client's list
+      // cache predates it. Refetch so the reconciled rights (mirrored
+      // by the page) have a list entry to surface.
+      if (
+        error instanceof configApi.CloneCollisionError &&
+        error.grantedVerbs
+      ) {
+        void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      }
+    },
   });
 }
 

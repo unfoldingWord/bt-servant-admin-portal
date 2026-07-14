@@ -118,6 +118,37 @@ export function mirrorBootstrapGrant<T extends LanguageRightsCarrier>(
   };
 }
 
+// #257 — mirror the worker's clone auto-grant into the local session
+// user. Call ONLY when the worker signalled the grant (X-Bootstrap-
+// Grant on the clone response → `bootstrapGranted` on CloneModeResult)
+// — no client-side inference, same rationale as mirrorBootstrapGrant
+// above. The worker grants the verbs the cloner holds on the SOURCE
+// mode (edit always; publish only if held there — #258 rd-1: an
+// unconditional both-verbs grant handed publish to edit-only
+// shepherds), so the caller passes `includePublish` computed from its
+// own source-mode rights. Mode semantics: no legacy fallback;
+// `undefined` means "no access" for non-admins, so an unset field
+// materializes as [slug] (matching the server-side grant). Wildcards
+// pass through untouched.
+export function mirrorModeGrant<
+  T extends {
+    mode_edit_rights?: LanguageRights;
+    mode_publish_rights?: LanguageRights;
+  },
+>(user: T, slug: string, includePublish: boolean): T {
+  const withSlug = (rights: LanguageRights | undefined) =>
+    rights === "*" || (rights !== undefined && rights.includes(slug))
+      ? rights
+      : [...(rights ?? []), slug];
+  return {
+    ...user,
+    mode_edit_rights: withSlug(user.mode_edit_rights),
+    mode_publish_rights: includePublish
+      ? withSlug(user.mode_publish_rights)
+      : user.mode_publish_rights,
+  };
+}
+
 export function effectiveModeEditRights(
   user:
     | {

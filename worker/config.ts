@@ -4,9 +4,12 @@ import {
   contractOrgModeRights,
   expandOrgModeRights,
   grantLanguageSlugToUser,
+  grantModeSlugToUser,
   revokeLanguageSlugFromUser,
+  revokeModeSlugFromUser,
   type LanguageVerbRightsField,
   type MigrationRecord,
+  type RightsField,
 } from "./rights-migration";
 import type { LanguageRights, SessionData } from "./types";
 
@@ -776,31 +779,193 @@ export async function handleConfig(
     return engineRes;
   }
 
-  // /api/config/modes/{name}/_clone → POST. Admin/cross-org ONLY —
-  // deliberately STRICTER than _rename, which #240 opened to edit-
-  // rights shepherds. The engine creates a new mode with the new slug +
-  // optional label; content is copied verbatim from the source. Rights
-  // don't migrate — mode_edit_rights / mode_publish_rights are slug-
-  // scoped and no shepherd holds rights on the fresh slug yet, so a
-  // non-admin cloning would land on a mode they can't edit. Opening
-  // this needs a cloner-auto-grant decision (rights-migration.ts
-  // primitives are ready; product call pending). Matched above the
-  // catch-all for the same regex-ordering reason as _rename.
-  // `[^/]+` for the same reason as _rename above.
+  // /api/config/modes/{name}/_clone → POST. Opened to shepherds (#257):
+  // rename-parity gate — admins and cross-org super-admins pass as
+  // before; non-admin shepherds pass with EDIT rights on the source
+  // slug (publish-only stays denied; cloning is an edit-side action).
+  // The engine creates a new mode with the new slug + optional label;
+  // content is copied verbatim from the source.
+  //
+  // Cloner auto-grant (#257): mode_edit_rights / mode_publish_rights
+  // are slug-scoped and no shepherd holds rights on the fresh slug, so
+  // a non-admin clone would otherwise land on a mode its own creator
+  // can't edit. Non-admin same-org cloners are granted, on the new
+  // slug, exactly the verbs they hold on the SOURCE (edit always — the
+  // gate requires it; publish only if they hold it there), BEFORE the
+  // engine call (#240 expand-first model). Compensation runs only on a
+  // definitive engine 4xx — ambiguity keeps the superset. Admin/cross-
+  // org callers need no grant (mode admin trump). Shepherd clones that
+  // succeed are signalled via X-Bootstrap-Grant — keyed on the OUTCOME
+  // (shepherd + engine 2xx), not on whether this request's grant wrote
+  // anything, so a retry after an ambiguous first attempt (grant
+  // already in KV) still tells the client to mirror (#258 rd-1).
+  //
+  // Collision preflight (#258 rd-1 P1, same threat as the rename arm's
+  // preflight 2): the grant MUST NOT run until the engine confirms
+  // `newName` is unused — the engine GET resolves canonical names AND
+  // aliases, so a found result 409s before any rights mutation.
+  // Without this, a shepherd could "clone onto" a live mode's slug and
+  // hold real KV rights on it for the grant→409→compensate window —
+  // permanently, if compensation's best-effort write failed. The
+  // preflight fails CLOSED (engine error → 502, nothing mutated); the
+  // engine's own 409 remains the backstop for the TOCTOU race between
+  // preflight and create, with compensation covering that path.
+  //
+  // No canonical-slug preflight on the SOURCE, deliberately: the
+  // engine resolves an alias-addressed source, but clone neither
+  // mutates the source nor keys any rights on it — the grant attaches
+  // to the FRESH slug, and mode content is already readable by any
+  // session via the ungated GET — so alias addressing isn't capturable
+  // here (contrast _rename and _retire). Matched above the catch-all
+  // for the same regex-ordering reason as _rename; `[^/]+` likewise.
   const modeCloneMatch = pathname.match(
     /^\/api\/config\/modes\/([^/]+)\/_clone$/
   );
   if (modeCloneMatch?.[1]) {
     const modeName = decodeURIComponent(modeCloneMatch[1]);
-    if (!resolved.crossOrg && !hasAdminPowers(session)) {
+    if (
+      !resolved.crossOrg &&
+      !hasAdminPowers(session) &&
+      !hasRights(rightsFor(session, "mode", "edit"), modeName)
+    ) {
       return errorResponse("Forbidden", 403);
     }
-    return proxyToEngine(
-      request,
-      env,
-      `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_clone`,
-      ["POST"]
-    );
+    // Method check before the body read — see the _rename arm.
+    if (request.method !== "POST") {
+      return errorResponse("Method not allowed", 405);
+    }
+    // The grant needs `newName` before the engine call, so this arm
+    // consumes the body (one-shot stream) and passes the parsed copy
+    // through proxyToEngine, mirroring _rename.
+    let cloneBody: { newName?: unknown } | null;
+    try {
+      cloneBody = (await request.json()) as { newName?: unknown } | null;
+    } catch {
+      return errorResponse("Invalid JSON", 400);
+    }
+    const newName =
+      typeof cloneBody?.newName === "string" ? cloneBody.newName.trim() : "";
+    if (!newName) {
+      return errorResponse("Missing newName", 400);
+    }
+
+    const isShepherdClone = !resolved.crossOrg && !hasAdminPowers(session);
+    // Whether the cloner holds PUBLISH on the source — drives both the
+    // grant shape and the response header's verb list.
+    const sourcePublishHeld =
+      isShepherdClone &&
+      hasRights(rightsFor(session, "mode", "publish"), modeName);
+    let grantedFields: RightsField[] = [];
+    if (isShepherdClone) {
+      // P1 preflight — see the arm comment. Runs only on the shepherd
+      // path; admin clones keep the preflight-free fast path (no grant
+      // to protect, and the engine's 409 already handles collisions).
+      const collision = await preflightMode(env, resolved.org, newName);
+      if (collision.status === "error") {
+        return errorResponse(
+          "Engine unreachable; clone not attempted. Retry the clone.",
+          502
+        );
+      }
+      if (collision.status === "found") {
+        const conflict = errorResponse(
+          `A mode named "${newName}" already exists (as a mode or alias)`,
+          409
+        );
+        // Ambiguous-commit reconciliation (#258 rd-2 P2): if a prior
+        // attempt's engine create COMMITTED but its response was lost,
+        // the grant was kept (ambiguity never contracts) and the retry
+        // lands here — without a signal, the session could never learn
+        // the rights it already holds and the interrupted clone stays
+        // invisible until re-login. The live session is re-hydrated
+        // from KV per request, so it already carries any kept grant:
+        // surface the caller's ACTUAL verbs on the colliding slug on
+        // the 409. This never invents rights — it names exactly what
+        // the session holds; a caller with no rights on the slug gets
+        // the bare 409.
+        if (hasRights(rightsFor(session, "mode", "edit"), newName)) {
+          const verbs = ["edit"];
+          if (hasRights(rightsFor(session, "mode", "publish"), newName)) {
+            verbs.push("publish");
+          }
+          const flagged = new Response(conflict.body, conflict);
+          flagged.headers.set("X-Bootstrap-Grant", verbs.join(","));
+          return flagged;
+        }
+        return conflict;
+      }
+      // Grant exactly the verbs held on the SOURCE slug (edit is
+      // guaranteed by the gate above; publish only if held there).
+      const grantFields: RightsField[] = sourcePublishHeld
+        ? ["mode_edit_rights", "mode_publish_rights"]
+        : ["mode_edit_rights"];
+      try {
+        grantedFields = await grantModeSlugToUser(
+          env,
+          session.email,
+          newName,
+          grantFields
+        );
+      } catch (err) {
+        console.error(
+          `clone: rights grant failed for ${session.email} ("${newName}")`,
+          err
+        );
+        return errorResponse("Failed to grant cloner rights", 502);
+      }
+    }
+    // Wrapped so a thrown engine fetch after the grant surfaces as the
+    // 502-retry contract instead of an unhandled 500 (#258 rd-1); the
+    // grant is kept — ambiguity never contracts rights.
+    let engineRes: Response;
+    try {
+      engineRes = await proxyToEngine(
+        request,
+        env,
+        `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_clone`,
+        ["POST"],
+        // Forward the TRIMMED newName — the same value the grant used
+        // (rename-arm Frank rd-1 P2 parity; #258 rd-1).
+        { ...cloneBody, newName }
+      );
+    } catch (err) {
+      console.error(
+        `clone: engine call failed after grant for ${session.email} ("${newName}")`,
+        err
+      );
+      return errorResponse(
+        "Engine unreachable; the clone may not have been created. Retry the clone.",
+        502
+      );
+    }
+    if (
+      grantedFields.length > 0 &&
+      engineRes.status >= 400 &&
+      engineRes.status < 500
+    ) {
+      await revokeModeSlugFromUser(env, session.email, newName, grantedFields);
+    }
+    // Keyed on the OUTCOME (shepherd + engine 2xx), not on whether THIS
+    // request's grant wrote anything — a retry after an ambiguous first
+    // attempt finds the grant already in KV (grantedFields []) and must
+    // still tell the client to mirror (#258 rd-1). The value names the
+    // verbs the caller now holds on the new slug: the ones this grant
+    // ensured, plus publish if the pre-grant session already carried it
+    // there — precise, so the client mirrors truth instead of
+    // recomputing it (#258 rd-2).
+    if (isShepherdClone && engineRes.ok) {
+      const verbs = ["edit"];
+      if (
+        sourcePublishHeld ||
+        hasRights(rightsFor(session, "mode", "publish"), newName)
+      ) {
+        verbs.push("publish");
+      }
+      const flagged = new Response(engineRes.body, engineRes);
+      flagged.headers.set("X-Bootstrap-Grant", verbs.join(","));
+      return flagged;
+    }
+    return engineRes;
   }
 
   // /api/config/modes/{name}/_retire → POST. Retires the source mode
@@ -810,26 +975,103 @@ export async function handleConfig(
   // silently resolve to the target — the "bring FIA Coach users over
   // silently" flow from Ian's #232 plan §3.
   //
-  // Admin/cross-org ONLY — deliberately STRICTER than _rename, which
-  // #240 opened to edit-rights shepherds. Retire deletes a mode +
-  // widens the target's alias set, both org-wide config changes;
-  // whether the retired mode's shepherds should inherit rights on the
-  // forward target is an open product call (rights-migration.ts
-  // primitives are ready). `[^/]+` for the same reason as _rename and
-  // _clone above.
+  // Opened to shepherds (#257) at DELETE-parity-plus: admins and
+  // cross-org super-admins pass as before; a non-admin shepherd needs
+  // EDIT + PUBLISH on the source (retire is strictly more destructive
+  // than DELETE, which already demands both) AND EDIT on the CANONICAL
+  // forward target (retire widens the target's alias array — an edit
+  // of the target).
+  //
+  // Two fail-closed preflights for the shepherd path, mirroring the
+  // #240 rename arm: (1) the addressed source slug must be the mode's
+  // canonical name — the engine resolves aliases, so without this a
+  // shepherd holding rights only on a STALE ALIAS could retire the
+  // aliased-to mode out from under its real shepherds; (2) `forwardTo`
+  // resolves to its canonical name and the shepherd's edit rights are
+  // checked against THAT, so an alias can't launder the target rights
+  // check. Both run AFTER the coarse source-rights gate, so a
+  // no-rights caller can't probe mode existence through them.
+  //
+  // Non-goal (v1, documented in #257): rights inheritance. Shepherds
+  // of the retired mode do NOT gain rights on the forward target;
+  // their entries for the retired slug go inert, exactly as with a
+  // DELETE today. `[^/]+` for the same reason as _rename and _clone.
   const modeRetireMatch = pathname.match(
     /^\/api\/config\/modes\/([^/]+)\/_retire$/
   );
   if (modeRetireMatch?.[1]) {
     const modeName = decodeURIComponent(modeRetireMatch[1]);
-    if (!resolved.crossOrg && !hasAdminPowers(session)) {
+    const isShepherdRetire = !resolved.crossOrg && !hasAdminPowers(session);
+    if (
+      isShepherdRetire &&
+      (!hasRights(rightsFor(session, "mode", "edit"), modeName) ||
+        !hasRights(rightsFor(session, "mode", "publish"), modeName))
+    ) {
       return errorResponse("Forbidden", 403);
     }
+    // Method check before the body read — see the _rename arm.
+    if (request.method !== "POST") {
+      return errorResponse("Method not allowed", 405);
+    }
+    let retireBody: { forwardTo?: unknown } | null;
+    try {
+      retireBody = (await request.json()) as { forwardTo?: unknown } | null;
+    } catch {
+      return errorResponse("Invalid JSON", 400);
+    }
+    const forwardTo =
+      typeof retireBody?.forwardTo === "string"
+        ? retireBody.forwardTo.trim()
+        : "";
+    if (!forwardTo) {
+      return errorResponse("Missing forwardTo", 400);
+    }
+
+    if (isShepherdRetire) {
+      // Both engine GETs run in parallel (independent lookups),
+      // evaluated source-first so a flaky target GET can't mask a
+      // definitive source answer (rd-5 rename review, same rule).
+      const [source, target] = await Promise.all([
+        preflightMode(env, resolved.org, modeName),
+        preflightMode(env, resolved.org, forwardTo),
+      ]);
+      if (source.status === "error") {
+        return errorResponse(
+          "Engine unreachable; retire not attempted. Retry the retire.",
+          502
+        );
+      }
+      if (source.status === "missing") {
+        return errorResponse("Mode not found", 404);
+      }
+      if (source.mode.name !== modeName) {
+        return errorResponse(
+          `"${modeName}" is an alias of "${source.mode.name}" — retire the mode via its canonical slug`,
+          409
+        );
+      }
+      if (target.status === "error") {
+        return errorResponse(
+          "Engine unreachable; retire not attempted. Retry the retire.",
+          502
+        );
+      }
+      if (target.status === "missing") {
+        return errorResponse("Forward target not found", 404);
+      }
+      if (!hasRights(rightsFor(session, "mode", "edit"), target.mode.name)) {
+        return errorResponse("Forbidden", 403);
+      }
+    }
+
     return proxyToEngine(
       request,
       env,
       `/api/v1/admin/orgs/${encodedOrg}/modes/${encodeURIComponent(modeName)}/_retire`,
-      ["POST"]
+      ["POST"],
+      // Forward the TRIMMED forwardTo — the value the preflights
+      // authorized (#258 rd-1; rename-arm parity).
+      { forwardTo }
     );
   }
 

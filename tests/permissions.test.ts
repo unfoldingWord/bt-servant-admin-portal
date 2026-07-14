@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   mirrorBootstrapGrant,
+  mirrorModeGrant,
   effectiveLanguageEditRights,
   effectiveLanguagePublishRights,
   effectiveModeEditRights,
@@ -485,5 +486,54 @@ describe("mirrorBootstrapGrant", () => {
       isAdmin: true,
     });
     expect(user.language_edit_rights).toEqual([]);
+  });
+});
+
+// #257 — local mirror of the worker's clone auto-grant, driven strictly
+// by the X-Bootstrap-Grant wire signal (no inference — see
+// mirrorBootstrapGrant above for the history).
+
+describe("mirrorModeGrant", () => {
+  it("adds the slug to both verb fields when includePublish, materializing unset fields as [slug]", () => {
+    expect(
+      mirrorModeGrant({ mode_edit_rights: ["spoken"] }, "sw", true)
+    ).toEqual({
+      mode_edit_rights: ["spoken", "sw"],
+      mode_publish_rights: ["sw"],
+    });
+  });
+
+  it("edit-only mirror: publish untouched when includePublish is false (#258 rd-1)", () => {
+    expect(
+      mirrorModeGrant(
+        { mode_edit_rights: ["spoken"], mode_publish_rights: [] },
+        "sw",
+        false
+      )
+    ).toEqual({
+      mode_edit_rights: ["spoken", "sw"],
+      mode_publish_rights: [],
+    });
+  });
+
+  it("wildcards pass through untouched; held slugs are idempotent", () => {
+    expect(
+      mirrorModeGrant(
+        { mode_edit_rights: "*", mode_publish_rights: ["sw"] },
+        "sw",
+        true
+      )
+    ).toEqual({ mode_edit_rights: "*", mode_publish_rights: ["sw"] });
+  });
+
+  it("preserves unrelated fields and does not mutate the input", () => {
+    const user = {
+      email: "a@acme.com",
+      mode_edit_rights: ["spoken"] as string[],
+    };
+    expect(mirrorModeGrant(user, "sw", true)).toMatchObject({
+      email: "a@acme.com",
+    });
+    expect(user.mode_edit_rights).toEqual(["spoken"]);
   });
 });

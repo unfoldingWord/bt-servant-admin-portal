@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { faLayerGroup } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -107,6 +107,13 @@ interface ModeSelectorProps {
       route through `handleSelectMode` in modes.tsx defends the race
       window when focus escapes the modal. */
   retireDisabledReason: string | null;
+  /** Per-row edit predicate for the retire dialog's "Forward to" list
+      (#257). The worker requires EDIT rights on the CANONICAL forward
+      target (retire widens its alias array), so the dialog must not
+      offer targets the caller can't edit — a shepherd picking one
+      would just get a worker 403 after confirming. Admin/cross-org
+      callers resolve to "*" upstream and see every target. */
+  canEditTargetMode: (name: string) => boolean;
 }
 
 function isPublished(mode: Pick<PromptMode, "published">): boolean {
@@ -153,6 +160,7 @@ export function ModeSelector({
   renameDisabledReason,
   cloneDisabledReason,
   retireDisabledReason,
+  canEditTargetMode,
 }: ModeSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -269,7 +277,10 @@ export function ModeSelector({
     );
   }, [onRenameMode, renameValue, selectedMode]);
 
-  const modes = modesData?.modes ?? [];
+  // Memoized: eligibleRetireTargets depends on this, and the `?? []`
+  // fallback would otherwise mint a fresh array identity every render
+  // (react-hooks/exhaustive-deps).
+  const modes = useMemo(() => modesData?.modes ?? [], [modesData]);
   const selectedModeData = modes.find((m) => m.name === selectedMode) ?? null;
   const selectedIsPublished = selectedModeData
     ? isPublished(selectedModeData)
@@ -279,6 +290,16 @@ export function ModeSelector({
   // orphan the user's selection.
   const visibleModes = modes.filter(
     (m) => showDrafts || isPublished(m) || m.name === selectedMode
+  );
+
+  // #257 — the retire dialog's eligible forward targets: everything
+  // except the mode being retired, restricted to modes the caller can
+  // EDIT (the worker's target gate). Single source for both the option
+  // list and the empty-state check.
+  const eligibleRetireTargets = useMemo(
+    () =>
+      modes.filter((m) => m.name !== selectedMode && canEditTargetMode(m.name)),
+    [modes, selectedMode, canEditTargetMode]
   );
 
   const handleCreate = useCallback(() => {
@@ -691,31 +712,31 @@ export function ModeSelector({
                         <SelectValue placeholder="Pick a target mode" />
                       </SelectTrigger>
                       <SelectContent>
-                        {modes
-                          .filter((m) => m.name !== selectedMode)
-                          .map((m) => (
-                            <SelectItem key={m.name} value={m.name}>
-                              <span className="flex items-center gap-2">
-                                <span className="truncate">
-                                  {m.label || m.name}
-                                </span>
-                                {!isPublished(m) && (
-                                  <Badge
-                                    variant="outline"
-                                    className="px-1.5 py-0 text-[10px]"
-                                  >
-                                    Draft
-                                  </Badge>
-                                )}
+                        {eligibleRetireTargets.map((m) => (
+                          <SelectItem key={m.name} value={m.name}>
+                            <span className="flex items-center gap-2">
+                              <span className="truncate">
+                                {m.label || m.name}
                               </span>
-                            </SelectItem>
-                          ))}
+                              {!isPublished(m) && (
+                                <Badge
+                                  variant="outline"
+                                  className="px-1.5 py-0 text-[10px]"
+                                >
+                                  Draft
+                                </Badge>
+                              )}
+                            </span>
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
-                    {modes.filter((m) => m.name !== selectedMode).length ===
-                      0 && (
+                    {eligibleRetireTargets.length === 0 && (
                       <p className="text-muted-foreground text-xs">
-                        No other modes exist to forward to. Create one first.
+                        {modes.filter((m) => m.name !== selectedMode).length ===
+                        0
+                          ? "No other modes exist to forward to. Create one first."
+                          : "No forward targets you can edit. Retiring requires edit access on the target mode — ask an admin."}
                       </p>
                     )}
                   </div>

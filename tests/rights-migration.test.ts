@@ -13,8 +13,10 @@ import {
   expandOrgModeRights,
   expandRights,
   grantLanguageSlugToUser,
+  grantModeSlugToUser,
   removeSlugIfPartnerPresent,
   revokeLanguageSlugFromUser,
+  revokeModeSlugFromUser,
 } from "../worker/rights-migration";
 import type { StoredUser } from "../worker/types";
 
@@ -430,5 +432,103 @@ describe("revokeLanguageSlugFromUser", () => {
       "language_edit_rights",
     ]);
     expect((await read("drift@acme.com")).language_edit_rights).toBe("*");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #257 — clone auto-grant (single-user, both MODE verb fields)
+// ---------------------------------------------------------------------------
+//
+// Mode semantics, not language semantics: no legacy fallback, and an
+// unset field means "no access" for non-admins — so it materializes as
+// [slug] instead of consulting anything.
+
+describe("grantModeSlugToUser", () => {
+  it("grants both verb fields and returns the modified fields", async () => {
+    await seed("cloner@acme.com", "acme", {
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: [],
+    });
+    const fields = await grantModeSlugToUser(env, "cloner@acme.com", "sw", [
+      "mode_edit_rights",
+      "mode_publish_rights",
+    ]);
+    expect(fields).toEqual(["mode_edit_rights", "mode_publish_rights"]);
+    const after = await read("cloner@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken", "sw"]);
+    expect(after.mode_publish_rights).toEqual(["sw"]);
+  });
+
+  it("materializes an UNSET field as [slug] (no-access, not full-access)", async () => {
+    await seed("unset@acme.com", "acme", { mode_edit_rights: ["spoken"] });
+    await grantModeSlugToUser(env, "unset@acme.com", "sw", [
+      "mode_edit_rights",
+      "mode_publish_rights",
+    ]);
+    const after = await read("unset@acme.com");
+    expect(after.mode_publish_rights).toEqual(["sw"]);
+  });
+
+  it("grants ONLY the requested fields — edit-only cloners never gain publish (#258 rd-1)", async () => {
+    await seed("editonly@acme.com", "acme", {
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: [],
+    });
+    const fields = await grantModeSlugToUser(env, "editonly@acme.com", "sw", [
+      "mode_edit_rights",
+    ]);
+    expect(fields).toEqual(["mode_edit_rights"]);
+    const after = await read("editonly@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken", "sw"]);
+    expect(after.mode_publish_rights).toEqual([]);
+  });
+
+  it("wildcards pass through untouched; already-held slugs are idempotent", async () => {
+    await seed("wild@acme.com", "acme", {
+      mode_edit_rights: "*",
+      mode_publish_rights: ["sw"],
+    });
+    const fields = await grantModeSlugToUser(env, "wild@acme.com", "sw", [
+      "mode_edit_rights",
+      "mode_publish_rights",
+    ]);
+    expect(fields).toEqual([]);
+    const after = await read("wild@acme.com");
+    expect(after.mode_edit_rights).toBe("*");
+    expect(after.mode_publish_rights).toEqual(["sw"]);
+  });
+
+  it("throws when the stored user is missing", async () => {
+    await expect(
+      grantModeSlugToUser(env, "ghost@acme.com", "sw", ["mode_edit_rights"])
+    ).rejects.toThrow(/no stored user/);
+  });
+});
+
+describe("revokeModeSlugFromUser", () => {
+  it("removes the slug from exactly the recorded fields", async () => {
+    await seed("rev-mode@acme.com", "acme", {
+      mode_edit_rights: ["spoken", "sw"],
+      mode_publish_rights: ["sw"],
+    });
+    await revokeModeSlugFromUser(env, "rev-mode@acme.com", "sw", [
+      "mode_edit_rights",
+    ]);
+    const after = await read("rev-mode@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken"]);
+    // Not recorded → untouched.
+    expect(after.mode_publish_rights).toEqual(["sw"]);
+  });
+
+  it("tolerates a vanished user and drifted fields", async () => {
+    await expect(
+      revokeModeSlugFromUser(env, "gone@acme.com", "sw", ["mode_edit_rights"])
+    ).resolves.toBeUndefined();
+
+    await seed("drift-mode@acme.com", "acme", { mode_edit_rights: "*" });
+    await revokeModeSlugFromUser(env, "drift-mode@acme.com", "sw", [
+      "mode_edit_rights",
+    ]);
+    expect((await read("drift-mode@acme.com")).mode_edit_rights).toBe("*");
   });
 });

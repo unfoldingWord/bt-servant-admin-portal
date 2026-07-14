@@ -244,12 +244,52 @@ export async function renameMode(
 // clone lands as a draft. Rejects with 409 if the new slug collides with any
 // existing mode's canonical name OR alias in the org (Ian's #232
 // reconciliation §4).
+//
+// #257 — a clone performed by a non-admin shepherd comes back flagged
+// (X-Bootstrap-Grant header) with the VERBS the caller now holds on the
+// new slug (e.g. "edit" or "edit,publish"); the client mirrors exactly
+// those into its session user. An explicit wire signal, NOT client-side
+// inference — same rationale as the #247 language-create grant (#256
+// rds 2–3; the verb list replaced a client-side recomputation in #258
+// rd-2).
+export interface CloneGrantedVerbs {
+  edit: boolean;
+  publish: boolean;
+}
+
+export interface CloneModeResult extends PromptMode {
+  grantedVerbs: CloneGrantedVerbs | null;
+}
+
+// A 409 slug collision. When a prior clone attempt COMMITTED on the
+// engine but its response was lost, the kept auto-grant makes the
+// retry collide here — `grantedVerbs` (from the same header, attached
+// to the 409) carries the rights the caller's live session holds on
+// the colliding slug so the UI can reconcile instead of stranding an
+// invisible, uneditable mode (#258 rd-2 P2).
+export class CloneCollisionError extends Error {
+  constructor(
+    message: string,
+    readonly grantedVerbs: CloneGrantedVerbs | null
+  ) {
+    super(message);
+    this.name = "CloneCollisionError";
+  }
+}
+
+function parseGrantedVerbs(res: Response): CloneGrantedVerbs | null {
+  const header = res.headers.get("X-Bootstrap-Grant");
+  if (!header) return null;
+  const verbs = header.split(",");
+  return { edit: verbs.includes("edit"), publish: verbs.includes("publish") };
+}
+
 export async function cloneMode(
   name: string,
   body: { newName: string; newLabel?: string },
   signal?: AbortSignal,
   org?: string | null
-): Promise<PromptMode> {
+): Promise<CloneModeResult> {
   const res = await fetch(
     buildConfigUrl(`/api/config/modes/${encodeURIComponent(name)}/_clone`, org),
     {
@@ -261,12 +301,17 @@ export async function cloneMode(
   );
 
   if (!res.ok) {
-    throw new Error(
-      `Failed to clone mode (${res.status}): ${await readModeOpError(res)}`
-    );
+    const message = `Failed to clone mode (${res.status}): ${await readModeOpError(res)}`;
+    if (res.status === 409) {
+      throw new CloneCollisionError(message, parseGrantedVerbs(res));
+    }
+    throw new Error(message);
   }
 
-  return unwrapModeResponse((await res.json()) as Record<string, unknown>);
+  return {
+    ...unwrapModeResponse((await res.json()) as Record<string, unknown>),
+    grantedVerbs: parseGrantedVerbs(res),
+  };
 }
 
 // Retire the source mode and forward users onto `forwardTo` via the
