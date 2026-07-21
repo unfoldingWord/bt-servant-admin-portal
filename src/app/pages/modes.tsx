@@ -12,6 +12,8 @@ import {
   buildModeExportFilename,
 } from "@/lib/mode-export";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
+import { humanizeModeSlug, slugifyModeName } from "@/lib/mode-slug";
+import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import {
   effectiveModeEditRights,
   renameSlugInRights,
@@ -35,6 +37,7 @@ import {
   useSaveMode,
 } from "@/hooks/use-prompt-config";
 import type { MarkdownHeading } from "@/types/markdown";
+import type { PromptMode } from "@/types/prompt-override";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,6 +49,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -308,6 +313,14 @@ export function ModesPage() {
     value: string | null;
   } | null>(null);
 
+  // #260 — post-rename display-name sync prompt. Holds the rename
+  // response (server truth for label/description/document/published) so
+  // the follow-up label PUT never depends on refetch timing. Null =
+  // no prompt showing.
+  const [labelSync, setLabelSync] = useState<PromptMode | null>(null);
+  const [labelSyncValue, setLabelSyncValue] = useState("");
+  const [labelSyncError, setLabelSyncError] = useState<string | null>(null);
+
   const handleSelectMode = useCallback(
     (next: string | null) => {
       if (next === selectedMode) return;
@@ -505,7 +518,7 @@ export function ModesPage() {
 
   const handleRenameMode = useCallback(
     async (name: string, newName: string) => {
-      await renameMode.mutateAsync({ name, newName });
+      const renamed = await renameMode.mutateAsync({ name, newName });
       // #240: the worker migrated this user's stored mode_*_rights to
       // the new slug, but the Zustand auth store still holds the login-
       // time snapshot with the OLD slug — the per-row rights guard and
@@ -547,9 +560,54 @@ export function ModesPage() {
       // snapshot and clobber the exact patch above (rd-4 review). The
       // local patch mirrors the worker's migration; the next full page
       // load reconciles any residual drift.
+
+      // #260 — rename only touches the slug, so a mode with a display
+      // label looks unchanged in the label-only dropdown afterwards
+      // (the confusion behind Elsy's #232 staging report). Offer to
+      // bring the label along. Skipped when there is no label (the
+      // display already follows the slug) or when the label already
+      // slugifies to the new slug (nothing has drifted).
+      if (renamed.label && slugifyModeName(renamed.label) !== renamed.name) {
+        setLabelSyncValue(humanizeModeSlug(renamed.name));
+        setLabelSyncError(null);
+        setLabelSync(renamed);
+      }
     },
     [renameMode, selectedMode, setSelectedMode, setUser]
   );
+
+  // #260 — confirm handler for the display-name sync prompt. The PUT
+  // body comes from the rename response held in `labelSync`: the worker
+  // contract has no partial update (every PUT carries the full
+  // document), and the response is server truth that cannot be dirtied
+  // while the modal is open. Same inline-error/manual-close dialog
+  // contract as the selector's destructive confirms (#102).
+  const handleConfirmLabelSync = useCallback(() => {
+    if (!labelSync) return;
+    const nextLabel = labelSyncValue.trim();
+    if (!nextLabel) {
+      setLabelSyncError("Enter a display name, or keep the current one.");
+      return;
+    }
+    return runConfirmedAction(
+      () =>
+        saveMode.mutateAsync({
+          name: labelSync.name,
+          body: {
+            label: nextLabel,
+            description: labelSync.description,
+            document: labelSync.document,
+            published: labelSync.published ?? false,
+          },
+        }),
+      setLabelSyncError,
+      () => {
+        setLabelSync(null);
+        setLabelSyncValue("");
+      },
+      "Failed to update the display name."
+    );
+  }, [labelSync, labelSyncValue, saveMode]);
 
   const handleJumpToLine = useCallback((line: number) => {
     editorRef.current?.jumpToLine(line);
@@ -800,6 +858,68 @@ export function ModesPage() {
             >
               Discard and switch
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* #260 — post-rename display-name sync prompt (option 4 from the
+          #232 verification thread). Opens after a successful rename when
+          the mode's label no longer matches its slug. */}
+      <AlertDialog
+        open={labelSync !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setLabelSync(null);
+            setLabelSyncValue("");
+            setLabelSyncError(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Update the display name too?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The slug is now{" "}
+              <span className="text-foreground font-mono font-medium">
+                {labelSync?.name}
+              </span>
+              , but this mode still shows as{" "}
+              <span className="text-foreground font-medium">
+                &ldquo;{labelSync?.label}&rdquo;
+              </span>{" "}
+              in the mode list. Update the display name so the rename is visible
+              there, or keep the current one.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="mode-label-sync" className="text-xs">
+              Display name
+            </Label>
+            <Input
+              id="mode-label-sync"
+              value={labelSyncValue}
+              onChange={(e) => setLabelSyncValue(e.target.value)}
+              className="h-8 text-sm"
+            />
+          </div>
+          {labelSyncError && (
+            <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+              {labelSyncError}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saveMode.isPending}>
+              Keep current name
+            </AlertDialogCancel>
+            {/* Plain Button — AlertDialogAction auto-closes before an
+                error could render inline (#102); close happens in
+                handleConfirmLabelSync on success. */}
+            <Button
+              onClick={handleConfirmLabelSync}
+              disabled={saveMode.isPending || !labelSyncValue.trim()}
+            >
+              {saveMode.isPending ? "Updating…" : "Update name"}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
