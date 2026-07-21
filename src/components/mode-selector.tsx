@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { pickCloneDefaultSlug } from "@/lib/mode-clone-defaults";
+import { slugifyModeName as slugify } from "@/lib/mode-slug";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import type { OrgModes, PromptMode } from "@/types/prompt-override";
 import {
@@ -118,19 +119,6 @@ interface ModeSelectorProps {
 
 function isPublished(mode: Pick<PromptMode, "published">): boolean {
   return mode.published === true;
-}
-
-// Canonical mode-slug normalization, shared by the create and rename
-// flows: lowercase, spaces → hyphens, drop anything outside
-// [a-z0-9-_], trim leading/trailing hyphens. The engine validates the
-// result again server-side.
-function slugify(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9\-_]/g, "")
-    .replace(/^-+|-+$/g, "");
 }
 
 export function ModeSelector({
@@ -338,16 +326,30 @@ export function ModeSelector({
               ) : (
                 visibleModes.map((m) => (
                   <SelectItem key={m.name} value={m.name}>
-                    <span className="flex items-center gap-2">
-                      <span className="truncate">{m.label || m.name}</span>
-                      {!isPublished(m) && (
-                        <Badge
-                          variant="outline"
-                          className="px-1.5 py-0 text-[10px]"
-                        >
-                          Draft
-                        </Badge>
-                      )}
+                    <span className="flex min-w-0 flex-col items-start gap-0.5">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate">{m.label || m.name}</span>
+                        {!isPublished(m) && (
+                          <Badge
+                            variant="outline"
+                            className="px-1.5 py-0 text-[10px]"
+                          >
+                            Draft
+                          </Badge>
+                        )}
+                      </span>
+                      {/* Slug subtitle (#260) — rename only touches the
+                          slug, so a reslug is invisible in a label-only
+                          list. Shown only when a label masks the slug.
+                          Radix mirrors ItemText children into the
+                          trigger's SelectValue; the descendant variant
+                          hides the subtitle there so the w-52 trigger
+                          stays a single line. */}
+                      {m.label && m.label !== m.name ? (
+                        <span className="text-muted-foreground truncate font-mono text-[10px] [[data-slot=select-value]_&]:hidden">
+                          {m.name}
+                        </span>
+                      ) : null}
                     </span>
                   </SelectItem>
                 ))
@@ -385,6 +387,22 @@ export function ModeSelector({
             >
               {selectedIsPublished ? "Published" : "Draft"}
             </Badge>
+
+            {/* Canonical slug (#260) — the dropdown trigger shows the
+                label, so when a label exists the slug has no home in the
+                header without this. Omitted when the label IS the slug
+                (the trigger already shows it). Sits before the alias
+                badges so the strip reads "current slug, then previous
+                slugs". */}
+            {selectedModeData.label &&
+            selectedModeData.label !== selectedMode ? (
+              <span
+                className="text-muted-foreground shrink-0 font-mono text-xs"
+                title={`Canonical slug — users select this mode by typing #${selectedMode}.`}
+              >
+                {selectedMode}
+              </span>
+            ) : null}
 
             {/* Alias badges (#232 / #241). A mode answers to its previous
                 slug(s) after rename, or to its merged-in slug(s) after a
