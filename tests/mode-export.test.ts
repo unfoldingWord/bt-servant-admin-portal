@@ -111,6 +111,46 @@ describe("buildModeExportContent — frontmatter", () => {
     expect(out).toContain('  - "back\\\\slash"');
   });
 
+  it("emits requires_group: true when the flag is set (#209)", () => {
+    const out = buildModeExportContent(
+      { ...baseMode, requires_group: true },
+      { org: "unfoldingWord", exportedAt: FIXED_DATE }
+    );
+    expect(out).toContain("requires_group: true");
+    // Emitted inside the frontmatter block, not the body.
+    const lines = out.split("\n");
+    const closingIdx = lines.indexOf("---", 1);
+    expect(lines.indexOf("requires_group: true")).toBeLessThan(closingIdx);
+  });
+
+  it("omits requires_group when absent or explicitly false", () => {
+    // Absent and false are semantically identical (mode visible
+    // everywhere); omitting keeps existing modes' exports byte-stable —
+    // same rule as `aliases`.
+    const absent = buildModeExportContent(baseMode, {
+      org: "uW",
+      exportedAt: FIXED_DATE,
+    });
+    const explicitFalse = buildModeExportContent(
+      { ...baseMode, requires_group: false },
+      { org: "uW", exportedAt: FIXED_DATE }
+    );
+    expect(absent).not.toContain("requires_group");
+    expect(explicitFalse).not.toContain("requires_group");
+  });
+
+  it("lets a spread-construction override carry requires_group (handleExport pattern)", () => {
+    // modes.tsx handleExport overrides the cached value with the
+    // locally-tracked toggle, same as `published` — pin that an
+    // override of false suppresses a stale cached true.
+    const cached: PromptMode = { ...baseMode, requires_group: true };
+    const out = buildModeExportContent(
+      { ...cached, requires_group: false },
+      { org: "uW", exportedAt: FIXED_DATE }
+    );
+    expect(out).not.toContain("requires_group");
+  });
+
   it("emits published as the literal boolean — false when undefined or false", () => {
     const undef = buildModeExportContent(
       { name: "x", document: "" },

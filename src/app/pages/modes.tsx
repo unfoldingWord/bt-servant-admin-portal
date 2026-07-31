@@ -51,6 +51,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -161,6 +162,7 @@ export function ModesPage() {
   const [draft, setDraft] = useState("");
   const [lastSyncedDoc, setLastSyncedDoc] = useState("");
   const [lastSyncedPublished, setLastSyncedPublished] = useState(false);
+  const [lastSyncedRequiresGroup, setLastSyncedRequiresGroup] = useState(false);
   // Pauses autosave on a draft that already failed once, so a failed save
   // doesn't loop on every isPending → false transition (Frank P2 on
   // PR #122). User recovers by editing further (changes debouncedDraft) or
@@ -181,6 +183,7 @@ export function ModesPage() {
       setDraft("");
       setLastSyncedDoc("");
       setLastSyncedPublished(false);
+      setLastSyncedRequiresGroup(false);
       setLastFailedDoc(null);
       return;
     }
@@ -190,6 +193,7 @@ export function ModesPage() {
     setDraft(modeQuery.data.document);
     setLastSyncedDoc(modeQuery.data.document);
     setLastSyncedPublished(modeQuery.data.published ?? false);
+    setLastSyncedRequiresGroup(modeQuery.data.requires_group ?? false);
     setLastFailedDoc(null);
     syncedNameRef.current = selectedMode;
   }, [selectedMode, modeQuery.data]);
@@ -209,6 +213,7 @@ export function ModesPage() {
             description: serverDescription,
             document: doc,
             published: lastSyncedPublished,
+            requires_group: lastSyncedRequiresGroup,
           },
         },
         {
@@ -222,6 +227,7 @@ export function ModesPage() {
     },
     [
       lastSyncedPublished,
+      lastSyncedRequiresGroup,
       saveMode,
       selectedMode,
       serverDescription,
@@ -267,18 +273,19 @@ export function ModesPage() {
     const ctx = { org: effectiveOrg, exportedAt: new Date() };
     // Spread `modeQuery.data` so every PromptMode field (label,
     // description, aliases, and anything added later) flows through
-    // without a per-field update here. The three overrides below are
+    // without a per-field update here. The overrides below are
     // intentional: `name` follows the user's selection, `document`
-    // captures unsaved edits, `published` uses the locally-tracked
-    // toggle (not cache, which can be stale during a Publish race).
-    // Original inline construction dropped `aliases` silently — #241 PR A
-    // Frank review.
+    // captures unsaved edits, `published` and `requires_group` use the
+    // locally-tracked toggles (not cache, which can be stale during a
+    // Publish/toggle race). Original inline construction dropped
+    // `aliases` silently — #241 PR A Frank review.
     const content = buildModeExportContent(
       {
         ...modeQuery.data,
         name: selectedMode,
         document: draft,
         published: lastSyncedPublished,
+        requires_group: lastSyncedRequiresGroup,
       },
       ctx
     );
@@ -295,7 +302,14 @@ export function ModesPage() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [draft, effectiveOrg, lastSyncedPublished, modeQuery.data, selectedMode]);
+  }, [
+    draft,
+    effectiveOrg,
+    lastSyncedPublished,
+    lastSyncedRequiresGroup,
+    modeQuery.data,
+    selectedMode,
+  ]);
 
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
@@ -416,12 +430,52 @@ export function ModesPage() {
           description: serverDescription,
           document: draft,
           published,
+          requires_group: lastSyncedRequiresGroup,
         },
       });
       setLastSyncedDoc(draft);
       setLastSyncedPublished(published);
     },
-    [draft, saveMode, selectedMode, serverDescription, serverLabel]
+    [
+      draft,
+      lastSyncedRequiresGroup,
+      saveMode,
+      selectedMode,
+      serverDescription,
+      serverLabel,
+    ]
+  );
+
+  // #209 — immediate-save toggle, mirroring handleSetPublished: the
+  // worker contract has no partial update, so the current draft rides
+  // along and both last-synced trackers advance on success. A failure
+  // surfaces through the page-level saveError banner, and the switch
+  // visually reverts on its own because it renders from
+  // lastSyncedRequiresGroup (not advanced on error).
+  const handleSetRequiresGroup = useCallback(
+    async (requiresGroup: boolean) => {
+      if (!selectedMode) return;
+      await saveMode.mutateAsync({
+        name: selectedMode,
+        body: {
+          label: serverLabel,
+          description: serverDescription,
+          document: draft,
+          published: lastSyncedPublished,
+          requires_group: requiresGroup,
+        },
+      });
+      setLastSyncedDoc(draft);
+      setLastSyncedRequiresGroup(requiresGroup);
+    },
+    [
+      draft,
+      lastSyncedPublished,
+      saveMode,
+      selectedMode,
+      serverDescription,
+      serverLabel,
+    ]
   );
 
   const handleDeleteMode = useCallback(
@@ -598,6 +652,7 @@ export function ModesPage() {
             description: labelSync.description,
             document: labelSync.document,
             published: labelSync.published ?? false,
+            requires_group: labelSync.requires_group,
           },
         }),
       setLabelSyncError,
@@ -687,6 +742,28 @@ export function ModesPage() {
 
           {hasSelection && (
             <div className="flex shrink-0 items-center gap-3">
+              {/* #209 — group-only gate. Saves immediately on toggle
+                  (like Publish); renders from lastSyncedRequiresGroup so
+                  a failed save reverts visually. */}
+              <div
+                className="flex items-center gap-2"
+                title="When on, this mode is only offered in group chats (Telegram groups) — hidden from WhatsApp, web, and DMs."
+              >
+                <Switch
+                  id="mode-requires-group"
+                  checked={lastSyncedRequiresGroup}
+                  onCheckedChange={(checked) => {
+                    handleSetRequiresGroup(checked).catch(() => {});
+                  }}
+                  disabled={!canEditSelected || isSaving}
+                />
+                <Label
+                  htmlFor="mode-requires-group"
+                  className="text-muted-foreground text-xs font-normal"
+                >
+                  Requires group chat
+                </Label>
+              </div>
               <span
                 className="text-muted-foreground text-xs tabular-nums"
                 aria-live="polite"

@@ -27,6 +27,14 @@ export function buildModeExportContent(
     lines.push(`description: ${yamlScalar(mode.description)}`);
   }
   lines.push(`published: ${mode.published === true ? "true" : "false"}`);
+  // Emitted only when set (#209): absent and false are semantically
+  // identical (mode visible everywhere), and omitting the key keeps
+  // existing modes' exports byte-stable — same rule as `aliases` below.
+  // Additive optional key, so MODE_EXPORT_VERSION stays put (precedent:
+  // the #241 PR A aliases addition).
+  if (mode.requires_group === true) {
+    lines.push("requires_group: true");
+  }
   // Engine omits `aliases` when empty (#232 reconciliation §2); mirror
   // that on export so round-tripped files don't sprout an empty key.
   if (mode.aliases?.length) {
