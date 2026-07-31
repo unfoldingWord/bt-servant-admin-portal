@@ -3,6 +3,7 @@ import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { ChevronRight, ExternalLink, RotateCw } from "lucide-react";
 
+import { safeResourceHref } from "@/lib/resource-href";
 import { subjectLabel } from "@/lib/resource-subjects";
 import { useUiStore } from "@/lib/ui-store";
 import { cn } from "@/lib/utils";
@@ -69,6 +70,9 @@ function ServerChip({
 }
 
 function ResourceRow({ item }: { item: ResourceItem }) {
+  // Scheme-guarded: item.url is third-party MCP server output relayed by
+  // the worker — see lib/resource-href.ts.
+  const href = safeResourceHref(item.url);
   const meta = [
     item.organization,
     item.version && `v${item.version}`,
@@ -92,9 +96,9 @@ function ResourceRow({ item }: { item: ResourceItem }) {
           {meta.join(" · ")}
         </span>
       )}
-      {item.url && (
+      {href && (
         <a
-          href={item.url}
+          href={href}
           target="_blank"
           rel="noreferrer"
           className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs underline underline-offset-2"
@@ -213,7 +217,17 @@ export function ResourcesPage() {
                 ))}
               </div>
 
-              {noneListable ? (
+              {servers.length === 0 ? (
+                <div className="bg-card rounded-xl border px-6 py-10 text-center">
+                  <p className="text-foreground text-sm font-medium">
+                    No servers are connected for this org
+                  </p>
+                  <p className="text-muted-foreground mx-auto mt-2 max-w-md text-xs leading-relaxed">
+                    Resource listings come from the org&rsquo;s MCP servers, and
+                    none are configured yet.
+                  </p>
+                </div>
+              ) : noneListable ? (
                 <div className="bg-card rounded-xl border px-6 py-10 text-center">
                   <p className="text-foreground text-sm font-medium">
                     This org&rsquo;s servers don&rsquo;t support resource
