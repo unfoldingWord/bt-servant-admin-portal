@@ -3,4 +3,5 @@ export type Section =
   | "modes"
   | "prompt-configuration"
   | "languages"
+  | "resources"
   | "admin-users";

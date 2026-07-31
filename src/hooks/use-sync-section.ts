@@ -9,6 +9,7 @@ const pathToSection: Record<string, Section> = {
   "/modes": "modes",
   "/prompt-configuration": "prompt-configuration",
   "/languages": "languages",
+  "/resources": "resources",
   "/admin/users": "admin-users",
 };
 

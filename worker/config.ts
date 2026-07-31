@@ -1251,6 +1251,25 @@ export async function handleConfig(
     );
   }
 
+  // /api/config/resources?language=xx → GET (#230). Read-only aggregation
+  // across the org's MCP servers; any session may read, matching the
+  // modes/languages GET convention. `language` is required — the upstream
+  // aggregation is language-scoped by contract (worker#257), and proxying
+  // without it would burn an engine round-trip on a guaranteed 4xx.
+  if (pathname === "/api/config/resources") {
+    const language =
+      new URL(request.url).searchParams.get("language")?.trim() ?? "";
+    if (!language) {
+      return errorResponse("Missing required query param: language", 400);
+    }
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${encodedOrg}/resources?language=${encodeURIComponent(language)}`,
+      ["GET"]
+    );
+  }
+
   return errorResponse("Not found", 404);
 }
 
