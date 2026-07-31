@@ -4,10 +4,10 @@
 
 ## Current Status
 
-**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **2026-07-21 was a full-cycle day**: the #232 verification thread's dropped follow-up was recovered, filed as **#260** (option-4 slug visibility, Elsy's 07-02 pick), implemented, reviewed (approve, no medium+), and **merged same day as PR #262 (`b33e803`)** — dropdown slug subtitle + header canonical-slug line + post-rename "update display name?" prompt; staging deployed, issue open for Elsy's pass. **#247 closed** (Elsy verified v1.10.4 on 07-13). **Engine #201/#202 closed as superseded** per Ian's blessings; the visual-map slice refiled as portal **#261** (post-#230). **#255 root cause log-confirmed** (7-day Workers Observability sweep): web-client turns carry no language context at all — zero `language_not_found` warns, only portal test-chat ever resolves a language; evidence posted for Ian. #249 still awaiting Elsy + Ian; #254 still awaiting Ian; #230 still blocked on worker#257 (untouched since 06-24).
-**Last Updated**: 2026-07-21
+**Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **2026-07-30 was the unblock day**: Ian answered everything at once (all timestamped 07-30 ~12:51–13:01 UTC) — final TS types on worker#257 **plus the endpoint itself merged same day** (worker PR #343), the #255 fix design picked (org-default third rung in `resolveLanguageForTurn`), **#249 option 4 picked** (pending Elsy's joint +1), and baruch PR #20 reviewed (changes requested: needs Sonnet-vs-Opus eval evidence). Portal answered same-day: **#230's read-only Resources panel built, reviewed (1 medium found+fixed: scheme-guarded upstream URLs), and merged as PR #265 (`74d1a6d`)** — mirrored contract types, BFF `GET /api/config/resources?language=`, honest `ok`/`unsupported`/`error` server states, FIA-only-org degradation, archive-amber accent; staging deployed. Ride-along: **react-router 7.15.0 → 8.3.0** (drop-in; cleared the repo-wide `npm audit` failure from advisories published after 07-23). `resourcePriority` editor still gated on worker#257 item 2. Elsy also announced (Zulip standup, 07-30): OBS tools splitting out of tC Helps into **three MCP servers** (tC Helps / OBS Helps / OBS 5M), Abel building — panel handles N servers by design; new servers need worker-side adapters.
+**Last Updated**: 2026-07-30
 **Demo target**: June 9 (passed) — outcome to be summarized
-**Last prod deploy**: a Deploy Production run went out **2026-07-08** (run `28967840957`) — main HEAD at the time was `b033468`, so prod is presumably **v1.10.3** (verify with Ian; tracker previously said 2026-06-24/v1.9.0). Staging is at `b33e803` / **v1.10.4** + #257 un-gating + #260 slug visibility.
+**Last prod deploy**: a Deploy Production run went out **2026-07-08** (run `28967840957`) — main HEAD at the time was `b033468`, so prod is presumably **v1.10.3** (verify with Ian; tracker previously said 2026-06-24/v1.9.0). Staging is at `74d1a6d` — v1.10.4 + #257 un-gating + #260 slug visibility + **#230 Resources panel + react-router 8**.
 
 ## Milestones
 
@@ -100,6 +100,44 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-07-30 — Ian's unblock batch; #230 Resources panel same-day build→review→merge (PR #265); react-router 8; #249/#255 design picks in
+
+**Context entering the session:** 07-23 morning session (tracked under the 07-21 entry's next-steps): answered Elsy's #230 status ping with evidence (worker#257 untouched since 06-24, 0 code hits), merged docs PR #263. 07-29: answered Elsy's #255 ping (root cause confirmed, fix worker-side, blocked on Ian); posted the first written-standup entry (new Zulip ritual, #84 BT Servant > Written standup) with blockers + asks routed to Ian and Elsy.
+
+**The standup worked.** Elsy escalated the blockers to Ian by name; Ian's standup listed "Unblocking Seth" as a today item; next morning he confirmed "Seth is unblocked." His 07-30 batch (all ~12:51–13:01 UTC):
+
+- **worker#257** — final TS types posted AND item 1 merged same day (worker PR #343): aggregated endpoint + per-server adapters + fixtures + tests. Two additive deltas vs the sketch (`label`, `articleCount` — aquifer-driven), `organization` now optional, `serverId` stamped per item. Item 2 (`resourcePriority` on `PromptMode`) NOT included.
+- **#255** — fix design picked: third rung in the existing cascade at `resolveLanguageForTurn` (trigger → persisted → **org default**, published-only for end users, admin draft bypass). Built on our log sweep; same hook the #170 cascade walk lands in later. Portal follow-up eventually: authoring surface for the org default ("default" toggle on a published language row); Ian posts the storage shape on worker#236 when he starts.
+- **#249** — Ian picked **option 4** (org-wide read-only visibility + admin edit trump, full mode parity), answered all three open questions; joint pick — implementable the moment Elsy +1s.
+- **#254 / baruch PR #20** — changes requested (1 medium): needs representative Sonnet-vs-Opus quality/regression evidence attached; mocked tests can't cover it. On us: scope prompt set + run both models + attach comparison.
+
+**Completed (same evening):**
+
+- **#230 read-only Resources panel — built, reviewed, merged as PR #265 (`74d1a6d`), staging deployed.** `src/types/resources.ts` mirrors the worker contract verbatim; `subjectLabel()` humanizes unknown slugs (subject set is open by contract). BFF `GET /api/config/resources?language=xx` — 400-before-proxy on missing language, reads open per GET convention, `resolveOrg` inherited. Page: honest `servers[]` rendering (`ok`/`unsupported`/`error`-with-retry distinct), FIA-only-org explanatory degradation, expandable category rows with `serverId` attribution in server-default order, archive-amber `--brand-resources` accent, `faBooks` activity-bar entry. **Content language is a free IETF-code input, deliberately not the org-language dropdown** — tuning slugs ("indonesian") aren't valid endpoint values. 20 new tests → 616 total.
+- **Pre-merge review pass (house rule) found 1 medium + fixed same commit (`a07a981`):** upstream `ResourceItem.url` reached `<a href>` unvalidated — third-party MCP server output could smuggle `javascript:`/`data:` schemes (React's mitigation is a console error, not a guarantee). New `safeResourceHref()` allows absolute http(s) only. Plus honest zero-server empty state.
+- **react-router 7.15.0 → 8.3.0 ride-along (`8ae1ce4`):** CI's `npm audit --omit=dev` began failing repo-wide on advisories published after main's last green run (07-23); the RSC-mode CSRF advisory (GHSA-qwww-vcr4-c8h2) flags everything below 8.3.0. Verified drop-in: zero source changes; typecheck/lint/616 tests/build all pass. Lockfile also floated react/react-dom 19.2.6→19.2.8 (normal npm resolution).
+- **Issue hygiene:** #230 updated (PR link + merge/staging note + item-2 re-ask to Ian); #254 updated (review outcome + eval next-step).
+
+**Patterns / decisions captured:**
+
+- **The written standup is a real unblock lever.** One structured post (working on / blocked on / need from others, with issues named) → same-week resolution of a 5-week-stale blocker. Route asks to people by name; Elsy amplifies.
+- **Third-party data → DOM is a review dimension for every aggregation feature.** Anything the worker relays from partner MCP servers (URLs today; labels/descriptions tomorrow) is untrusted input in the portal's origin. Scheme-guard links; never `dangerouslySetInnerHTML` relay content.
+- **Audit-driven majors: verify empirically, ride along explicitly.** When `npm audit` forces a major (react-router 8), prove drop-in-ness with the full local gate, commit separately with the advisory list, and flag the lockfile's extra float in the PR body — reviewers shouldn't discover it in the diff.
+
+**Blockers:**
+
+- **#230 ordering editor** → worker#257 item 2 (`resourcePriority` on `PromptMode`) — Ian sequenced it after his OTel prod push.
+- **#249** → Elsy's joint +1 on option 4 (Ian's half is in).
+- **#254** → our eval evidence (needs prompt-set scoping + real-model spend sign-off), then Ian re-review.
+- **#255** → Ian's build of the org-default rung; portal authoring surface waits on the worker#236 storage shape.
+
+**Next Steps:**
+
+- **Elsy's staging pass on the Resources panel** (walkthrough = #230 comment; note the IETF-code input gotcha) and on **#260** (still open since 07-21).
+- **#249**: the moment Elsy +1s, spec the implementation (languages admin trump + org-wide read visibility — partially unwinds PR #185; touch points: worker gates, sidebar gating, languages page rights logic).
+- **#254 eval**: scope representative rulebook-transfer prompt set, run Sonnet vs Opus, attach evidence to baruch PR #20, request re-review.
+- **Watch**: worker#257 item 2 (ordering editor starts), worker#236 storage shape (org-default toggle spec), Abel's MCP-split issue (adapter ask on the record → new servers appear in the panel automatically).
 
 ### 2026-07-21 — #260 filed→shipped same day (PR #262); #247 closed; engine #201/#202 superseded; #255 root cause log-confirmed
 
