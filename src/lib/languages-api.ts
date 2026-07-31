@@ -66,17 +66,6 @@ export async function getLanguage(
   return data as unknown as Language;
 }
 
-// #247 — a PUT that created the language via the worker's admin
-// bootstrap carve-out comes back flagged (X-Bootstrap-Grant header):
-// the worker auto-granted the caller edit + publish on the new slug,
-// and the client mirrors that into its session user. An explicit wire
-// signal, NOT client-side inference — inferring the carve-out from the
-// local rights snapshot broke under session skew and published:true
-// shapes (#256 review rounds 2–3).
-export interface PutLanguageResult extends Language {
-  bootstrapGranted: boolean;
-}
-
 export async function putLanguage(
   name: string,
   body: {
@@ -86,7 +75,7 @@ export async function putLanguage(
   },
   signal?: AbortSignal,
   org?: string | null
-): Promise<PutLanguageResult> {
+): Promise<Language> {
   const res = await fetch(
     buildConfigUrl(`/api/config/languages/${encodeURIComponent(name)}`, org),
     {
@@ -105,15 +94,14 @@ export async function putLanguage(
     throw new Error(`Failed to save language (${res.status}): ${text}`);
   }
 
-  const bootstrapGranted = res.headers.get("X-Bootstrap-Grant") === "1";
   const data = (await res.json()) as Record<string, unknown>;
 
   // Worker wraps PUT response as { org, language, message }. Unwrap to
   // match getLanguage so callers consistently get a Language object.
   if ("language" in data && typeof data.language === "object") {
-    return { ...(data.language as Language), bootstrapGranted };
+    return data.language as Language;
   }
-  return { ...(data as unknown as Language), bootstrapGranted };
+  return data as unknown as Language;
 }
 
 export async function deleteLanguage(

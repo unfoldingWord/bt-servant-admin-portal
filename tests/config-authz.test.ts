@@ -3098,12 +3098,16 @@ describe("config authz — cross-org via ?org= (#166)", () => {
     );
   });
 
-  it("super-admin with ?org=<own org> + restricted language_rights → 403 (no self-referential bypass)", async () => {
-    // Frank's PR #185 review caught this: an earlier draft set
-    // `crossOrg: true` for any present ?org=, so a restricted super
-    // admin could bypass their own org's language_rights by adding a
-    // self-referential ?org=acme. `crossOrg` must reflect the resolved
-    // target vs. session.org, not merely the param's presence.
+  it("super-admin with ?org=<own org> + restricted language_rights → 200 via the #249 admin trump", async () => {
+    // Pre-#249 this was a 403: PR #185 enforced per-row language rights
+    // even for admins, so a restricted super admin was denied on a row
+    // they didn't shepherd. #249 makes admin powers trump per-row
+    // language rights (mode parity), so the same request now proxies.
+    // The self-referential-?org= discriminator this test used to pin
+    // (crossOrg must reflect resolved-target-vs-session.org, not the
+    // param's presence — Frank, PR #185) is still pinned for the
+    // population it can bite: the non-super shepherd test below
+    // ("non-super with ?org=<own org> + restricted language_rights").
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeRequestWithQuery("PUT", "/api/config/languages/english", "org=acme", {
@@ -3118,15 +3122,15 @@ describe("config authz — cross-org via ?org= (#166)", () => {
       }),
       "/api/config/languages/english"
     );
-    expect(res.status).toBe(403);
-    // One fetch: the #247 bootstrap carve-out's existence probe (the
-    // caller has admin powers and zero rights on this row). The spy's
-    // 200 reads as "exists", so the carve-out declines — the proxy PUT
-    // must never fire.
+    expect(res.status).toBe(200);
+    // Exactly one fetch, and it is the proxy PUT: the trump returns
+    // before the gate parses the body or probes existence, so admin
+    // language PUTs cost one engine call, like admin mode PUTs.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(
-      (fetchSpy.mock.calls[0]![1] as RequestInit | undefined)?.method
-    ).toBeUndefined();
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("PUT");
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/acme/languages/english"
+    );
   });
 
   it("super-admin with ?org=<own org> + matching language_rights → 200 (treated as same-org)", async () => {
@@ -3149,15 +3153,12 @@ describe("config authz — cross-org via ?org= (#166)", () => {
       "/api/config/languages/spanish"
     );
     expect(res.status).toBe(200);
-    // Two fetches under #181 verb-perms: GET current state for the diff,
-    // PUT proxy. Both target the same resource — the gate doesn't add
-    // path churn, only verb-aware authz on top.
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    // One fetch since #249: the caller has admin powers, so the trump
+    // returns before the diff GET and only the proxy PUT reaches the
+    // engine. No path churn — the gate never rewrites the target.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("PUT");
     expect(String(fetchSpy.mock.calls[0]![0])).toContain(
-      "/api/v1/admin/orgs/acme/languages/spanish"
-    );
-    expect((fetchSpy.mock.calls[1]![1] as RequestInit).method).toBe("PUT");
-    expect(String(fetchSpy.mock.calls[1]![0])).toContain(
       "/api/v1/admin/orgs/acme/languages/spanish"
     );
   });
@@ -3173,19 +3174,18 @@ describe("config authz — cross-org via ?org= (#166)", () => {
       env,
       makeSession({
         org: "acme",
-        isAdmin: true,
         language_rights: ["spanish"],
       }),
       "/api/config/languages/english"
     );
     expect(res.status).toBe(403);
-    // Same-org admin + zero rights on the row → the #247 carve-out
-    // probes existence once; the spy's 200 reads as "exists" so the
-    // deny stands and the proxy PUT never fires.
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(
-      (fetchSpy.mock.calls[0]![1] as RequestInit | undefined)?.method
-    ).toBeUndefined();
+    // Non-admin shepherd with zero rights on this row: the early-deny
+    // fires before the body is read, so the engine is never touched.
+    // (#249 note: this session was `isAdmin: true` until the admin
+    // trump landed, which contradicted the test's own "non-super
+    // shepherd" intent — the admin case is covered by the "language
+    // admin trump (#249)" describe below.)
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("super-admin GET languages list with ?org=other → proxies to /orgs/other/languages", async () => {
@@ -3591,194 +3591,56 @@ describe("config authz — same-org ?org= (#247)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// #247 — language bootstrap create carve-out
+// #249 — language admin trump (option 4: full mode parity)
 // ---------------------------------------------------------------------------
 //
-// A same-org admin with NO per-row language rights may CREATE a language
-// that doesn't exist yet; the worker auto-grants them both verbs on the
-// new slug before the engine call. Everything else about the PR #185
-// "no admin trump on languages" rule stays intact: existing rows,
-// DELETE, non-admins, and any ambiguous engine state all still 403.
+// Anyone with admin powers (isAdmin OR isSuperAdmin) may edit, publish,
+// delete and create ANY language in their own org, regardless of per-row
+// verb rights — exactly as they always could for modes. Per-row rights
+// keep governing non-admin shepherds, unchanged.
+//
+// This replaces the #247 bootstrap carve-out (a probe-gated,
+// creation-only exception with a creator auto-grant), which the trump
+// subsumes: creation is now an ordinary admin write, so no auto-grant,
+// no existence probe, and no X-Bootstrap-Grant signal on language PUTs.
 
-// First fetch = the gate's existence probe, second = the proxy PUT.
-function spyFetchBootstrap(
-  probe: () => Promise<Response>,
-  proxy: () => Promise<Response> = () =>
-    Promise.resolve(new Response("{}", { status: 200 }))
-) {
-  let call = 0;
-  return vi.spyOn(globalThis, "fetch").mockImplementation(() => {
-    call++;
-    return call === 1 ? probe() : proxy();
-  });
-}
-
-function makeCreateRequest(name: string): Request {
+function makeLanguagePut(name: string, body: object): Request {
   return new Request(
     `https://portal.example.test/api/config/languages/${name}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ document: "## Identity\n", published: false }),
+      body: JSON.stringify(body),
     }
   );
 }
 
-const missing = () => Promise.resolve(new Response("", { status: 404 }));
-
-describe("#247 language bootstrap create", () => {
-  it("same-org admin with explicit empty rights + missing language → 200, creator granted both verbs", async () => {
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_edit_rights: [],
-      language_publish_rights: [],
-    });
-    const fetchSpy = spyFetchBootstrap(missing);
-
-    const res = await handleConfig(
-      makeCreateRequest("swahili"),
-      env,
-      makeSession({
-        email: "admin@acme.com",
-        isAdmin: true,
-        language_edit_rights: [],
-        language_publish_rights: [],
-      }),
-      "/api/config/languages/swahili"
-    );
-    expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect((fetchSpy.mock.calls[1]![1] as RequestInit).method).toBe("PUT");
-
-    const after = await readRightsUser("admin@acme.com");
-    expect(after.language_edit_rights).toEqual(["swahili"]);
-    expect(after.language_publish_rights).toEqual(["swahili"]);
-  });
-
-  it("grant materializes from restricted legacy language_rights", async () => {
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_rights: ["en"],
-    });
-    const fetchSpy = spyFetchBootstrap(missing);
-
-    const res = await handleConfig(
-      makeCreateRequest("swahili"),
-      env,
-      makeSession({
-        email: "admin@acme.com",
-        isAdmin: true,
-        language_rights: ["en"],
-        // validateSession lazy-migrates legacy → verb fields on the
-        // session; mirror that here so the gate sees what it would in
-        // production.
-        language_edit_rights: ["en"],
-        language_publish_rights: ["en"],
-      }),
-      "/api/config/languages/swahili"
-    );
-    expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-
-    const after = await readRightsUser("admin@acme.com");
-    expect(after.language_edit_rights).toEqual(["en", "swahili"]);
-    expect(after.language_publish_rights).toEqual(["en", "swahili"]);
-    expect(after.language_rights).toEqual(["en"]);
-  });
-
-  it("existing language → 403, no grant, no proxy (PR #185 rule intact)", async () => {
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_edit_rights: [],
-      language_publish_rights: [],
-    });
-    const fetchSpy = spyFetchBootstrap(() =>
-      Promise.resolve(
-        new Response(JSON.stringify({ language: { document: "x" } }), {
-          status: 200,
-        })
-      )
-    );
-
-    const res = await handleConfig(
-      makeCreateRequest("swahili"),
-      env,
-      makeSession({
-        email: "admin@acme.com",
-        isAdmin: true,
-        language_edit_rights: [],
-        language_publish_rights: [],
-      }),
-      "/api/config/languages/swahili"
-    );
-    expect(res.status).toBe(403);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const after = await readRightsUser("admin@acme.com");
-    expect(after.language_edit_rights).toEqual([]);
-  });
-
-  it("existence probe 5xx → 403 (fail closed)", async () => {
-    const fetchSpy = spyFetchBootstrap(() =>
-      Promise.resolve(new Response("", { status: 500 }))
-    );
-    const res = await handleConfig(
-      makeCreateRequest("swahili"),
-      env,
-      makeSession({
-        isAdmin: true,
-        language_edit_rights: [],
-        language_publish_rights: [],
-      }),
-      "/api/config/languages/swahili"
-    );
-    expect(res.status).toBe(403);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("existence probe throws → request fails, no grant, no proxy (rd-5 parity)", async () => {
-    // Thrown fetch propagates on the PUT path, same as for rights-
-    // holding callers — still fail-closed: nothing is mutated.
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(() => Promise.reject(new Error("network down")));
-    await expect(
-      handleConfig(
-        makeCreateRequest("swahili"),
-        env,
-        makeSession({
-          isAdmin: true,
-          language_edit_rights: [],
-          language_publish_rights: [],
-        }),
-        "/api/config/languages/swahili"
-      )
-    ).rejects.toThrow("network down");
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("non-admin with empty rights → 403 before any engine traffic", async () => {
+describe("language admin trump (#249)", () => {
+  it("admin with explicit empty rights PUTs an EXISTING draft → 200, single proxy fetch, no probe", async () => {
+    // Pre-#249 this 403'd: PR #185 enforced per-row rights on existing
+    // rows even for admins, and the #247 carve-out was creation-only.
     const fetchSpy = spyFetch();
     const res = await handleConfig(
-      makeCreateRequest("swahili"),
+      makeLanguagePut("swahili", { document: "# Swahili\n" }),
       env,
       makeSession({
-        isAdmin: false,
+        isAdmin: true,
         language_edit_rights: [],
         language_publish_rights: [],
       }),
       "/api/config/languages/swahili"
     );
-    expect(res.status).toBe(403);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    // One fetch, and it is the PUT: the trump returns before the body
+    // parse and the diff GET, so no existence probe is issued.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("PUT");
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain(
+      "/api/v1/admin/orgs/acme/languages/swahili"
+    );
   });
 
-  it("admin DELETE without rights → 403 (carve-out is PUT-only)", async () => {
+  it("admin with explicit empty rights DELETEs a draft → 200 (the #247 carve-out was PUT-only)", async () => {
     const fetchSpy = spyFetch();
     const res = await handleConfig(
       makeRequest("DELETE", "/api/config/languages/swahili"),
@@ -3790,11 +3652,15 @@ describe("#247 language bootstrap create", () => {
       }),
       "/api/config/languages/swahili"
     );
-    expect(res.status).toBe(403);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("DELETE");
   });
 
-  it("engine rejects the create with 4xx → grant compensated", async () => {
+  it("admin creates a MISSING draft → 200 with no creator grant and no X-Bootstrap-Grant header", async () => {
+    // The #247 pipeline wrote both verb fields to the creator's KV
+    // record and flagged the response. Under the trump neither happens:
+    // the admin needs no rights to keep working on what they created.
     await seedRightsUser({
       email: "admin@acme.com",
       org: "acme",
@@ -3802,12 +3668,13 @@ describe("#247 language bootstrap create", () => {
       language_edit_rights: [],
       language_publish_rights: [],
     });
-    const fetchSpy = spyFetchBootstrap(missing, () =>
-      Promise.resolve(new Response("bad name", { status: 400 }))
-    );
+    const fetchSpy = spyFetch();
 
     const res = await handleConfig(
-      makeCreateRequest("swahili"),
+      makeLanguagePut("swahili", {
+        document: "## Identity\n",
+        published: false,
+      }),
       env,
       makeSession({
         email: "admin@acme.com",
@@ -3817,341 +3684,139 @@ describe("#247 language bootstrap create", () => {
       }),
       "/api/config/languages/swahili"
     );
-    expect(res.status).toBe(400);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBeNull();
+
     const after = await readRightsUser("admin@acme.com");
     expect(after.language_edit_rights).toEqual([]);
     expect(after.language_publish_rights).toEqual([]);
   });
 
-  it("engine 5xx on the create → grant kept (ambiguity never contracts)", async () => {
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_edit_rights: [],
-      language_publish_rights: [],
-    });
-    spyFetchBootstrap(missing, () =>
-      Promise.resolve(new Response("", { status: 500 }))
-    );
-
+  it("admin flips published on a row they hold no publish right for → 200", async () => {
+    const fetchSpy = spyFetch();
     const res = await handleConfig(
-      makeCreateRequest("swahili"),
+      makeLanguagePut("swahili", { document: "# same\n", published: true }),
       env,
       makeSession({
-        email: "admin@acme.com",
         isAdmin: true,
-        language_edit_rights: [],
-        language_publish_rights: [],
+        language_edit_rights: ["spanish"],
+        language_publish_rights: ["spanish"],
       }),
       "/api/config/languages/swahili"
     );
-    expect(res.status).toBe(500);
-    const after = await readRightsUser("admin@acme.com");
-    expect(after.language_edit_rights).toEqual(["swahili"]);
-    expect(after.language_publish_rights).toEqual(["swahili"]);
-  });
-
-  it("stored user missing at grant time → 502, engine never called", async () => {
-    // No seed for this email — grant aborts the create.
-    const fetchSpy = spyFetchBootstrap(missing);
-    const res = await handleConfig(
-      makeCreateRequest("swahili"),
-      env,
-      makeSession({
-        email: "ghost@acme.com",
-        isAdmin: true,
-        language_edit_rights: [],
-        language_publish_rights: [],
-      }),
-      "/api/config/languages/swahili"
-    );
-    expect(res.status).toBe(502);
-    // Only the existence probe fired; the proxy PUT never did.
+    expect(res.status).toBe(200);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).method).toBe("PUT");
   });
 
-  it("bootstrap create with published: true → allowed (creator holds both verbs)", async () => {
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_edit_rights: [],
-      language_publish_rights: [],
-    });
-    const fetchSpy = spyFetchBootstrap(missing);
-
+  it("super-admin WITHOUT isAdmin gets the trump too (hasAdminPowers parity with modes)", async () => {
+    // A super admin who self-demoted isAdmin keeps cross-org powers and
+    // must keep config powers, or the partial-power state is
+    // inconsistent across the worker (mirrors the mode-path test).
+    const fetchSpy = spyFetch();
     const res = await handleConfig(
-      new Request("https://portal.example.test/api/config/languages/swahili", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document: "## Identity\n", published: true }),
-      }),
+      makeLanguagePut("swahili", { document: "# Swahili\n" }),
       env,
       makeSession({
-        email: "admin@acme.com",
-        isAdmin: true,
+        isAdmin: false,
+        isSuperAdmin: true,
         language_edit_rights: [],
         language_publish_rights: [],
       }),
       "/api/config/languages/swahili"
     );
     expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("invalid JSON body on the carve-out path → 400 before any engine traffic", async () => {
-    const fetchSpy = spyFetchBootstrap(missing);
+  it("deadlock regression (#247): every user holds explicit non-'*' rights → an admin can still create the org's FIRST draft", async () => {
+    // The original #247 bug: per-row rights can only name drafts that
+    // already exist, but creating a draft required rights on it — so an
+    // org whose users all hold explicit arrays could never create draft
+    // one. The trump dissolves it without any bootstrap machinery.
+    await seedRightsUser({
+      email: "admin@acme.com",
+      org: "acme",
+      isAdmin: true,
+      language_rights: ["en"],
+      language_edit_rights: ["en"],
+      language_publish_rights: ["en"],
+    });
+    const fetchSpy = spyFetch();
+
     const res = await handleConfig(
-      new Request("https://portal.example.test/api/config/languages/swahili", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: "{not json",
+      makeLanguagePut("swahili", {
+        document: "## Identity\n",
+        published: false,
       }),
       env,
       makeSession({
+        email: "admin@acme.com",
         isAdmin: true,
+        language_rights: ["en"],
+        language_edit_rights: ["en"],
+        language_publish_rights: ["en"],
+      }),
+      "/api/config/languages/swahili"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Rights are untouched: the admin's access comes from the trump, so
+    // nothing is written to KV on their behalf.
+    const after = await readRightsUser("admin@acme.com");
+    expect(after.language_edit_rights).toEqual(["en"]);
+    expect(after.language_publish_rights).toEqual(["en"]);
+  });
+
+  it("non-admin with explicit [] → 403 on PUT (existing row), engine never touched", async () => {
+    // The trump is admin-only; with the #247 exemption gone, the
+    // early-deny fires before the body is read.
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      makeLanguagePut("swahili", { document: "# Swahili\n" }),
+      env,
+      makeSession({
         language_edit_rights: [],
         language_publish_rights: [],
       }),
       "/api/config/languages/swahili"
     );
-    expect(res.status).toBe(400);
-    // Body parse precedes the existence probe on the PUT path.
+    expect(res.status).toBe(403);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("zero-rights admin, EXISTING row, empty-diff body → 403, no proxy (#256 rd-2/rd-3 F0)", async () => {
-    // The widening both later review rounds confirmed: a body echoing
-    // the current state (or omitting fields) computes ZERO required
-    // verbs, and without the zeroRightsOnRow guard the gate returned
-    // ok — putting an engine write on a row PR #185 says a zero-rights
-    // admin must never touch. Main answered 403.
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_edit_rights: [],
-      language_publish_rights: [],
-    });
-    const currentDoc = "## Identity\n";
-    const fetchSpy = spyFetchBootstrap(() =>
-      Promise.resolve(
-        new Response(
-          JSON.stringify({
-            language: { document: currentDoc, published: false },
-          }),
-          { status: 200 }
-        )
-      )
-    );
-
+  it("non-admin with explicit [] → 403 on PUT of a MISSING name (no creation path for shepherds)", async () => {
+    const fetchSpy = spyFetch();
     const res = await handleConfig(
-      new Request("https://portal.example.test/api/config/languages/english", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        // Exactly equals the mocked current state → zero required verbs.
-        body: JSON.stringify({ document: currentDoc, published: false }),
+      makeLanguagePut("brand-new", {
+        document: "## Identity\n",
+        published: false,
       }),
       env,
       makeSession({
-        email: "admin@acme.com",
-        isAdmin: true,
-        language_edit_rights: [],
-        language_publish_rights: [],
+        language_edit_rights: ["spanish"],
+        language_publish_rights: ["spanish"],
       }),
-      "/api/config/languages/english"
+      "/api/config/languages/brand-new"
     );
     expect(res.status).toBe(403);
-    // Only the existence probe fired — the proxy PUT never did.
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    // And no grant was written.
-    const after = await readRightsUser("admin@acme.com");
-    expect(after.language_edit_rights).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("zero-rights admin, MISSING row, empty body {} → still a bootstrap create with grant (not an ungoverned pass-through)", async () => {
-    // An empty body against a missing row also computes zero required
-    // verbs; the zeroRightsOnRow guard must route it through the
-    // carve-out (grant + flag), never the ordinary allow.
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_edit_rights: [],
-      language_publish_rights: [],
-    });
-    const fetchSpy = spyFetchBootstrap(missing);
-
+  it("non-admin with explicit [] → 403 on DELETE, engine never touched", async () => {
+    const fetchSpy = spyFetch();
     const res = await handleConfig(
-      new Request("https://portal.example.test/api/config/languages/swahili", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      }),
+      makeRequest("DELETE", "/api/config/languages/swahili"),
       env,
       makeSession({
-        email: "admin@acme.com",
-        isAdmin: true,
         language_edit_rights: [],
         language_publish_rights: [],
       }),
       "/api/config/languages/swahili"
     );
-    expect(res.status).toBe(200);
-    expect(res.headers.get("X-Bootstrap-Grant")).toBe("1");
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    const after = await readRightsUser("admin@acme.com");
-    expect(after.language_edit_rights).toEqual(["swahili"]);
-    expect(after.language_publish_rights).toEqual(["swahili"]);
-  });
-
-  it("bootstrap create response carries X-Bootstrap-Grant: 1", async () => {
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_edit_rights: [],
-      language_publish_rights: [],
-    });
-    spyFetchBootstrap(missing);
-    const res = await handleConfig(
-      makeCreateRequest("swahili"),
-      env,
-      makeSession({
-        email: "admin@acme.com",
-        isAdmin: true,
-        language_edit_rights: [],
-        language_publish_rights: [],
-      }),
-      "/api/config/languages/swahili"
-    );
-    expect(res.status).toBe(200);
-    expect(res.headers.get("X-Bootstrap-Grant")).toBe("1");
-  });
-
-  it("ORDINARY create (edit wildcard) → no header, no grant (#256 rd-3: the client mirror keys on this)", async () => {
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_edit_rights: "*",
-      language_publish_rights: [],
-    });
-    const fetchSpy = spyFetchBootstrap(missing);
-    const res = await handleConfig(
-      makeCreateRequest("swahili"),
-      env,
-      makeSession({
-        email: "admin@acme.com",
-        isAdmin: true,
-        language_edit_rights: "*",
-        language_publish_rights: [],
-      }),
-      "/api/config/languages/swahili"
-    );
-    expect(res.status).toBe(200);
-    expect(res.headers.get("X-Bootstrap-Grant")).toBeNull();
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    const after = await readRightsUser("admin@acme.com");
-    // No grant: publish stays an explicit deny.
-    expect(after.language_edit_rights).toBe("*");
-    expect(after.language_publish_rights).toEqual([]);
-  });
-
-  it("engine 4xx on a bootstrap create → no X-Bootstrap-Grant header alongside the compensation", async () => {
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_edit_rights: [],
-      language_publish_rights: [],
-    });
-    spyFetchBootstrap(missing, () =>
-      Promise.resolve(new Response("bad", { status: 400 }))
-    );
-    const res = await handleConfig(
-      makeCreateRequest("swahili"),
-      env,
-      makeSession({
-        email: "admin@acme.com",
-        isAdmin: true,
-        language_edit_rights: [],
-        language_publish_rights: [],
-      }),
-      "/api/config/languages/swahili"
-    );
-    expect(res.status).toBe(400);
-    expect(res.headers.get("X-Bootstrap-Grant")).toBeNull();
-  });
-
-  it("mixed shape edit=[] + publish='*' → carve-out still reachable on a missing name (#256 review F2)", async () => {
-    // The wildcard on one verb bypasses the zero-rights early-deny, so
-    // the carve-out must live on the PUT diff's deny path — nested
-    // inside early-deny it never ran for this shape and the bootstrap
-    // deadlock persisted.
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_edit_rights: [],
-      language_publish_rights: "*",
-    });
-    const fetchSpy = spyFetchBootstrap(missing);
-
-    const res = await handleConfig(
-      makeCreateRequest("swahili"),
-      env,
-      makeSession({
-        email: "admin@acme.com",
-        isAdmin: true,
-        language_edit_rights: [],
-        language_publish_rights: "*",
-      }),
-      "/api/config/languages/swahili"
-    );
-    expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-
-    const after = await readRightsUser("admin@acme.com");
-    expect(after.language_edit_rights).toEqual(["swahili"]);
-    // The wildcard side needs no entry and must not be narrowed.
-    expect(after.language_publish_rights).toBe("*");
-  });
-
-  it("partner-deny shape (publish explicit, edit unset) → creator granted BOTH verbs, legacy never leaks (#256 review F1)", async () => {
-    await seedRightsUser({
-      email: "admin@acme.com",
-      org: "acme",
-      isAdmin: true,
-      language_rights: ["x"],
-      language_publish_rights: ["x"],
-    });
-    const fetchSpy = spyFetchBootstrap(missing);
-
-    const res = await handleConfig(
-      makeCreateRequest("swahili"),
-      env,
-      // Session mirrors lazyMigrateLanguageRights: explicit publish,
-      // partner-denied edit ([]), legacy carried alongside.
-      makeSession({
-        email: "admin@acme.com",
-        isAdmin: true,
-        language_rights: ["x"],
-        language_edit_rights: [],
-        language_publish_rights: ["x"],
-      }),
-      "/api/config/languages/swahili"
-    );
-    expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-
-    const after = await readRightsUser("admin@acme.com");
-    // Edit was a deliberate deny: it materializes as [slug] only — the
-    // legacy "x" must NOT reappear (that would durably restore revoked
-    // access; the escalation face of review F1).
-    expect(after.language_edit_rights).toEqual(["swahili"]);
-    expect(after.language_publish_rights).toEqual(["x", "swahili"]);
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

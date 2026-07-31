@@ -34,7 +34,7 @@ worker/
 ├── baruch.ts           → Baruch SSE streaming, initiation & history proxy
 ├── config.ts           → Modes, languages & prompt-override proxy + verb-perms authorization gate
 ├── admin.ts            → Admin user CRUD (tri-mode auth: secret / super admin / org admin)
-├── rights-migration.ts → Per-user rights migration for rename, plus clone/bootstrap auto-grants
+├── rights-migration.ts → Per-user rights migration for rename, plus the mode clone auto-grant
 ├── crypto.ts           → PBKDF2 hashing, constant-time compare
 ├── helpers.ts          → Response helpers, same-origin guard, KV listing, org-shape guard
 └── types.ts            → StoredUser / SessionData shapes
@@ -54,6 +54,7 @@ worker/
 Shared page features:
 
 - **Markdown editor** (Modes + Languages): CodeMirror with heading TOC, debounced autosave (800 ms), manual Save flush, unsaved-changes guards on navigation / selection switch / org-context switch, and read-only rendering when the user lacks edit rights on the selected row.
+- **Language visibility** (#249): the Languages dropdown lists every draft in the org for anyone who can reach the page — rows the user holds no edit right on open read-only. Modes still list only the rows a non-admin shepherd holds a verb on.
 - **Org context selector** (Modes, Languages, Prompt Overrides): super admins can switch the pages to any org that has at least one user; the choice persists across the three pages and is sent as `?org=` to the BFF.
 - **Test chat panel**: slide-out BT Servant chat (SSE) available on every page. Uses a synthetic per-session test user ID so test conversations never touch the caller's own history, with a mode picker that pins the test user's active mode.
 - **User menu**: change password, light/dark theme toggle, sign out, app version.
@@ -62,7 +63,7 @@ Shared page features:
 
 The engine trusts the portal with a single shared API token, so this worker's BFF is the enforcement point for per-user authorization.
 
-- **Org admin** (`isAdmin`): manages users in their own org; can edit any _mode_ in their org (admin trump); can create the _first_ language draft in their org (bootstrap carve-out, with auto-grant of both verbs to the creator) — but existing language documents remain per-row gated even for admins.
+- **Org admin** (`isAdmin`): manages users in their own org; can read, create, edit, publish and delete any _mode_ or _language_ in their org (admin trump — per-row verb rights scope non-admin shepherds only).
 - **Super admin** (`isSuperAdmin`): cross-org powers — sees/manages users in every org, moves users between orgs, grants/revokes `isSuperAdmin`, and bypasses per-row gates when operating on _another_ org's config (their home-org rights stay enforced at home).
 - **Verb rights** (per user, per resource): `language_edit_rights`, `language_publish_rights`, `mode_edit_rights`, `mode_publish_rights` — each either `"*"` or an array of slugs, assigned via a four-selector matrix in the user dialogs. Edit gates document/label/description changes; publish gates the published flag; delete requires both.
 - **Legacy fallback**: the pre-verb-perms `language_rights` field is lazily migrated at session time — it applies only when _both_ language verb fields are unset (setting one verb makes the unset partner an explicit deny, not legacy-full). Modes have no legacy fallback: a non-admin with both mode fields unset has no mode access.
@@ -118,23 +119,23 @@ Worker configuration (`wrangler.jsonc`): `ENGINE_BASE_URL` / `BARUCH_BASE_URL` v
 
 The Cloudflare Worker acts as a BFF, authenticating requests (session cookie + `X-Requested-With` same-origin guard) and forwarding to the engine or Baruch with the shared API keys.
 
-| Route                             | Auth                                                          | Description                                            |
-| --------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------ |
-| `/api/auth/*`                     | None (login) / session                                        | Login, logout, session check (`/me`), change password  |
-| `/api/admin/users[/:email]`       | `X-Admin-Secret` OR admin/super-admin session                 | User CRUD with org scoping and self-lockout guards     |
-| `/api/chat/stream`                | Session                                                       | BT Servant SSE streaming                               |
-| `/api/chat/history`               | Session                                                       | GET/DELETE chat history                                |
-| `/api/chat/memory`                | Session                                                       | DELETE user memory                                     |
-| `/api/baruch/*`                   | Session                                                       | Baruch SSE streaming, initiation, history (GET/DELETE) |
-| `/api/config/prompt-overrides`    | Session (writes: admin)                                       | Org prompt-override slots                              |
-| `/api/config/modes[/:name]`       | Session (writes: verb-perms, admin trump)                     | List/read/write/delete modes                           |
-| `/api/config/modes/:name/_rename` | Admin or edit-on-source                                       | Rename + per-user rights migration                     |
-| `/api/config/modes/:name/_clone`  | Admin or edit-on-source                                       | Clone + cloner auto-grant                              |
-| `/api/config/modes/:name/_retire` | Admin, or edit+publish-on-source + edit-on-target             | Retire-and-forward                                     |
-| `/api/config/languages[/:name]`   | Session (writes: verb-perms, no admin trump on existing rows) | List/read/write/delete language documents              |
-| `/api/config/language-scaffold`   | Session (read-only)                                           | Org scaffold template for new language drafts          |
-| `/api/config/user-mode/:userId`   | Session                                                       | PUT/DELETE the test-chat user's active mode            |
-| `/api/config/user-memory/:userId` | Session                                                       | GET/DELETE a user's persistent memory                  |
+| Route                             | Auth                                              | Description                                            |
+| --------------------------------- | ------------------------------------------------- | ------------------------------------------------------ |
+| `/api/auth/*`                     | None (login) / session                            | Login, logout, session check (`/me`), change password  |
+| `/api/admin/users[/:email]`       | `X-Admin-Secret` OR admin/super-admin session     | User CRUD with org scoping and self-lockout guards     |
+| `/api/chat/stream`                | Session                                           | BT Servant SSE streaming                               |
+| `/api/chat/history`               | Session                                           | GET/DELETE chat history                                |
+| `/api/chat/memory`                | Session                                           | DELETE user memory                                     |
+| `/api/baruch/*`                   | Session                                           | Baruch SSE streaming, initiation, history (GET/DELETE) |
+| `/api/config/prompt-overrides`    | Session (writes: admin)                           | Org prompt-override slots                              |
+| `/api/config/modes[/:name]`       | Session (writes: verb-perms, admin trump)         | List/read/write/delete modes                           |
+| `/api/config/modes/:name/_rename` | Admin or edit-on-source                           | Rename + per-user rights migration                     |
+| `/api/config/modes/:name/_clone`  | Admin or edit-on-source                           | Clone + cloner auto-grant                              |
+| `/api/config/modes/:name/_retire` | Admin, or edit+publish-on-source + edit-on-target | Retire-and-forward                                     |
+| `/api/config/languages[/:name]`   | Session (writes: verb-perms, admin trump)         | List/read/write/delete language documents              |
+| `/api/config/language-scaffold`   | Session (read-only)                               | Org scaffold template for new language drafts          |
+| `/api/config/user-mode/:userId`   | Session                                           | PUT/DELETE the test-chat user's active mode            |
+| `/api/config/user-memory/:userId` | Session                                           | GET/DELETE a user's persistent memory                  |
 
 Notes:
 

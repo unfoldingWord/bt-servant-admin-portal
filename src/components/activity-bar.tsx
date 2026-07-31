@@ -41,11 +41,12 @@ export function ActivityBar() {
   // undefined-undefined means "no access" for non-admins), which is
   // why the Modes entry combines it with the admin trump.
   //
-  // #247 — admins get the Languages entry regardless of per-row rights:
-  // the worker lets a same-org admin CREATE drafts that don't exist yet
-  // (breaking the no-rights-without-drafts bootstrap deadlock), so the
-  // entry point must be reachable. Existing drafts remain per-row-gated
-  // on the page and in the worker (PR #185 — no admin trump there).
+  // #249 — admins get the Languages entry regardless of per-row rights:
+  // the worker's gate trumps per-row language rights for admins (mode
+  // parity), so they can read, create, edit, publish and delete every
+  // draft in the org. Non-admins still need at least one verb on at
+  // least one row; they then see the whole org catalog, read-only where
+  // they hold no edit right.
   const canAccessLanguages = isAdmin || hasAnyLanguageAccess(user);
   const canEditModes = isAdmin || hasAnyModeAccess(user);
 
