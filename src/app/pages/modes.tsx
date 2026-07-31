@@ -11,6 +11,12 @@ import {
   buildModeExportContent,
   buildModeExportFilename,
 } from "@/lib/mode-export";
+import {
+  DEFAULT_MODE_FLAGS,
+  readModeFlags,
+  reconcileModeFlags,
+  type ModeFlags,
+} from "@/lib/mode-flags";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { humanizeModeSlug, slugifyModeName } from "@/lib/mode-slug";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
@@ -151,18 +157,32 @@ export function ModesPage() {
 
   // Local document draft (auto-save target).
   //
-  // We track `lastSyncedDoc` / `lastSyncedPublished` separately from the
+  // We track `lastSyncedDoc` / `lastSyncedFlags` separately from the
   // React Query cache so that edits typed *during* an in-flight save are
   // preserved, and so a subsequent autosave after Publish/Unpublish doesn't
   // read stale `published` from the cache and silently revert the toggle.
   // Sync rule: pulled from the server only on selection change; advanced on
-  // successful save with the value we sent (never re-read from the cache).
+  // successful save from the PUT response (server truth for the merged
+  // mode), falling back to what we sent for any key the worker omits.
   // See `src/app/pages/languages.tsx` for the parallel implementation —
   // both pages share this pattern.
   const [draft, setDraft] = useState("");
   const [lastSyncedDoc, setLastSyncedDoc] = useState("");
-  const [lastSyncedPublished, setLastSyncedPublished] = useState(false);
-  const [lastSyncedRequiresGroup, setLastSyncedRequiresGroup] = useState(false);
+  // `published` and `requires_group` are ONE tracker, never two. Every PUT
+  // re-asserts both (the worker has no partial update — see
+  // `lib/mode-flags.ts`), so a tracker that advanced one flag without the
+  // other would let the next save write a stale counterpart back over a
+  // change that already landed. The ref mirror is what the save handlers
+  // read at call time: a `useCallback` closure only sees the flags as of
+  // its own render, which during an in-flight save is by definition the
+  // pre-flight pair.
+  const [lastSyncedFlags, setLastSyncedFlags] =
+    useState<ModeFlags>(DEFAULT_MODE_FLAGS);
+  const lastSyncedFlagsRef = useRef(lastSyncedFlags);
+  const applyLastSyncedFlags = useCallback((next: ModeFlags) => {
+    lastSyncedFlagsRef.current = next;
+    setLastSyncedFlags(next);
+  }, []);
   // Pauses autosave on a draft that already failed once, so a failed save
   // doesn't loop on every isPending → false transition (Frank P2 on
   // PR #122). User recovers by editing further (changes debouncedDraft) or
@@ -182,8 +202,7 @@ export function ModesPage() {
       syncedNameRef.current = null;
       setDraft("");
       setLastSyncedDoc("");
-      setLastSyncedPublished(false);
-      setLastSyncedRequiresGroup(false);
+      applyLastSyncedFlags(DEFAULT_MODE_FLAGS);
       setLastFailedDoc(null);
       return;
     }
@@ -192,11 +211,10 @@ export function ModesPage() {
     if (syncedNameRef.current === selectedMode) return;
     setDraft(modeQuery.data.document);
     setLastSyncedDoc(modeQuery.data.document);
-    setLastSyncedPublished(modeQuery.data.published ?? false);
-    setLastSyncedRequiresGroup(modeQuery.data.requires_group ?? false);
+    applyLastSyncedFlags(readModeFlags(modeQuery.data));
     setLastFailedDoc(null);
     syncedNameRef.current = selectedMode;
-  }, [selectedMode, modeQuery.data]);
+  }, [applyLastSyncedFlags, selectedMode, modeQuery.data]);
 
   const isDirty = draft !== lastSyncedDoc;
   const isSaving = saveMode.isPending;
@@ -205,6 +223,7 @@ export function ModesPage() {
   const performSave = useCallback(
     (doc: string) => {
       if (!selectedMode) return;
+      const sent = lastSyncedFlagsRef.current;
       saveMode.mutate(
         {
           name: selectedMode,
@@ -212,22 +231,21 @@ export function ModesPage() {
             label: serverLabel,
             description: serverDescription,
             document: doc,
-            published: lastSyncedPublished,
-            requires_group: lastSyncedRequiresGroup,
+            ...sent,
           },
         },
         {
-          onSuccess: () => {
+          onSuccess: (saved) => {
             setLastSyncedDoc(doc);
             setLastFailedDoc(null);
+            applyLastSyncedFlags(reconcileModeFlags(sent, saved));
           },
           onError: () => setLastFailedDoc(doc),
         }
       );
     },
     [
-      lastSyncedPublished,
-      lastSyncedRequiresGroup,
+      applyLastSyncedFlags,
       saveMode,
       selectedMode,
       serverDescription,
@@ -284,8 +302,7 @@ export function ModesPage() {
         ...modeQuery.data,
         name: selectedMode,
         document: draft,
-        published: lastSyncedPublished,
-        requires_group: lastSyncedRequiresGroup,
+        ...lastSyncedFlags,
       },
       ctx
     );
@@ -302,14 +319,7 @@ export function ModesPage() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [
-    draft,
-    effectiveOrg,
-    lastSyncedPublished,
-    lastSyncedRequiresGroup,
-    modeQuery.data,
-    selectedMode,
-  ]);
+  }, [draft, effectiveOrg, lastSyncedFlags, modeQuery.data, selectedMode]);
 
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
@@ -423,22 +433,32 @@ export function ModesPage() {
       // mode, so we always send the current draft. The worker contract
       // requires a `document` on every PUT — there's no partial-update path.
       if (name !== selectedMode) return;
-      await saveMode.mutateAsync({
+      // Flag writes are serialized. This PUT re-asserts `requires_group`
+      // as well, so one started while another save is in flight would ship
+      // that flag's pre-flight value and undo whatever the in-flight write
+      // is landing. The selector's publish controls are already disabled
+      // by the same `saveMode.isPending` the page reads as `isSaving`; the
+      // throw is the backstop for any caller that misses that gate, and it
+      // surfaces inline in the unpublish dialog via `runConfirmedAction`.
+      if (saveMode.isPending) {
+        throw new Error("Another save is in flight. Try again in a moment.");
+      }
+      const sent: ModeFlags = { ...lastSyncedFlagsRef.current, published };
+      const saved = await saveMode.mutateAsync({
         name,
         body: {
           label: serverLabel,
           description: serverDescription,
           document: draft,
-          published,
-          requires_group: lastSyncedRequiresGroup,
+          ...sent,
         },
       });
       setLastSyncedDoc(draft);
-      setLastSyncedPublished(published);
+      applyLastSyncedFlags(reconcileModeFlags(sent, saved));
     },
     [
+      applyLastSyncedFlags,
       draft,
-      lastSyncedRequiresGroup,
       saveMode,
       selectedMode,
       serverDescription,
@@ -448,29 +468,37 @@ export function ModesPage() {
 
   // #209 — immediate-save toggle, mirroring handleSetPublished: the
   // worker contract has no partial update, so the current draft rides
-  // along and both last-synced trackers advance on success. A failure
-  // surfaces through the page-level saveError banner, and the switch
-  // visually reverts on its own because it renders from
-  // lastSyncedRequiresGroup (not advanced on error).
+  // along and the flag pair advances together from the PUT response. A
+  // failure surfaces through the page-level saveError banner, and the
+  // switch visually reverts on its own because it renders from
+  // `lastSyncedFlags` (not advanced on error). Same serialization gate as
+  // Publish — in the mirror image of that race, this PUT re-asserts
+  // `published`.
   const handleSetRequiresGroup = useCallback(
     async (requiresGroup: boolean) => {
       if (!selectedMode) return;
-      await saveMode.mutateAsync({
+      if (saveMode.isPending) {
+        throw new Error("Another save is in flight. Try again in a moment.");
+      }
+      const sent: ModeFlags = {
+        ...lastSyncedFlagsRef.current,
+        requires_group: requiresGroup,
+      };
+      const saved = await saveMode.mutateAsync({
         name: selectedMode,
         body: {
           label: serverLabel,
           description: serverDescription,
           document: draft,
-          published: lastSyncedPublished,
-          requires_group: requiresGroup,
+          ...sent,
         },
       });
       setLastSyncedDoc(draft);
-      setLastSyncedRequiresGroup(requiresGroup);
+      applyLastSyncedFlags(reconcileModeFlags(sent, saved));
     },
     [
+      applyLastSyncedFlags,
       draft,
-      lastSyncedPublished,
       saveMode,
       selectedMode,
       serverDescription,
@@ -652,7 +680,7 @@ export function ModesPage() {
             description: labelSync.description,
             document: labelSync.document,
             published: labelSync.published ?? false,
-            requires_group: labelSync.requires_group,
+            requires_group: labelSync.requires_group ?? false,
           },
         }),
       setLabelSyncError,
@@ -715,7 +743,10 @@ export function ModesPage() {
               isRenaming={renameMode.isPending}
               isCloning={cloneMode.isPending}
               isRetiring={retireMode.isPending}
-              isSettingPublished={saveMode.isPending}
+              // Page-level saving flag, not a publish-only one: it gates
+              // the publish controls against EVERY in-flight save, which
+              // is what keeps two flag-carrying PUTs from overlapping.
+              isSettingPublished={isSaving}
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
               canCreate={canCreate}
@@ -743,15 +774,15 @@ export function ModesPage() {
           {hasSelection && (
             <div className="flex shrink-0 items-center gap-3">
               {/* #209 — group-only gate. Saves immediately on toggle
-                  (like Publish); renders from lastSyncedRequiresGroup so
-                  a failed save reverts visually. */}
+                  (like Publish); renders from `lastSyncedFlags` so a
+                  failed save reverts visually. */}
               <div
                 className="flex items-center gap-2"
                 title="When on, this mode is only offered in group chats (Telegram groups) — hidden from WhatsApp, web, and DMs."
               >
                 <Switch
                   id="mode-requires-group"
-                  checked={lastSyncedRequiresGroup}
+                  checked={lastSyncedFlags.requires_group}
                   onCheckedChange={(checked) => {
                     handleSetRequiresGroup(checked).catch(() => {});
                   }}
