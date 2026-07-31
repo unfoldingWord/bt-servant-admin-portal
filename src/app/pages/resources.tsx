@@ -1,7 +1,13 @@
 import { useMemo, useState } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { ChevronRight, ExternalLink, RotateCw } from "lucide-react";
+import {
+  ChevronRight,
+  ExternalLink,
+  List,
+  Network,
+  RotateCw,
+} from "lucide-react";
 
 import { safeResourceHref } from "@/lib/resource-href";
 import { subjectLabel } from "@/lib/resource-subjects";
@@ -9,6 +15,7 @@ import { useUiStore } from "@/lib/ui-store";
 import { cn } from "@/lib/utils";
 import { OrgContextSelector } from "@/components/org-context-selector";
 import { PageHeader } from "@/components/page-header";
+import { ResourceServerMap } from "@/components/resource-server-map";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -135,6 +142,10 @@ export function ResourcesPage() {
     });
   };
 
+  // Two projections of the same query — the browsable list and the topology
+  // map (#261). No separate fetch: the map renders whatever the list has.
+  const [view, setView] = useState<"list" | "map">("list");
+
   const servers = data?.servers ?? [];
   const noneListable =
     servers.length > 0 && servers.every((s) => s.status !== "ok");
@@ -183,6 +194,40 @@ export function ResourcesPage() {
             IETF code — en, sw, es-419
           </p>
         </form>
+        <div
+          role="group"
+          aria-label="View"
+          className="bg-muted/40 ml-auto flex items-center gap-0.5 rounded-lg border p-0.5"
+        >
+          <button
+            type="button"
+            aria-pressed={view === "list"}
+            onClick={() => setView("list")}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+              view === "list"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <List className="size-3.5" />
+            List
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === "map"}
+            onClick={() => setView("map")}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+              view === "map"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Network className="size-3.5" />
+            Map
+          </button>
+        </div>
       </div>
 
       <div className="config-grid-bg min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
@@ -227,6 +272,8 @@ export function ResourcesPage() {
                     none are configured yet.
                   </p>
                 </div>
+              ) : view === "map" ? (
+                <ResourceServerMap data={data} />
               ) : noneListable ? (
                 <div className="bg-card rounded-xl border px-6 py-10 text-center">
                   <p className="text-foreground text-sm font-medium">
