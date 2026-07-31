@@ -120,10 +120,11 @@ async function proxyToEngine(
 // ---------------------------------------------------------------------------
 
 // PUT body shape we diff against current state. Both languages and modes
-// share `document` and `published`; modes additionally carry `label` and
-// `description`. We treat any of those three editorial fields as an edit
-// signal so a future `{label: "new"}` PUT for languages stays on the edit
-// gate even though today's portal only sends `document`.
+// share `document` and `published`; modes additionally carry `label`,
+// `description` and `requires_group`. We treat every one of those
+// editorial fields as an edit signal so a future `{label: "new"}` PUT for
+// languages stays on the edit gate even though today's portal only sends
+// `document`.
 interface ResourceShape {
   // Canonical slug from the engine's admin view. The rename arm's
   // preflights compare it against URL/body slugs — the engine resolves
@@ -134,6 +135,13 @@ interface ResourceShape {
   label?: string;
   description?: string;
   published?: boolean;
+  // #209 group-chat gate. MUST be modelled here: a field the diff cannot
+  // see is a field that ANY caller who cleared the early-deny changes for
+  // free (a publish-only shepherd, say), because the diff then computes
+  // zero required verbs. This worker is the only enforcement point — the
+  // engine takes one shared admin token and has no per-user identity — so
+  // an unmodelled field is an unguarded one.
+  requires_group?: boolean;
 }
 
 // Tri-state resource lookup — the single copy of the engine GET +
@@ -227,6 +235,12 @@ async function preflightMode(
 // Creation case (`current === null`): treat any editorial field as an
 // edit, and only require publish if `published: true` is being set
 // (since the engine's create-default is unpublished).
+//
+// `requires_group` (#209) maps to the EDIT verb, not to a verb of its
+// own: it is mode configuration, and the portal gates its switch on the
+// same `canEditSelected` predicate that gates the document. Publish is
+// deliberately NOT sufficient — flipping group-visibility changes which
+// surfaces offer the mode, which is an authoring decision.
 function computeRequiredVerbsForPut(
   body: ResourceShape,
   current: ResourceShape | null
@@ -237,6 +251,13 @@ function computeRequiredVerbsForPut(
   // `published: false` against such a row doesn't spuriously demand
   // publish rights (false !== undefined would otherwise trigger).
   const currentPublished = current?.published ?? false;
+  // Same coercion, same reason: every mode row created before #209 omits
+  // `requires_group` on read, while the portal now re-asserts the flag
+  // pair explicitly on EVERY PUT. Without the `?? false`, an ordinary
+  // document autosave carrying `requires_group: false` would read as a
+  // change against such a row and demand edit rights on a request that
+  // changes nothing.
+  const currentRequiresGroup = current?.requires_group ?? false;
   const docChanged =
     body.document !== undefined &&
     (isCreate || body.document !== current.document);
@@ -248,9 +269,22 @@ function computeRequiredVerbsForPut(
   const publishChanged =
     body.published !== undefined &&
     (isCreate ? body.published === true : body.published !== currentPublished);
+  // On create, mirror the `published` shape — the engine's create-default
+  // is `false`, so only `requires_group: true` is a change. This arm is
+  // near-inert in practice: a create already carries a `document`, which
+  // demands edit on its own. It matters for the one shape that doesn't —
+  // a bodyless-document create that sets the flag — and it keeps the
+  // create/update semantics from disagreeing about what the flag means.
+  const requiresGroupChanged =
+    body.requires_group !== undefined &&
+    (isCreate
+      ? body.requires_group === true
+      : body.requires_group !== currentRequiresGroup);
 
   const verbs: RightsVerb[] = [];
-  if (docChanged || labelChanged || descChanged) verbs.push("edit");
+  if (docChanged || labelChanged || descChanged || requiresGroupChanged) {
+    verbs.push("edit");
+  }
   if (publishChanged) verbs.push("publish");
   return verbs;
 }
@@ -282,7 +316,8 @@ function computeRequiredVerbsForPut(
 //   5. DELETE → requires BOTH edit + publish on the row. Deletion is
 //      strictly more destructive than either alone.
 //   6. PUT → diff body vs current and require the union of verbs the
-//      diff implies (`edit` if any editorial field changed, `publish`
+//      diff implies (`edit` if any editorial field changed — document,
+//      label, description, or the #209 `requires_group` flag; `publish`
 //      if the published flag flipped). When the diff denies, one
 //      carve-out (#247): a same-org admin's language PUT is allowed IF
 //      the engine CONFIRMED the target doesn't exist — pure creation.
