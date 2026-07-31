@@ -6,7 +6,7 @@ interface PageHeaderProps {
   subtitle: string;
   // Subtle context accent: tints a 3px top strip with a brand color so authors
   // can tell at a glance which kind of document they're editing (issue #78).
-  variant?: "modes" | "languages";
+  variant?: "modes" | "languages" | "resources";
 }
 
 export function PageHeader({ title, subtitle, variant }: PageHeaderProps) {
@@ -17,7 +17,9 @@ export function PageHeader({ title, subtitle, variant }: PageHeaderProps) {
       ? "var(--brand-modes)"
       : variant === "languages"
         ? "var(--brand-languages)"
-        : undefined;
+        : variant === "resources"
+          ? "var(--brand-resources)"
+          : undefined;
 
   return (
     <div

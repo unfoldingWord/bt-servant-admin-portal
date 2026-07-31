@@ -1,8 +1,10 @@
+import { faBooks as faBooksLight } from "@fortawesome/pro-light-svg-icons";
 import { faComments as faCommentsLight } from "@fortawesome/pro-light-svg-icons";
 import { faLanguage as faLanguageLight } from "@fortawesome/pro-light-svg-icons";
 import { faMessageBot as faMessageBotLight } from "@fortawesome/pro-light-svg-icons";
 import { faPenToSquare as faPenToSquareLight } from "@fortawesome/pro-light-svg-icons";
 import { faUsers as faUsersLight } from "@fortawesome/pro-light-svg-icons";
+import { faBooks as faBooksSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faComments as faCommentsSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faLanguage as faLanguageSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faMessageBot as faMessageBotSolid } from "@fortawesome/pro-solid-svg-icons";
@@ -83,6 +85,18 @@ export function ActivityBar() {
           }}
           disabled={!canAccessLanguages}
           disabledLabel="No language access — contact your admin"
+        />
+        {/* #230 — read-only resource inventory; open to every session,
+            matching the modes/languages GET convention in the worker. */}
+        <ActivityBarItem
+          icon={faBooksLight}
+          activeIcon={faBooksSolid}
+          label="Browse resources BT Servant can draw on"
+          isActive={activeSection === "resources"}
+          onClick={() => {
+            setActiveSection("resources");
+            void navigate("/resources");
+          }}
         />
         {isAdmin && (
           <ActivityBarItem

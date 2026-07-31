@@ -20,6 +20,7 @@ import { LanguagesPage } from "@/app/pages/languages";
 import { LoginPage } from "@/app/pages/login";
 import { ManualConfigPage } from "@/app/pages/manual-config";
 import { ModesPage } from "@/app/pages/modes";
+import { ResourcesPage } from "@/app/pages/resources";
 
 const queryClient = new QueryClient();
 
@@ -65,6 +66,7 @@ const router = createBrowserRouter([
             ),
           },
           { path: "languages", element: <LanguagesPage /> },
+          { path: "resources", element: <ResourcesPage /> },
           {
             path: "admin/users",
             element: (

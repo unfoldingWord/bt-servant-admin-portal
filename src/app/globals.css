@@ -98,6 +98,9 @@
      which document they're editing. */
   --brand-modes: oklch(0.71 0.108 226);
   --brand-languages: oklch(0.78 0.054 195);
+  /* Archive amber for Resources (#230) — the panel is a library inventory,
+     so its accent reads as paper/parchment against the blue/teal editors. */
+  --brand-resources: oklch(0.75 0.115 80);
 }
 
 .dark {
@@ -151,6 +154,7 @@
 
   --brand-modes: oklch(0.74 0.13 225);
   --brand-languages: oklch(0.8 0.07 195);
+  --brand-resources: oklch(0.8 0.13 80);
 }
 
 @layer base {
