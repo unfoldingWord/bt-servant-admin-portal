@@ -37,6 +37,16 @@ const MAX_LEAF_WIDTH = MAP.width - MAP.leaf.x - 16;
 const LEAF_LABEL_MAX_CHARS = 30;
 export const SERVER_NAME_MAX_CHARS = 24;
 
+// The org name renders at fontSize 12.5 semibold, inset ORG_PAD_X from each
+// side of the fixed-width org node. Same estimate-don't-measure approach as
+// the leaf chips, inverted: the node width is fixed here, so the character
+// budget is derived from it rather than the other way round.
+const ORG_CHAR_W = 7.4;
+const ORG_PAD_X = 14;
+export const ORG_NAME_MAX_CHARS = Math.floor(
+  (MAP.org.width - ORG_PAD_X * 2) / ORG_CHAR_W
+);
+
 export interface ResourceMapLeaf {
   slug: string;
   /** Display label (subjectLabel), pre-truncated to fit the chip. */
@@ -69,6 +79,10 @@ export interface ResourceMapLayout {
   width: number;
   height: number;
   orgCenterY: number;
+  /** Org identifier as the response gave it. */
+  orgName: string;
+  /** orgName pre-truncated for in-node rendering. */
+  orgDisplayName: string;
   servers: ResourceMapServer[];
 }
 
@@ -76,6 +90,30 @@ export interface ResourceMapLayout {
 export function truncateLabel(text: string, max: number): string {
   if (text.length <= max) return text;
   return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+/**
+ * Caption under a server node. Leaves are data-driven, so a degraded server
+ * can still have items attributed to it (a cached listing behind a failed
+ * refresh, say). Status alone would then read as "failed and empty" while
+ * the map shows leaves and the totals count them — so the shown count is
+ * appended to the reason rather than dropped.
+ */
+export function serverCaption(
+  status: ResourceServerStatus,
+  resourceCount: number,
+  language: string
+): string {
+  const counted = `${String(resourceCount)} ${
+    resourceCount === 1 ? "resource" : "resources"
+  }`;
+  if (status !== "ok") {
+    const reason =
+      status === "unsupported" ? "no resource listing" : "failed to respond";
+    return resourceCount > 0 ? `${reason} — ${counted} shown` : reason;
+  }
+  if (resourceCount === 0) return `nothing listed for “${language}”`;
+  return counted;
 }
 
 function leafWidth(label: string, count: number): number {
@@ -161,5 +199,12 @@ export function buildResourceMapLayout(
   // server) — the viewport must contain it either way.
   const height = Math.max(y, orgCenterY + MAP.org.height / 2) + MAP.padY;
 
-  return { width: MAP.width, height, orgCenterY, servers };
+  return {
+    width: MAP.width,
+    height,
+    orgCenterY,
+    orgName: data.org,
+    orgDisplayName: truncateLabel(data.org, ORG_NAME_MAX_CHARS),
+    servers,
+  };
 }

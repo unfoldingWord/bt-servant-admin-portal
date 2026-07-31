@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   MAP,
+  ORG_NAME_MAX_CHARS,
   buildResourceMapLayout,
+  serverCaption,
   truncateLabel,
 } from "../src/lib/resource-map-layout";
 import type {
@@ -26,9 +28,10 @@ function item(serverId: string, subject: string, name: string): ResourceItem {
 
 function response(
   servers: ResourceServerReport[],
-  resources: Record<string, ResourceItem[]> = {}
+  resources: Record<string, ResourceItem[]> = {},
+  org = "uw"
 ): AggregatedResourcesResponse {
-  return { org: "uw", language: "en", servers, resources };
+  return { org, language: "en", servers, resources };
 }
 
 describe("truncateLabel", () => {
@@ -173,5 +176,48 @@ describe("buildResourceMapLayout", () => {
     expect(long.label.length).toBeLessThanOrEqual(30);
     expect(long.width).toBeGreaterThan(short.width);
     expect(MAP.leaf.x + long.width).toBeLessThanOrEqual(MAP.width - 16);
+  });
+});
+
+describe("serverCaption", () => {
+  it("counts what a healthy server listed", () => {
+    expect(serverCaption("ok", 3, "en")).toBe("3 resources");
+    expect(serverCaption("ok", 1, "en")).toBe("1 resource");
+  });
+
+  it("names the language when a healthy server listed nothing", () => {
+    expect(serverCaption("ok", 0, "sw")).toBe("nothing listed for “sw”");
+  });
+
+  it("gives the reason alone when a degraded server contributed nothing", () => {
+    expect(serverCaption("unsupported", 0, "en")).toBe("no resource listing");
+    expect(serverCaption("error", 0, "en")).toBe("failed to respond");
+  });
+
+  it("acknowledges items a degraded server did contribute, so the caption never reads as failed-and-empty", () => {
+    // The map still draws those leaves and the footer still totals them —
+    // a bare "failed to respond" next to two visible leaves is a lie.
+    expect(serverCaption("error", 2, "en")).toBe(
+      "failed to respond — 2 resources shown"
+    );
+    expect(serverCaption("unsupported", 1, "en")).toBe(
+      "no resource listing — 1 resource shown"
+    );
+  });
+});
+
+describe("org node label", () => {
+  it("passes a short org name through untouched", () => {
+    const layout = buildResourceMapLayout(response([server("a")]));
+    expect(layout.orgName).toBe("uw");
+    expect(layout.orgDisplayName).toBe("uw");
+  });
+
+  it("truncates a long org slug to the fixed-width node's character budget", () => {
+    const org = "an-extremely-long-organization-slug";
+    const layout = buildResourceMapLayout(response([server("a")], {}, org));
+    expect(layout.orgName).toBe(org);
+    expect(layout.orgDisplayName).toHaveLength(ORG_NAME_MAX_CHARS);
+    expect(layout.orgDisplayName.endsWith("…")).toBe(true);
   });
 });

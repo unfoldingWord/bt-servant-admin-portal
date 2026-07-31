@@ -1,6 +1,11 @@
 import { useMemo } from "react";
 
-import { MAP, buildResourceMapLayout } from "@/lib/resource-map-layout";
+import {
+  MAP,
+  buildResourceMapLayout,
+  serverCaption,
+} from "@/lib/resource-map-layout";
+import { subjectLabel } from "@/lib/resource-subjects";
 import { cn } from "@/lib/utils";
 import type {
   AggregatedResourcesResponse,
@@ -10,7 +15,8 @@ import type {
 // Auto-generated map of the org's MCP-server topology (#261): org → servers →
 // subject leaves, projected from the same aggregated response the list view
 // renders — no extra fetching, so the map is current by construction. All
-// geometry comes from the pure layout helper; this component only draws.
+// geometry and label text comes from the pure layout helper; this component
+// only draws.
 //
 // The signature encoding: branch strokes carry link health. A solid amber
 // branch means the server is listing resources; a dashed branch means the
@@ -36,17 +42,6 @@ const DOT_CLASS: Record<ResourceServerStatus, string> = {
   unsupported: "fill-muted-foreground/40",
   error: "fill-destructive",
 };
-
-function statusCaption(
-  status: ResourceServerStatus,
-  resourceCount: number,
-  language: string
-): string {
-  if (status === "unsupported") return "no resource listing";
-  if (status === "error") return "failed to respond";
-  if (resourceCount === 0) return `nothing listed for “${language}”`;
-  return `${String(resourceCount)} ${resourceCount === 1 ? "resource" : "resources"}`;
-}
 
 function LegendSwatch({
   dash,
@@ -95,19 +90,56 @@ export function ResourceServerMap({
 
   return (
     <div className="bg-card overflow-hidden rounded-xl border">
+      {/* Assistive-tech equivalent. An aggregate aria-label on the <svg> would
+          hand AT users strictly less than the list view — which server failed,
+          why, and what each one lists all live in the drawing. SVG text is not
+          dependably navigable, so the drawing is hidden outright and the same
+          facts are restated here as real DOM structure. Keep in sync with the
+          nodes below; both read from the same layout. */}
+      <div className="sr-only">
+        <h3>
+          MCP server map for org {layout.orgName} &mdash; content language
+          &ldquo;{data.language}&rdquo;
+        </h3>
+        <p>
+          {servers.length} {servers.length === 1 ? "server" : "servers"}:{" "}
+          {okCount} listing resources, {unsupportedCount} without resource
+          listing, {errorCount} failed. {totalResources}{" "}
+          {totalResources === 1 ? "resource" : "resources"} in total.
+        </p>
+        <ul>
+          {servers.map((server) => (
+            <li key={server.serverId}>
+              {server.serverName} &mdash;{" "}
+              {serverCaption(
+                server.status,
+                server.resourceCount,
+                data.language
+              )}
+              {server.status === "error" && server.error
+                ? `. Error: ${server.error}`
+                : null}
+              {server.leaves.length > 0 && (
+                <ul>
+                  {server.leaves.map((leaf) => (
+                    <li key={leaf.slug}>
+                      {subjectLabel(leaf.slug)}: {leaf.count}{" "}
+                      {leaf.count === 1 ? "resource" : "resources"}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+
       <div className="overflow-x-auto">
         <svg
           width={layout.width}
           height={layout.height}
           viewBox={`0 0 ${String(layout.width)} ${String(layout.height)}`}
-          role="img"
-          aria-label={`MCP server map for org ${data.org}: ${String(
-            servers.length
-          )} ${servers.length === 1 ? "server" : "servers"} — ${String(
-            okCount
-          )} listing resources, ${String(
-            unsupportedCount
-          )} without resource listing, ${String(errorCount)} failed.`}
+          aria-hidden
           className="block"
         >
           {/* Org → trunk → spine, in the resources brand amber. */}
@@ -125,6 +157,9 @@ export function ResourceServerMap({
 
           {/* Org node. */}
           <g>
+            {layout.orgDisplayName !== layout.orgName && (
+              <title>{layout.orgName}</title>
+            )}
             <rect
               x={MAP.org.x}
               y={layout.orgCenterY - MAP.org.height / 2}
@@ -152,13 +187,23 @@ export function ResourceServerMap({
               fontWeight={600}
               fill="var(--foreground)"
             >
-              {data.org}
+              {layout.orgDisplayName}
             </text>
           </g>
 
           {servers.map((server) => {
             const branch = BRANCH_STROKE[server.status];
             const nodeTop = server.centerY - MAP.server.height / 2;
+            // One <title> per node, or the second would be ignored: the full
+            // name matters exactly when the drawn one was cut short, and the
+            // error detail always matters.
+            const titleParts: string[] = [];
+            if (server.displayName !== server.serverName) {
+              titleParts.push(server.serverName);
+            }
+            if (server.status === "error" && server.error) {
+              titleParts.push(server.error);
+            }
             return (
               <g key={server.serverId}>
                 {/* Branch: spine → server, stroke style encodes link health. */}
@@ -175,8 +220,8 @@ export function ResourceServerMap({
 
                 {/* Server node. */}
                 <g>
-                  {server.status === "error" && server.error && (
-                    <title>{server.error}</title>
+                  {titleParts.length > 0 && (
+                    <title>{titleParts.join(" — ")}</title>
                   )}
                   <rect
                     x={MAP.server.x}
@@ -221,7 +266,7 @@ export function ResourceServerMap({
                     }
                     fillOpacity={server.status === "error" ? 0.9 : 1}
                   >
-                    {statusCaption(
+                    {serverCaption(
                       server.status,
                       server.resourceCount,
                       data.language
