@@ -5,7 +5,6 @@ import {
   buildResourceMapLayout,
   serverCaption,
 } from "@/lib/resource-map-layout";
-import { subjectLabel } from "@/lib/resource-subjects";
 import { cn } from "@/lib/utils";
 import type {
   AggregatedResourcesResponse,
@@ -111,11 +110,13 @@ export function ResourceServerMap({
           {servers.map((server) => (
             <li key={server.serverId}>
               {server.serverName} &mdash;{" "}
-              {serverCaption(
-                server.status,
-                server.resourceCount,
-                data.language
-              )}
+              {
+                serverCaption(
+                  server.status,
+                  server.resourceCount,
+                  data.language
+                ).full
+              }
               {server.status === "error" && server.error
                 ? `. Error: ${server.error}`
                 : null}
@@ -123,7 +124,7 @@ export function ResourceServerMap({
                 <ul>
                   {server.leaves.map((leaf) => (
                     <li key={leaf.slug}>
-                      {subjectLabel(leaf.slug)}: {leaf.count}{" "}
+                      {leaf.fullLabel}: {leaf.count}{" "}
                       {leaf.count === 1 ? "resource" : "resources"}
                     </li>
                   ))}
@@ -194,12 +195,20 @@ export function ResourceServerMap({
           {servers.map((server) => {
             const branch = BRANCH_STROKE[server.status];
             const nodeTop = server.centerY - MAP.server.height / 2;
+            const caption = serverCaption(
+              server.status,
+              server.resourceCount,
+              data.language
+            );
             // One <title> per node, or the second would be ignored: the full
-            // name matters exactly when the drawn one was cut short, and the
-            // error detail always matters.
+            // name and the full caption matter exactly when the drawn forms
+            // were cut short, and the error detail always matters.
             const titleParts: string[] = [];
             if (server.displayName !== server.serverName) {
               titleParts.push(server.serverName);
+            }
+            if (caption.display !== caption.full) {
+              titleParts.push(caption.full);
             }
             if (server.status === "error" && server.error) {
               titleParts.push(server.error);
@@ -266,11 +275,7 @@ export function ResourceServerMap({
                     }
                     fillOpacity={server.status === "error" ? 0.9 : 1}
                   >
-                    {serverCaption(
-                      server.status,
-                      server.resourceCount,
-                      data.language
-                    )}
+                    {caption.display}
                   </text>
                 </g>
 
@@ -290,35 +295,43 @@ export function ResourceServerMap({
                         strokeWidth={1.25}
                         strokeLinejoin="round"
                       />
-                      <rect
-                        x={MAP.leaf.x}
-                        y={leaf.y}
-                        width={leaf.width}
-                        height={MAP.leaf.height}
-                        rx={MAP.leaf.height / 2}
-                        fill="var(--accent)"
-                        fillOpacity={0.5}
-                        stroke="var(--border)"
-                      />
-                      <text
-                        x={MAP.leaf.x + 12}
-                        y={leaf.y + 17}
-                        fontSize={11}
-                        fill="var(--foreground)"
-                        fillOpacity={0.85}
-                      >
-                        {leaf.label}
-                      </text>
-                      <text
-                        x={MAP.leaf.x + leaf.width - 12}
-                        y={leaf.y + 17}
-                        fontSize={11}
-                        textAnchor="end"
-                        fill="var(--muted-foreground)"
-                        className="tabular-nums"
-                      >
-                        {leaf.count}
-                      </text>
+                      {/* The chip gets its own group so a truncated label's
+                          <title> is scoped to the chip rather than to the
+                          elbow feeding it. Same pattern as the server node. */}
+                      <g>
+                        {leaf.label !== leaf.fullLabel && (
+                          <title>{leaf.fullLabel}</title>
+                        )}
+                        <rect
+                          x={MAP.leaf.x}
+                          y={leaf.y}
+                          width={leaf.width}
+                          height={MAP.leaf.height}
+                          rx={MAP.leaf.height / 2}
+                          fill="var(--accent)"
+                          fillOpacity={0.5}
+                          stroke="var(--border)"
+                        />
+                        <text
+                          x={MAP.leaf.x + 12}
+                          y={leaf.y + 17}
+                          fontSize={11}
+                          fill="var(--foreground)"
+                          fillOpacity={0.85}
+                        >
+                          {leaf.label}
+                        </text>
+                        <text
+                          x={MAP.leaf.x + leaf.width - 12}
+                          y={leaf.y + 17}
+                          fontSize={11}
+                          textAnchor="end"
+                          fill="var(--muted-foreground)"
+                          className="tabular-nums"
+                        >
+                          {leaf.count}
+                        </text>
+                      </g>
                     </g>
                   );
                 })}

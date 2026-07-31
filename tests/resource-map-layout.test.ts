@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAP,
   ORG_NAME_MAX_CHARS,
+  SERVER_CAPTION_MAX_CHARS,
   buildResourceMapLayout,
   serverCaption,
   truncateLabel,
@@ -177,32 +178,99 @@ describe("buildResourceMapLayout", () => {
     expect(long.width).toBeGreaterThan(short.width);
     expect(MAP.leaf.x + long.width).toBeLessThanOrEqual(MAP.width - 16);
   });
+
+  it("keeps each leaf's full label beside the truncated one, so a cut chip can be titled", () => {
+    const longSubject =
+      "an-extremely-long-subject-slug-that-keeps-going-and-going";
+    const layout = buildResourceMapLayout(
+      response([server("a")], {
+        bible: [item("a", "bible", "r1")],
+        [longSubject]: [item("a", longSubject, "r2")],
+      })
+    );
+
+    const short = layout.servers[0]!.leaves[0]!;
+    const long = layout.servers[0]!.leaves[1]!;
+    // Untruncated chips must compare equal, or every chip would draw a title.
+    expect(short.label).toBe(short.fullLabel);
+    expect(long.label).not.toBe(long.fullLabel);
+    expect(long.fullLabel).toBe(
+      "An Extremely Long Subject Slug That Keeps Going And Going"
+    );
+    expect(long.fullLabel.startsWith(long.label.slice(0, -1))).toBe(true);
+  });
 });
 
 describe("serverCaption", () => {
   it("counts what a healthy server listed", () => {
-    expect(serverCaption("ok", 3, "en")).toBe("3 resources");
-    expect(serverCaption("ok", 1, "en")).toBe("1 resource");
+    expect(serverCaption("ok", 3, "en").full).toBe("3 resources");
+    expect(serverCaption("ok", 1, "en").full).toBe("1 resource");
   });
 
   it("names the language when a healthy server listed nothing", () => {
-    expect(serverCaption("ok", 0, "sw")).toBe("nothing listed for “sw”");
+    expect(serverCaption("ok", 0, "sw").full).toBe("nothing listed for “sw”");
   });
 
   it("gives the reason alone when a degraded server contributed nothing", () => {
-    expect(serverCaption("unsupported", 0, "en")).toBe("no resource listing");
-    expect(serverCaption("error", 0, "en")).toBe("failed to respond");
+    expect(serverCaption("unsupported", 0, "en").full).toBe(
+      "no resource listing"
+    );
+    expect(serverCaption("error", 0, "en").full).toBe("failed to respond");
   });
 
   it("acknowledges items a degraded server did contribute, so the caption never reads as failed-and-empty", () => {
     // The map still draws those leaves and the footer still totals them —
     // a bare "failed to respond" next to two visible leaves is a lie.
-    expect(serverCaption("error", 2, "en")).toBe(
+    expect(serverCaption("error", 2, "en").full).toBe(
       "failed to respond — 2 resources shown"
     );
-    expect(serverCaption("unsupported", 1, "en")).toBe(
+    expect(serverCaption("unsupported", 1, "en").full).toBe(
       "no resource listing — 1 resource shown"
     );
+  });
+});
+
+describe("serverCaption fits the fixed-width server node", () => {
+  it("leaves a caption that already fits alone", () => {
+    const caption = serverCaption("ok", 12, "en");
+    expect(caption.full).toBe("12 resources");
+    expect(caption.full.length).toBeLessThanOrEqual(SERVER_CAPTION_MAX_CHARS);
+    // Equal forms are what tells the renderer not to draw a <title>.
+    expect(caption.display).toBe(caption.full);
+  });
+
+  it("bounds the degraded-with-count caption and keeps the full text", () => {
+    const caption = serverCaption("error", 128, "en");
+    expect(caption.full).toBe("failed to respond — 128 resources shown");
+    expect(caption.full.length).toBeGreaterThan(SERVER_CAPTION_MAX_CHARS);
+    expect(caption.display).toHaveLength(SERVER_CAPTION_MAX_CHARS);
+    expect(caption.display.endsWith("…")).toBe(true);
+    // The drawn form is a genuine prefix of the full one, ellipsis aside.
+    expect(caption.full.startsWith(caption.display.slice(0, -1))).toBe(true);
+  });
+
+  it("cuts a free-text language tag inside the quotes, not the sentence around it", () => {
+    // The Resources filter takes a free IETF code, so arbitrary user text is
+    // interpolated straight into this caption.
+    const tag = "zh-Hant-TW-x-a-very-long-private-use-tag";
+    const caption = serverCaption("ok", 0, tag);
+    expect(caption.full).toBe(`nothing listed for “${tag}”`);
+    expect(caption.display.length).toBeLessThanOrEqual(
+      SERVER_CAPTION_MAX_CHARS
+    );
+    // What happened survives, and so does the closing quote — a tail cut of
+    // the whole caption would have eaten both.
+    expect(caption.display.startsWith("nothing listed for “")).toBe(true);
+    expect(caption.display.endsWith("”")).toBe(true);
+    expect(caption.display).toContain("…");
+  });
+
+  it("never lets a pathological tag outgrow the budget", () => {
+    const caption = serverCaption("ok", 0, "x".repeat(500));
+    expect(caption.display.length).toBeLessThanOrEqual(
+      SERVER_CAPTION_MAX_CHARS
+    );
+    expect(caption.full).toHaveLength("nothing listed for “”".length + 500);
   });
 });
 
