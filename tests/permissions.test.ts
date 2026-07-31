@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  mirrorBootstrapGrant,
   mirrorModeGrant,
   effectiveLanguageEditRights,
   effectiveLanguagePublishRights,
@@ -398,100 +397,10 @@ describe("renameSlugInRights (#240 client mirror)", () => {
   });
 });
 
-// #247 / #256 rds 2-3 — local mirror of the worker's bootstrap
-// auto-grant, driven strictly by the worker's X-Bootstrap-Grant wire
-// signal (no client-side inference — every inference variant broke
-// under some rights shape: session skew, published:true creates).
-// These tests pin that the mirror reproduces exactly what the
-// server-side grant wrote for each shape.
-
-describe("mirrorBootstrapGrant", () => {
-  it("mirrors both verbs (explicit empty rights)", () => {
-    expect(
-      mirrorBootstrapGrant(
-        { language_edit_rights: [], language_publish_rights: [] },
-        "sw"
-      )
-    ).toEqual({
-      language_edit_rights: ["sw"],
-      language_publish_rights: ["sw"],
-    });
-  });
-
-  it("full-access fields pass through untouched (server grant no-ops too)", () => {
-    expect(
-      mirrorBootstrapGrant(
-        { language_edit_rights: "*", language_publish_rights: "*" },
-        "sw"
-      )
-    ).toEqual({ language_edit_rights: "*", language_publish_rights: "*" });
-    // Legacy full-access user (all fields unset) → stays unset.
-    expect(mirrorBootstrapGrant({}, "sw")).toEqual({
-      language_edit_rights: undefined,
-      language_publish_rights: undefined,
-    });
-  });
-
-  it("idempotent when a verb already names the slug", () => {
-    expect(
-      mirrorBootstrapGrant(
-        { language_edit_rights: ["sw"], language_publish_rights: [] },
-        "sw"
-      )
-    ).toEqual({
-      language_edit_rights: ["sw"],
-      language_publish_rights: ["sw"],
-    });
-  });
-
-  it("split wildcard: edit [] + publish '*' → edit gains the slug, wildcard untouched", () => {
-    expect(
-      mirrorBootstrapGrant(
-        { language_edit_rights: [], language_publish_rights: "*" },
-        "sw"
-      )
-    ).toEqual({ language_edit_rights: ["sw"], language_publish_rights: "*" });
-  });
-
-  it("partner-deny shape: publish explicit, edit unset → edit materializes [slug], not legacy", () => {
-    expect(
-      mirrorBootstrapGrant(
-        { language_rights: ["x"], language_publish_rights: ["x"] },
-        "sw"
-      )
-    ).toEqual({
-      language_rights: ["x"],
-      language_edit_rights: ["sw"],
-      language_publish_rights: ["x", "sw"],
-    });
-  });
-
-  it("restricted legacy-only user → both verbs materialize legacy + slug (matches server grant)", () => {
-    expect(mirrorBootstrapGrant({ language_rights: ["en"] }, "sw")).toEqual({
-      language_rights: ["en"],
-      language_edit_rights: ["en", "sw"],
-      language_publish_rights: ["en", "sw"],
-    });
-  });
-
-  it("preserves unrelated fields and does not mutate the input", () => {
-    const user = {
-      email: "a@acme.com",
-      isAdmin: true,
-      language_edit_rights: [] as string[],
-      language_publish_rights: [] as string[],
-    };
-    expect(mirrorBootstrapGrant(user, "sw")).toMatchObject({
-      email: "a@acme.com",
-      isAdmin: true,
-    });
-    expect(user.language_edit_rights).toEqual([]);
-  });
-});
-
 // #257 — local mirror of the worker's clone auto-grant, driven strictly
-// by the X-Bootstrap-Grant wire signal (no inference — see
-// mirrorBootstrapGrant above for the history).
+// by the X-Bootstrap-Grant wire signal. No client-side inference: every
+// inference variant broke under some rights shape (session skew,
+// published:true creates — #256 rds 2-3).
 
 describe("mirrorModeGrant", () => {
   it("adds the slug to both verb fields when includePublish, materializing unset fields as [slug]", () => {

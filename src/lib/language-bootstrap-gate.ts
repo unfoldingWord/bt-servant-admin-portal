@@ -48,11 +48,11 @@ interface Args extends CrossOrgArgs {
 // `targetOrg`. Mirrors the Languages page's `canCreate` gate:
 //   - Cross-org super-admin: bypasses per-row rights via worker's PR A
 //     carve-out (#166).
-//   - Same-org admins: always — the worker's bootstrap carve-out lets
-//     them create drafts that don't exist yet (and auto-grants both
-//     verbs). Added with the carve-out itself (#256 rd-2 F4: this gate
-//     had drifted from the page's canCreate, hiding the empty-drafts
-//     CTA from exactly the zero-rights-admin population #247 unblocks).
+//   - Same-org admins: always — the worker's admin trump (#249) covers
+//     every language write, creation included, so a zero-rights admin
+//     can still start an org's catalog. (#256 rd-2 F4: this gate had
+//     drifted from the page's canCreate, hiding the empty-drafts CTA
+//     from exactly the zero-rights-admin population #247 unblocks.)
 //   - Everyone else: needs some effective `language_edit_rights` —
 //     undefined counts as legacy full access, [] doesn't.
 export function canBootstrapLanguage({
