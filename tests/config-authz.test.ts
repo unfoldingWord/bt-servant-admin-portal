@@ -281,6 +281,7 @@ function spyFetchWithCurrent(
     label?: string;
     description?: string;
     published?: boolean;
+    requires_group?: boolean;
   } | null
 ) {
   let callCount = 0;
@@ -927,6 +928,149 @@ function findEnginePost(
   );
   return call ? [String(call[0]), call[1] as RequestInit] : undefined;
 }
+
+describe("config authz — #209 requires_group is edit-gated", () => {
+  it("publish-only shepherd flipping ONLY requires_group → 403 (no engine write)", async () => {
+    // The load-bearing case. This caller clears the early-deny (they hold
+    // publish on the row) and the body changes nothing the pre-fix gate
+    // modelled, so the diff computed [] and the PUT sailed through to the
+    // engine — group-visibility flipped without edit rights.
+    const fetchSpy = spyFetchWithCurrent("mode", {
+      document: "## same\n",
+      published: false,
+      requires_group: false,
+    });
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/modes/spoken", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: "## same\n",
+          published: false,
+          requires_group: true,
+        }),
+      }),
+      env,
+      makeSession({
+        mode_edit_rights: [],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken"
+    );
+    expect(res.status).toBe(403);
+    // Only the gate's current-state read — the proxy never ran.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("publish-only shepherd flipping requires_group on a legacy row (field omitted) → 403", async () => {
+    // Same denial when the stored row predates #209, so the coercion
+    // can't be used as a bypass in the other direction.
+    const fetchSpy = spyFetchWithCurrent("mode", {
+      document: "## same\n",
+      published: false,
+    });
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/modes/spoken", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: "## same\n",
+          published: false,
+          requires_group: true,
+        }),
+      }),
+      env,
+      makeSession({
+        mode_edit_rights: [],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken"
+    );
+    expect(res.status).toBe(403);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("edit-rights shepherd flipping requires_group → 200 (proxied)", async () => {
+    const fetchSpy = spyFetchWithCurrent("mode", {
+      document: "## same\n",
+      published: false,
+      requires_group: false,
+    });
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/modes/spoken", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: "## same\n",
+          published: false,
+          requires_group: true,
+        }),
+      }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: [],
+      }),
+      "/api/config/modes/spoken"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const init = fetchSpy.mock.calls[1]![1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      requires_group: true,
+    });
+  });
+
+  it("publish-only shepherd publishing while re-asserting an UNCHANGED requires_group → 200", async () => {
+    // The regression this fix must not cause: the portal sends the flag
+    // pair on every PUT, so an explicit `requires_group: false` against a
+    // legacy row (field omitted) must NOT demand edit — otherwise every
+    // publish and every autosave by a single-verb shepherd starts 403ing.
+    const fetchSpy = spyFetchWithCurrent("mode", {
+      document: "## same\n",
+      published: false,
+    });
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/modes/spoken", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: "## same\n",
+          published: true,
+          requires_group: false,
+        }),
+      }),
+      env,
+      makeSession({
+        mode_edit_rights: [],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("admin flipping requires_group → 200 (admin trump, no diff)", async () => {
+    const fetchSpy = spyFetch();
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/modes/spoken", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: "## same\n",
+          published: false,
+          requires_group: true,
+        }),
+      }),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("config authz — #232 mode rename (_rename)", () => {
   it("admin → proxies POST to engine _rename path", async () => {
@@ -2650,6 +2794,77 @@ describe("config authz — #181 verb diff (pure function)", () => {
       computeRequiredVerbsForPut(
         { document: "## same\n", description: "New", published: false },
         { document: "## same\n", description: "Old", published: false }
+      )
+    ).toEqual(["edit"]);
+  });
+
+  it("#209 update changing only requires_group → ['edit']", () => {
+    // The flag is mode configuration, gated on the same verb as the
+    // document. Pre-fix this returned [] and any caller past the
+    // early-deny could flip group-visibility for free.
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", published: false, requires_group: true },
+        { document: "## same\n", published: false, requires_group: false }
+      )
+    ).toEqual(["edit"]);
+  });
+
+  it("#209 unchanged requires_group against a row that OMITS the field → []", () => {
+    // The coercion case. Mode rows predating #209 have no
+    // `requires_group` key, and the portal re-asserts the flag pair on
+    // every PUT — without `current?.requires_group ?? false`, every
+    // ordinary autosave against a legacy row would demand edit.
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", published: false, requires_group: false },
+        { document: "## same\n", published: false }
+      )
+    ).toEqual([]);
+  });
+
+  it("#209 setting requires_group on a row that omits the field → ['edit']", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", published: false, requires_group: true },
+        { document: "## same\n", published: false }
+      )
+    ).toEqual(["edit"]);
+  });
+
+  it("#209 requires_group flip + publish flip → ['edit', 'publish']", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", published: true, requires_group: true },
+        { document: "## same\n", published: false, requires_group: false }
+      )
+    ).toEqual(["edit", "publish"]);
+  });
+
+  it("#209 creation with requires_group: true and no document → ['edit']", () => {
+    // The only shape where the create arm changes observable behavior:
+    // an ordinary create carries a `document`, which already demands
+    // edit on its own (see the case below).
+    expect(computeRequiredVerbsForPut({ requires_group: true }, null)).toEqual([
+      "edit",
+    ]);
+  });
+
+  it("#209 creation with requires_group: false and no document → [] (default state isn't a change)", () => {
+    expect(computeRequiredVerbsForPut({ requires_group: false }, null)).toEqual(
+      []
+    );
+  });
+
+  it("#209 creation with document + requires_group: false → ['edit'] (unchanged from pre-#209)", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        {
+          document: "# brand new\n",
+          published: false,
+          requires_group: false,
+        },
+        null
       )
     ).toEqual(["edit"]);
   });

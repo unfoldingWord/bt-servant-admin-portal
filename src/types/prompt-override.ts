@@ -60,6 +60,14 @@ export interface PromptMode {
   // that on the wire by only sending the key when there are entries, and
   // guard reads with `aliases?.length`.
   aliases?: string[];
+  // Group-only gate (#209, worker #270): when true the worker hides the
+  // mode from `list_modes` and the `#`-trigger in non-group chats
+  // (WhatsApp, web, Telegram DMs). Absent and false are semantically
+  // identical (mode visible everywhere). Worker merge carries the stored
+  // value through when the key is omitted on PUT (same rule as
+  // `published`), so the portal always sends the boolean explicitly on
+  // save — an omitted key could never turn the flag off.
+  requires_group?: boolean;
 }
 
 export interface OrgModes {

@@ -144,6 +144,7 @@ export async function putMode(
     description?: string;
     document: string;
     published?: boolean;
+    requires_group?: boolean;
   },
   signal?: AbortSignal,
   org?: string | null

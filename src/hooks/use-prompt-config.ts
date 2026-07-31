@@ -85,6 +85,7 @@ export function useSaveMode(org?: string | null) {
         description?: string;
         document: string;
         published?: boolean;
+        requires_group?: boolean;
       };
     }) => configApi.putMode(name, body, undefined, key),
     onSuccess: (_data, { name }) => {
