@@ -410,6 +410,19 @@ export function ModesPage() {
     setPriorityApplyError(null);
   }, [selectedMode]);
 
+  // The apply error is a claim about ONE document — the failed apply's
+  // `nextDocument`, which is exactly what `lastFailedDoc` holds after the
+  // catch below. The moment the draft diverges from it (the user edited away
+  // or undid the ranking, or any save landed and cleared `lastFailedDoc`),
+  // the banner's "your ranking is still here, apply again" story is false —
+  // retire it. This is the recovery path the per-save clears can't see:
+  // divergence without a save.
+  useEffect(() => {
+    if (priorityApplyError !== null && draft !== lastFailedDoc) {
+      setPriorityApplyError(null);
+    }
+  }, [draft, lastFailedDoc, priorityApplyError]);
+
   // #260 — post-rename display-name sync prompt. Holds the rename
   // response (server truth for label/description/document/published) so
   // the follow-up label PUT never depends on refetch timing. Null =
@@ -652,28 +665,36 @@ export function ModesPage() {
           setLastSyncedDoc(nextDocument);
           setLastFailedDoc(null);
           applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+          // Also retires the error a second Apply click recorded after this
+          // attempt cleared it (the lost-the-in-flight-race case is same-mode
+          // by construction, so the ownership guard keeps it covered). Then
+          // close — but only on success: a failed save keeps the panel open
+          // with the user's ordering intact and the failure reported inside
+          // the sheet. Both stay ownership-gated so a save that outlives the
+          // selection can't close (or repaint) a panel now showing another
+          // mode; the selection-change effect already reset panel state.
+          setPriorityApplyError(null);
+          setPrioritiesOpen(false);
         }
-        // Unconditional: a second Apply click that lost the in-flight race
-        // recorded an error AFTER this attempt cleared it, and this success
-        // retires that too — reopening must not show a stale failure.
-        setPriorityApplyError(null);
-        // Close only on success — a failed save keeps the panel open with the
-        // user's ordering intact and the failure reported inside the sheet.
-        setPrioritiesOpen(false);
       } catch (err) {
         // Unlike the flag toggles, this path CHANGED the draft. Without
         // marking the failed document, the autosave effect would re-fire it
         // on every isPending → false transition (the loop Frank flagged on
         // PR #122). The user recovers with Apply again, Save, or by editing.
-        if (trackersOwn(target)) setLastFailedDoc(nextDocument);
-        // Recorded rather than rethrown: the promise contract with the panel
-        // is that it never rejects, so the error survives the sheet
-        // unmounting on close instead of dying with the panel's state.
-        setPriorityApplyError(
-          err instanceof Error && err.message
-            ? err.message
-            : "The ranking could not be saved."
-        );
+        if (trackersOwn(target)) {
+          setLastFailedDoc(nextDocument);
+          // Recorded rather than rethrown: the promise contract with the
+          // panel is that it never rejects, so the error survives the sheet
+          // unmounting on close instead of dying with the panel's state.
+          // Ownership-gated like every other write here — a failure from a
+          // save that outlived the selection must not be pinned on whatever
+          // mode the panel would now be showing.
+          setPriorityApplyError(
+            err instanceof Error && err.message
+              ? err.message
+              : "The ranking could not be saved."
+          );
+        }
       } finally {
         inFlightSavesRef.current -= 1;
       }
@@ -1016,7 +1037,7 @@ export function ModesPage() {
                 size="sm"
                 variant="outline"
                 onClick={() => setPrioritiesOpen(true)}
-                disabled={!canEditSelected}
+                disabled={!canEditSelected || isSaving}
                 title={resourcePrioritiesHelp}
                 aria-describedby="mode-resource-priorities-help"
               >
@@ -1281,7 +1302,13 @@ export function ModesPage() {
           where the user is. */}
       <ResourcePriorityPanel
         open={prioritiesOpen}
-        onOpenChange={setPrioritiesOpen}
+        onOpenChange={(open) => {
+          // The footer disables Cancel while a save is in flight, and Escape /
+          // overlay-click must keep the same promise — dismissing mid-PUT
+          // would unmount the panel's busy state while the save runs on.
+          if (!open && isSaving) return;
+          setPrioritiesOpen(open);
+        }}
         document={draft}
         canEdit={canEditSelected}
         isSaving={isSaving}
