@@ -637,12 +637,13 @@ export function ModesPage() {
   const handleApplyResourcePriorities = useCallback(
     async (nextDocument: string) => {
       if (!selectedMode) return;
-      if (inFlightSavesRef.current > 0 || saveMode.isPending) {
-        setPriorityApplyError(
-          "Another save is in flight. Try again in a moment."
-        );
-        return;
-      }
+      // Symmetry with flushSave: the button and the panel are already
+      // rights-gated, but the worker's gate deserves a local mirror.
+      if (!canEditSelected) return;
+      // Silent: the panel's controls are busy-disabled while a save is in
+      // flight, and an error here is about no document in particular — the
+      // draft-divergence effect below would clear it on the next paint anyway.
+      if (inFlightSavesRef.current > 0 || saveMode.isPending) return;
       const target = selectedMode;
       const sent = lastSyncedFlagsRef.current;
       // Show the edit immediately; the flush below is what persists it. On
@@ -701,6 +702,7 @@ export function ModesPage() {
     },
     [
       applyLastSyncedFlags,
+      canEditSelected,
       saveMode,
       selectedMode,
       serverDescription,

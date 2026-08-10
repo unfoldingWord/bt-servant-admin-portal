@@ -93,6 +93,9 @@ export function ResourcePriorityPanel(props: ResourcePriorityPanelProps) {
       <SheetContent
         className="w-full gap-0 border-l-[3px] p-0 sm:max-w-xl"
         style={{ borderLeftColor: "var(--brand-modes)" }}
+        // The page refuses dismissal mid-save; hide the chrome X in that
+        // window so nothing on screen merely LOOKS dismissible.
+        showCloseButton={!props.isSaving}
       >
         {/* Radix unmounts this subtree when closed, which is exactly what keeps
             the resources query from running on every Modes page load — and what
