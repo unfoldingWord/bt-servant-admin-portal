@@ -43,8 +43,12 @@ const PRIORITY_BLOCK_PROSE = [
 const MISSING_FROM_LIVE_SUFFIX = "not currently listed";
 
 // The machine-readable half of the block. The prose list is disposable — this
-// line is the only thing parse-back reads.
-const ORDER_COMMENT_RE = /<!--\s*order:\s*(\[[\s\S]*?\])\s*-->/;
+// line is the only thing parse-back reads. Emission is always a single line,
+// so the parse is line-anchored with a GREEDY capture to the line's last `]`:
+// a lazy match would stop at the first `]` inside an id (JSON.stringify emits
+// `["aquifer:Notes]"]` for an id containing one) and misreport a well-formed
+// block as corrupt — inviting the user to "repair" away a healthy ranking.
+const ORDER_COMMENT_RE = /^<!--\s*order:\s*(\[.*\])\s*-->[ \t\r]*$/m;
 
 /** One live resource, flattened out of the aggregated by-subject response. */
 export interface PriorityEntry {

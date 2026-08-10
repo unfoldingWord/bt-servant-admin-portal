@@ -280,6 +280,10 @@ export function ModesPage() {
             if (!trackersOwn(target)) return;
             setLastSyncedDoc(doc);
             setLastFailedDoc(null);
+            // Any successful document sync retires a stale priority-apply
+            // failure — the draft it complained about is now persisted, and a
+            // reopened panel must not claim otherwise.
+            setPriorityApplyError(null);
             applyLastSyncedFlags(reconcileModeFlags(sent, saved));
           },
           onError: () => {
@@ -396,10 +400,13 @@ export function ModesPage() {
     null
   );
 
-  // A stale apply failure is about another mode's draft the moment the
-  // selection moves; that mode's unsaved state is already reported by the
-  // ordinary save-status machinery.
+  // A stale apply failure — and an open panel — are about another mode's
+  // draft the moment the selection moves (rights revocation and org-context
+  // switches clear the selection out from under the modal sheet). Close both;
+  // the prior mode's unsaved state is already reported by the ordinary
+  // save-status machinery.
   useEffect(() => {
+    setPrioritiesOpen(false);
     setPriorityApplyError(null);
   }, [selectedMode]);
 
@@ -540,6 +547,7 @@ export function ModesPage() {
         });
         if (!trackersOwn(name)) return;
         setLastSyncedDoc(draft);
+        setPriorityApplyError(null);
         applyLastSyncedFlags(reconcileModeFlags(sent, saved));
       } finally {
         inFlightSavesRef.current -= 1;
@@ -588,6 +596,7 @@ export function ModesPage() {
         });
         if (!trackersOwn(target)) return;
         setLastSyncedDoc(draft);
+        setPriorityApplyError(null);
         applyLastSyncedFlags(reconcileModeFlags(sent, saved));
       } finally {
         inFlightSavesRef.current -= 1;
@@ -644,6 +653,10 @@ export function ModesPage() {
           setLastFailedDoc(null);
           applyLastSyncedFlags(reconcileModeFlags(sent, saved));
         }
+        // Unconditional: a second Apply click that lost the in-flight race
+        // recorded an error AFTER this attempt cleared it, and this success
+        // retires that too — reopening must not show a stale failure.
+        setPriorityApplyError(null);
         // Close only on success — a failed save keeps the panel open with the
         // user's ordering intact and the failure reported inside the sheet.
         setPrioritiesOpen(false);

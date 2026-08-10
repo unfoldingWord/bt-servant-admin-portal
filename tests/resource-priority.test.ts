@@ -714,6 +714,36 @@ describe("mergeOrderWithLive with recovered descriptions", () => {
   });
 });
 
+describe("order parse with hostile ids", () => {
+  it("round-trips an id containing a closing bracket", () => {
+    // JSON.stringify emits `["aquifer:Notes]"]` — a lazy regex would capture
+    // through the FIRST `]`, misreport the block as corrupt, and invite the
+    // user to "repair" away a healthy ranking.
+    const bracketed = entry("aquifer:Notes]", "Notes", "aquifer");
+    const ids = [bracketed.id, ULT.id];
+    const block = generatePriorityBlock(ids, byId([bracketed, ULT]));
+    const doc = splicePriorityBlock(MODE_DOCUMENT_SCAFFOLD, block);
+    expect(parsePriorityOrder(doc)).toEqual(ids);
+  });
+
+  it("round-trips an id containing a quote", () => {
+    const quoted = entry('aquifer:"Notes"', "Notes", "aquifer");
+    const block = generatePriorityBlock([quoted.id], byId([quoted]));
+    const doc = splicePriorityBlock(MODE_DOCUMENT_SCAFFOLD, block);
+    expect(parsePriorityOrder(doc)).toEqual([quoted.id]);
+  });
+
+  it("round-trips in a CRLF document", () => {
+    const bracketed = entry("aquifer:Notes]", "Notes", "aquifer");
+    const block = generatePriorityBlock([bracketed.id], byId([bracketed]));
+    const doc = splicePriorityBlock(
+      MODE_DOCUMENT_SCAFFOLD.replace(/\n/g, "\r\n"),
+      block
+    );
+    expect(parsePriorityOrder(doc)).toEqual([bracketed.id]);
+  });
+});
+
 describe("orphan repair vs hand-written lists", () => {
   it("does not absorb a hand-written numbered list sitting directly under a leftover marker", () => {
     // A user who deleted everything generated EXCEPT the marker, then wrote
