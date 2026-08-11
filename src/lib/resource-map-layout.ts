@@ -5,7 +5,13 @@
 // output. No diagram library — the topology is small and fixed-shape
 // (org → servers → subject leaves), so hand-rolled elbows beat a dependency.
 
+import {
+  buildServerNameMap,
+  collapseDisplayText,
+  resolveServerName,
+} from "@/lib/resource-servers";
 import { subjectLabel } from "@/lib/resource-subjects";
+import { displayColumns, truncateLabel } from "@/lib/truncate";
 import type {
   AggregatedResourcesResponse,
   ResourceServerStatus,
@@ -101,12 +107,6 @@ export interface ResourceMapLayout {
   servers: ResourceMapServer[];
 }
 
-/** Ellipsis-truncate to at most `max` characters (including the ellipsis). */
-export function truncateLabel(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
-}
-
 /** The two forms of a server-node caption. */
 export interface ServerCaption {
   /** Untruncated — the sr-only tree and the node <title> carry this. */
@@ -121,10 +121,15 @@ function quoteLanguage(tag: string): string {
   return `${EMPTY_CAPTION_PREFIX}“${tag}”`;
 }
 
-/** What the tag itself may spend once the prose and quotes are paid for. */
+/**
+ * What the tag itself may spend once the prose and quotes are paid for. The
+ * surrounding prose is fixed narrow text, so this is the same number either
+ * way — but it is a column budget being subtracted from a column budget, and
+ * measuring it as one keeps that true if the prose ever changes.
+ */
 const LANGUAGE_TAG_MAX_CHARS = Math.max(
   1,
-  SERVER_CAPTION_MAX_CHARS - quoteLanguage("").length
+  SERVER_CAPTION_MAX_CHARS - displayColumns(quoteLanguage(""))
 );
 
 function bounded(full: string): ServerCaption {
@@ -170,10 +175,15 @@ export function serverCaption(
   return bounded(counted);
 }
 
+// Measured in display columns, the same budget truncateLabel cuts to — so the
+// width computed here and the length the label was cut to agree. Counting code
+// points instead would size an emoji label at half its ink and overflow the
+// node; counting UTF-16 units would misjudge it the other way for anything
+// else astral.
 function leafWidth(label: string, count: number): number {
   const raw =
     LEAF_PAD_X * 2 +
-    label.length * LEAF_CHAR_W +
+    displayColumns(label) * LEAF_CHAR_W +
     LEAF_COUNT_GAP +
     String(count).length * COUNT_CHAR_W;
   return Math.min(Math.ceil(raw), MAX_LEAF_WIDTH);
@@ -191,6 +201,11 @@ export function buildResourceMapLayout(
   data: AggregatedResourcesResponse
 ): ResourceMapLayout {
   const subjectEntries = Object.entries(data.resources);
+  // Same attribution join the list page and the priority panel use, so a
+  // blank or whitespace-only serverName degrades to the server id here too
+  // rather than labelling a node with an empty string, and untrusted control
+  // characters are collapsed before they reach the sr-only tree or a <title>.
+  const serverNames = buildServerNameMap(data.servers);
 
   let y = MAP.padY;
   const servers: ResourceMapServer[] = data.servers.map((server) => {
@@ -224,12 +239,19 @@ export function buildResourceMapLayout(
 
     y += height + MAP.blockGap;
 
+    const resolvedName = resolveServerName(server.serverId, serverNames);
+
     return {
       serverId: server.serverId,
-      serverName: server.serverName,
-      displayName: truncateLabel(server.serverName, SERVER_NAME_MAX_CHARS),
+      serverName: resolvedName,
+      displayName: truncateLabel(resolvedName, SERVER_NAME_MAX_CHARS),
       status: server.status,
-      error: server.error,
+      // Same untrusted class as serverName, and it lands in the sr-only tree
+      // and a node <title> verbatim — so it gets the same single-line collapse.
+      error:
+        server.error === undefined
+          ? undefined
+          : collapseDisplayText(server.error),
       top,
       height,
       centerY: top + height / 2,

@@ -15,6 +15,10 @@ import {
   splicePriorityBlock,
 } from "../src/lib/resource-priority";
 import type { PriorityEntry } from "../src/lib/resource-priority";
+import {
+  buildServerNameMap,
+  resolveServerName,
+} from "../src/lib/resource-servers";
 import type {
   AggregatedResourcesResponse,
   ResourceItem,
@@ -27,7 +31,14 @@ function entry(
   serverName: string,
   subjectLabelText = "Bible Translations"
 ): PriorityEntry {
-  return { id, label, serverName, subjectLabelText };
+  // Ids are `serverId:name`, so the id's prefix is the natural serverId here.
+  return {
+    id,
+    label,
+    serverId: id.split(":")[0] ?? "",
+    serverName,
+    subjectLabelText,
+  };
 }
 
 function byId(entries: PriorityEntry[]): Map<string, PriorityEntry> {
@@ -544,6 +555,112 @@ describe("buildPriorityEntries", () => {
     expect(entries[0]!.serverName).toBe("orphan");
   });
 
+  it("carries serverId so the panel can run its own display join", () => {
+    // Without this the panel would have to split the `serverId:name` id, which
+    // misparses any resource name containing a colon.
+    const entries = buildPriorityEntries(
+      response([server("aquifer", "Aquifer")], {
+        bible: [item("aquifer", "Notes:2024", "bible")],
+      })
+    );
+
+    expect(entries[0]!.serverId).toBe("aquifer");
+    expect(entries[0]!.id).toBe("aquifer:Notes:2024");
+  });
+
+  it("passes a blank server name through verbatim rather than substituting the id", () => {
+    // Emission is FROZEN: this join is raw on purpose, and its `??` fallback
+    // only catches a MISSING server, not a blank name. The display resolution
+    // in lib/resource-servers would substitute the id here — deliberately not
+    // shared, because changing these bytes would enable Apply (a whole-document
+    // PUT) on existing documents with no ranking intent behind it.
+    const entries = buildPriorityEntries(
+      response([server("aquifer", "  ")], {
+        bible: [item("aquifer", "x", "bible")],
+      })
+    );
+    expect(entries[0]!.serverName).toBe("  ");
+  });
+
+  it("relies on sanitizePromptText, not the entry join, to keep a name on one line", () => {
+    // The raw name reaches the entry untouched; the emission hardening happens
+    // where the block is generated, so a newline can never break the ranked
+    // list even though nothing collapsed it upstream.
+    const entries = buildPriorityEntries(
+      response([server("aquifer", "Aquifer\nMCP")], {
+        bible: [item("aquifer", "x", "bible")],
+      })
+    );
+    expect(entries[0]!.serverName).toBe("Aquifer\nMCP");
+
+    const block = generatePriorityBlock(
+      entries.map((e) => e.id),
+      byId(entries)
+    );
+    expect(block).toContain("Aquifer MCP");
+    expect(block).not.toContain("Aquifer\nMCP");
+    // One ranked line, not two — the newline did not smuggle in a list entry.
+    expect(block.split("\n").filter((l) => /^\d+\.\s/.test(l))).toHaveLength(1);
+  });
+
+  it("regenerates a stored block byte-identically with no apply in between", () => {
+    // The anti-regression guard for the emission freeze. Apply PUTs the whole
+    // mode document, so the regenerated block MUST equal the stored one on a
+    // plain open — otherwise the panel offers a save nobody asked for, which
+    // would also persist any unrelated unsaved draft edits.
+    //
+    // The fixture is chosen to be exactly what display hardening would have
+    // rewritten: a tab-bearing name and a blank name. Route either through the
+    // display resolution and this test fails.
+    const live = buildPriorityEntries(
+      response(
+        [
+          server("th", "Translation\tHelps"),
+          server("aquifer", "  "),
+          server("fia", "FIA"),
+        ],
+        {
+          bible: [
+            item("th", "en_ult", "bible"),
+            item("aquifer", "NIV", "bible"),
+          ],
+          "study-notes": [item("fia", "Notes", "study-notes")],
+        }
+      )
+    );
+    const lookup = byId(live);
+    const ids = live.map((e) => e.id);
+
+    // The block as a v1.11.0 portal wrote it, sitting in a saved document.
+    const stored = generatePriorityBlock(ids, lookup);
+    const document = splicePriorityBlock(
+      "## Tool Guidance\n\nUse the tools well.\n",
+      stored
+    );
+
+    // Opening the panel: read the order back and regenerate from live data.
+    const reparsed = parsePriorityOrder(document);
+    expect(reparsed).toEqual(ids);
+
+    const regenerated = generatePriorityBlock(
+      reparsed as string[],
+      lookup,
+      parsePriorityDescriptions(document)
+    );
+    expect(regenerated).toBe(stored);
+
+    // Which is what makes `unchanged` true in the panel, keeping Apply
+    // disabled: splicing the regenerated block back is a no-op.
+    expect(splicePriorityBlock(document, regenerated)).toBe(document);
+
+    // The raw names survived into the emitted text: the tab is still a tab
+    // (sanitizePromptText collapses newlines, not tabs) and the blank name
+    // still emits empty attribution rather than the server id. Route either
+    // through the display resolution and both of these flip.
+    expect(stored).toContain("Translation\tHelps");
+    expect(stored).toContain("2. NIV — (Bible Translations)");
+  });
+
   it("keeps the first occurrence when an id surfaces under two subjects", () => {
     const entries = buildPriorityEntries(
       response([server("a", "A")], {
@@ -554,6 +671,43 @@ describe("buildPriorityEntries", () => {
     expect(entries.map((e) => e.subjectLabelText)).toEqual([
       "Bible Translations",
     ]);
+  });
+});
+
+// The panel's rows are the highest-traffic consumer of server attribution, and
+// they must show what every other surface shows WITHOUT perturbing the bytes
+// the same entries emit. This pins both halves of that split at once.
+describe("panel row display join vs emission", () => {
+  const data = response(
+    [server("th", "Translation\tHelps"), server("aquifer", "   ")],
+    {
+      bible: [item("th", "en_ult", "bible"), item("aquifer", "NIV", "bible")],
+    }
+  );
+
+  it("renders collapsed and id-fallback attribution in the row path", () => {
+    // Exactly what RowIdentity composes.
+    const entries = buildPriorityEntries(data);
+    const names = buildServerNameMap(data.servers);
+
+    expect(resolveServerName(entries[0]!.serverId, names)).toBe(
+      "Translation Helps"
+    );
+    expect(resolveServerName(entries[1]!.serverId, names)).toBe("aquifer");
+  });
+
+  it("keeps the raw form on the entries and in the emitted block", () => {
+    const entries = buildPriorityEntries(data);
+
+    expect(entries[0]!.serverName).toBe("Translation\tHelps");
+    expect(entries[1]!.serverName).toBe("   ");
+
+    const block = generatePriorityBlock(
+      entries.map((e) => e.id),
+      byId(entries)
+    );
+    expect(block).toContain("Translation\tHelps");
+    expect(block).toContain("2. NIV — (Bible Translations)");
   });
 });
 

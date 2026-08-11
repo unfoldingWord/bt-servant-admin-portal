@@ -56,6 +56,13 @@ export interface PriorityEntry {
   id: string;
   /** `label ?? name` — what a human recognizes the resource by. */
   label: string;
+  /**
+   * Attribution id, carried so the panel can run its own DISPLAY-side join
+   * (lib/resource-servers) without re-deriving it from the `serverId:name`
+   * composite — which would misparse any resource name containing a colon.
+   */
+  serverId: string;
+  /** RAW name from the status block — emission input. See the note below. */
   serverName: string;
   /** Display form of the (open-set) subject slug. */
   subjectLabelText: string;
@@ -135,6 +142,23 @@ export function sanitizePromptText(text: string): string {
 export function buildPriorityEntries(
   response: AggregatedResourcesResponse
 ): PriorityEntry[] {
+  // A RAW join, deliberately not the display resolution in lib/resource-servers
+  // — including its `?? ` (not `||`) fallback, which leaves a blank serverName
+  // as the empty string rather than substituting the id.
+  //
+  // This value reaches the mode document through `describeEntry`, and Apply
+  // PUTs the WHOLE document (see handleApplyResourcePriorities in
+  // app/pages/modes.tsx). So any change to these bytes would make the
+  // regenerated block differ from the stored one for existing documents,
+  // enabling Apply with no ranking intent behind it: a user opening the panel
+  // to look would be offered a save that silently rewrites names — and carries
+  // any unrelated unsaved draft edits along with it — while the blocked-state
+  // copy still talks only about the ORDER. Emission is therefore frozen, and
+  // display hardening is kept strictly on the display side. The round-trip test
+  // in tests/resource-priority.test.ts holds this without an intervening apply.
+  //
+  // Emission-side safety is `sanitizePromptText` in `describeEntry`, which is
+  // what neutralizes newlines and the worker's rewrite markers.
   const serverNames = new Map(
     response.servers.map((server) => [server.serverId, server.serverName])
   );
@@ -149,6 +173,7 @@ export function buildPriorityEntries(
       entries.push({
         id,
         label: item.label ?? item.name,
+        serverId: item.serverId,
         serverName: serverNames.get(item.serverId) ?? item.serverId,
         subjectLabelText: subjectLabel(slug),
       });
@@ -219,6 +244,10 @@ export function mergeOrderWithLive(
             // carried in the document; only an id the document never
             // described renders raw.
             label: recoveredDescriptions?.get(id) ?? id,
+            // No live report to attribute to. The row renders its own
+            // "kept from the saved order" line instead of an attribution, so
+            // there is nothing to resolve and nothing to guess at.
+            serverId: "",
             serverName: "",
             subjectLabelText: "",
             missing: true,
