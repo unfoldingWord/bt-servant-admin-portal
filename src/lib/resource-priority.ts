@@ -28,6 +28,28 @@ export const RESOURCE_PRIORITY_END = "<!-- /bt:resource-priorities -->";
 /** Worker `MAX_MODE_DOCUMENT_LENGTH` — the whole document, block included. */
 export const MAX_MODE_DOCUMENT_LENGTH = 64000;
 
+/** Whether a prospective document fits — and if not, whose doing it is. */
+export type PriorityLengthVerdict = "ok" | "over-from-edit" | "over-untouched";
+
+/**
+ * Classify the length of the document an apply would write.
+ *
+ * `edited` means "the user has touched the ranking in this session". The
+ * distinction is the whole point: the prospective document is regenerated the
+ * moment the panel opens, before anyone has done anything, so a large document
+ * whose stored block predates a change to the generated text (#281 added a
+ * paragraph to it) can be over the limit on arrival. Blaming "this ranking"
+ * there names a ranking the user didn't make and prescribes a fix — rank fewer
+ * resources — that isn't the one available to them.
+ */
+export function priorityLengthVerdict(
+  nextDocument: string,
+  edited: boolean
+): PriorityLengthVerdict {
+  if (nextDocument.length <= MAX_MODE_DOCUMENT_LENGTH) return "ok";
+  return edited ? "over-from-edit" : "over-untouched";
+}
+
 const PRIORITY_BLOCK_HEADING = "### Resource priorities";
 
 // Wrapped exactly as the spec's block format shows it. The wrap points are
@@ -51,16 +73,36 @@ const PRIORITY_BLOCK_PROSE = [
 // which is what keeps a dangling "outside your priorities" instruction out of
 // a document that has no priorities to be outside of.
 //
-// Wrapped like the prose above it, and deliberately NOT separated from the
-// ranked list by a blank line: `orphanRemnantEnd` walks contiguous generated
-// lines and stops at the first line it doesn't recognize, so a blank line here
-// would strand this paragraph in the document when an orphaned block is
-// repaired.
-const PRIORITY_BLOCK_DISCLOSURE = [
+// Wrapped like the prose above it, and separated from the ranked list by a
+// BLANK LINE — which is load-bearing, not cosmetic. Under CommonMark, a
+// non-indented paragraph butted straight up against a list is a LAZY
+// CONTINUATION of the last list item. Every CommonMark reader downstream —
+// the model consuming this prompt, for which markdown structure is how
+// grouping is expressed, and any renderer that ever displays the document —
+// would take a global instruction for a note hanging off the LOWEST-ranked
+// resource, which inverts its meaning. The blank line makes it a sibling
+// block. `tests/resource-priority.test.ts` asserts the parse, both ways.
+//
+// The cost is that `orphanRemnantEnd` can no longer treat "blank line" as an
+// unconditional stop, so it takes a one-line lookahead — see there.
+export const RESOURCE_PRIORITY_DISCLOSURE = [
   "When your answer draws on anything other than the highest-ranked source that covers the question —",
   "a lower-ranked source, or a resource not ranked here — say so in the same reply, and name what you",
   "drew on instead. One short sentence is enough.",
 ].join("\n");
+
+/**
+ * The same promise, said to the admin configuring it — the panel's explainer
+ * line, so an admin learns the disclosure follows from ranking without opening
+ * the block preview.
+ *
+ * It lives HERE, pressed up against the instruction it paraphrases, because
+ * two descriptions of one behavior in two files drift silently: the UI ends up
+ * promising a scope the prompt never asks for. A test pins the trigger wording
+ * they must share; edit one and the other has to move with it.
+ */
+export const RESOURCE_PRIORITY_DISCLOSURE_SUMMARY =
+  "When an answer draws on a lower-ranked source, or a resource not ranked here, BT Servant is asked to say so in the reply.";
 
 const MISSING_FROM_LIVE_SUFFIX = "not currently listed";
 
@@ -296,11 +338,19 @@ function describeEntry(entry: PriorityEntry): string {
  *
  * Documents generated before #281 carry the block WITHOUT that paragraph. They
  * parse identically (the markers, the order comment and the numbered lines are
- * untouched), so nothing about them reads as corrupt; the only difference is
- * that a regeneration is no longer byte-identical to what is stored, so the
- * panel's Apply comes up enabled and one deliberate apply upgrades the block
- * in place. The rewrite is bounded by the markers, so it neither duplicates
- * the block nor disturbs the guidance around it.
+ * untouched), so nothing about them reads as corrupt; the difference is that a
+ * regeneration is no longer byte-identical to what is stored, so the panel's
+ * Apply comes up enabled and one deliberate apply upgrades the block in place.
+ * The rewrite is bounded by the markers, so it neither duplicates the block nor
+ * disturbs the guidance around it.
+ *
+ * That apply is NOT guaranteed to be a paragraph insertion and nothing else.
+ * The prose list is regenerated from live data every time (#277's design, see
+ * above), so where a label, server name or subject has drifted since the block
+ * was last written — or where the panel is enumerating a language that resolves
+ * different entries — the same apply rewrites those description lines too. The
+ * ORDER is what is guaranteed to survive verbatim; the descriptions are
+ * derived, and always were.
  */
 export function generatePriorityBlock(
   orderedIds: string[],
@@ -338,8 +388,10 @@ export function generatePriorityBlock(
   });
 
   // After the list, so "anything other than the highest-ranked source" has the
-  // list to refer back to.
-  lines.push(PRIORITY_BLOCK_DISCLOSURE);
+  // list to refer back to — and behind a blank line, so CommonMark reads it as
+  // a paragraph of its own rather than as trailing text of the last ranked
+  // item.
+  lines.push("", RESOURCE_PRIORITY_DISCLOSURE);
   lines.push(RESOURCE_PRIORITY_END);
   return lines.join("\n");
 }
@@ -355,10 +407,15 @@ export function generatePriorityBlock(
 // generated body still trails it, and "generated" is judged byte-for-byte
 // against this vocabulary — so the repair can never swallow a line a human
 // wrote.
+//
+// The block's one blank line is deliberately NOT a member: a blank line is
+// also what separates a leftover marker from a user's own prose, so it can't
+// be recognized on its own text. `orphanRemnantEnd` handles it by lookahead
+// into this set instead.
 const GENERATED_BODY_LINES = new Set<string>([
   PRIORITY_BLOCK_HEADING,
   ...PRIORITY_BLOCK_PROSE.split("\n"),
-  ...PRIORITY_BLOCK_DISCLOSURE.split("\n"),
+  ...RESOURCE_PRIORITY_DISCLOSURE.split("\n"),
 ]);
 const ORDER_COMMENT_LINE_RE = /^<!--\s*order:.*-->$/;
 const RANKED_LIST_LINE_RE = /^\d+\.\s/;
@@ -367,34 +424,65 @@ const RANKED_LIST_LINE_RE = /^\d+\.\s/;
  * End of the generated body that trails an orphaned opening marker at `from`.
  *
  * Consumes whole lines while each one is something this module emits, and
- * stops at the first line that isn't — a blank line, hand-written prose, a
- * heading. That keeps the stale half-block out of the prompt (two contradictory
- * ranked lists would be worse than one) while making it impossible to delete
- * anything a human typed. When the order comment survived the hand-edit it is
- * inside these bounds too, so the ranking itself is recovered rather than
- * reported corrupt.
+ * stops at the first line that isn't — hand-written prose, a heading, a blank
+ * line that isn't ours. That keeps the stale half-block out of the prompt (two
+ * contradictory ranked lists would be worse than one) while making it
+ * impossible to delete anything a human typed. When the order comment survived
+ * the hand-edit it is inside these bounds too, so the ranking itself is
+ * recovered rather than reported corrupt.
  *
  * A numbered line only counts as generated once a distinctive block line (the
  * heading, the order comment, or a prose line) has been seen: `1. anything`
  * matches the ranked-list shape, and a user who kept the leftover marker but
  * hand-wrote their own list directly beneath it must not have it absorbed.
+ *
+ * A BLANK line is the one case that needs lookahead. The block contains one of
+ * its own (before the disclosure paragraph, so CommonMark reads that paragraph
+ * as a sibling of the ranked list rather than as trailing text inside its last
+ * item), and stopping there would strand the paragraph in the document on
+ * every repair. But a blank line is also exactly what separates a leftover
+ * marker from a user's own prose, and swallowing THAT is the one thing this
+ * function must never do. So a blank line is consumed only when the very next
+ * physical line is generated vocabulary — the strict vocabulary, deliberately
+ * not the ranked-list shape, since a blank line followed by a hand-written
+ * numbered list has to terminate the walk.
  */
+function isGeneratedVocabulary(line: string): boolean {
+  return GENERATED_BODY_LINES.has(line) || ORDER_COMMENT_LINE_RE.test(line);
+}
+
+interface RemnantLine {
+  text: string;
+  /** Offset of the line's end — where the next line's break begins. */
+  end: number;
+}
+
+/** The line whose break starts at `cursor`, or `null` if none begins there. */
+function remnantLineAt(document: string, cursor: number): RemnantLine | null {
+  if (cursor >= document.length) return null;
+  const lineBreak = /^(\r\n|\n|\r)/.exec(document.slice(cursor));
+  if (!lineBreak?.[0]) return null;
+  const lineStart = cursor + lineBreak[0].length;
+  const newlineAt = document.indexOf("\n", lineStart);
+  const end = newlineAt === -1 ? document.length : newlineAt;
+  return { text: document.slice(lineStart, end).replace(/\r$/, ""), end };
+}
+
 function orphanRemnantEnd(document: string, from: number): number {
   let cursor = from;
   let blockBodySeen = false;
-  while (cursor < document.length) {
-    const lineBreak = /^(\r\n|\n|\r)/.exec(document.slice(cursor));
-    if (!lineBreak?.[0]) break;
-    const lineStart = cursor + lineBreak[0].length;
-    const newlineAt = document.indexOf("\n", lineStart);
-    const lineEnd = newlineAt === -1 ? document.length : newlineAt;
-    const line = document.slice(lineStart, lineEnd).replace(/\r$/, "");
-    if (GENERATED_BODY_LINES.has(line) || ORDER_COMMENT_LINE_RE.test(line)) {
+  for (;;) {
+    const line = remnantLineAt(document, cursor);
+    if (!line) break;
+    if (isGeneratedVocabulary(line.text)) {
       blockBodySeen = true;
-    } else if (!blockBodySeen || !RANKED_LIST_LINE_RE.test(line)) {
+    } else if (line.text.length === 0) {
+      const next = remnantLineAt(document, line.end);
+      if (!next || !isGeneratedVocabulary(next.text)) break;
+    } else if (!blockBodySeen || !RANKED_LIST_LINE_RE.test(line.text)) {
       break;
     }
-    cursor = lineEnd;
+    cursor = line.end;
   }
   return cursor;
 }

@@ -11,12 +11,13 @@ import {
 } from "lucide-react";
 
 import {
-  MAX_MODE_DOCUMENT_LENGTH,
+  RESOURCE_PRIORITY_DISCLOSURE_SUMMARY,
   buildPriorityEntries,
   generatePriorityBlock,
   mergeOrderWithLive,
   parsePriorityDescriptions,
   parsePriorityOrder,
+  priorityLengthVerdict,
   splicePriorityBlock,
   type MergedEntry,
   type PriorityEntry,
@@ -43,12 +44,6 @@ import {
 const EXPECTATION_COPY =
   "Ranking strongly increases the likelihood that BT Servant answers from higher-ranked sources first. It is not a guarantee — a lower-ranked source can still be used when it fits the question better.";
 const SCOPE_COPY = "Priorities apply to this mode in every language.";
-// #281 — the other half of the honesty: the ranking can't bind retrieval, so
-// the prompt asks BT Servant to name it when the answer came from somewhere
-// else. Said here because it is a consequence of ranking that an admin would
-// otherwise only discover by reading the generated block in the preview.
-const DISCLOSURE_COPY =
-  "When an answer draws on a lower-ranked or unranked source, BT Servant is asked to say so in the reply.";
 
 // Same sentence the Modes header uses for the same denial (see
 // NO_EDIT_RIGHTS_REASON in app/pages/modes.tsx). The header already gates the
@@ -201,7 +196,12 @@ function PanelBody({
   // comparison misses — a corrupt or orphaned block that this apply would
   // repair, a duplicated stored id that it would normalize.
   const unchanged = nextDocument === document;
-  const tooLong = nextDocument.length > MAX_MODE_DOCUMENT_LENGTH;
+  // Over the limit is over the limit either way — but WHOSE doing it is
+  // decides what we're allowed to say about it. `order === null` is a panel
+  // the user hasn't touched: the overflow is the document plus whatever this
+  // version of the generated block costs, not a ranking they made.
+  const lengthVerdict = priorityLengthVerdict(nextDocument, order !== null);
+  const tooLong = lengthVerdict !== "ok";
   const busy = isSaving || applying;
 
   // Applying before the aggregation lands would regenerate every line from an
@@ -360,8 +360,12 @@ function PanelBody({
           <p className="text-muted-foreground mt-1.5 text-xs leading-relaxed">
             {SCOPE_COPY}
           </p>
+          {/* #281 — the other half of the honesty: the ranking can't bind
+              retrieval, so the prompt asks BT Servant to name it when the
+              answer came from somewhere else. Sourced from the lib beside the
+              instruction it paraphrases, so the two can't drift apart. */}
           <p className="text-muted-foreground mt-1.5 text-xs leading-relaxed">
-            {DISCLOSURE_COPY}
+            {RESOURCE_PRIORITY_DISCLOSURE_SUMMARY}
           </p>
         </div>
 
@@ -628,13 +632,26 @@ function PanelBody({
           </pre>
         </details>
 
-        {tooLong && (
+        {lengthVerdict === "over-from-edit" && (
           <p
             className="bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2 text-xs"
             role="alert"
           >
             This ranking would push the mode document past the 64,000-character
             limit. Rank fewer resources, or trim the document.
+          </p>
+        )}
+        {/* Nothing has been ranked in this session, so nothing here is the
+            user's fault and "rank fewer resources" is not their lever. Say what
+            is true and what would help, without the alarm. */}
+        {lengthVerdict === "over-untouched" && (
+          <p
+            className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs"
+            role="status"
+          >
+            This document is already too close to the 64,000-character limit to
+            rewrite its priorities block. The saved ranking is untouched — trim
+            the document elsewhere, and it can be updated again.
           </p>
         )}
 
