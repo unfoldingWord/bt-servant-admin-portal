@@ -1159,13 +1159,15 @@ describe("orphan repair vs hand-written lists", () => {
 });
 
 describe("isOfferedBlockRefresh", () => {
-  // Apply live, nothing reordered, block readable, and a block to write.
+  // Apply live, nothing reordered, stored order readable and written back
+  // unchanged, and a block to write.
   function refresh(overrides: Partial<OfferedRefreshInput> = {}) {
     return isOfferedBlockRefresh({
       applyEnabled: true,
       hasApplyError: false,
       userReordered: false,
-      storedOrderIsCorrupt: false,
+      storedOrder: ORDER,
+      orderedIds: ORDER,
       blockToWrite: BLOCK,
       ...overrides,
     });
@@ -1195,10 +1197,36 @@ describe("isOfferedBlockRefresh", () => {
     // the saved ordering" notice; a calm "your ranking is unchanged" beside it
     // would talk a user into clicking through and losing a ranking they would
     // otherwise have retyped.
-    expect(refresh({ storedOrderIsCorrupt: true })).toBe(false);
-    expect(refresh({ storedOrderIsCorrupt: true, blockToWrite: "" })).toBe(
-      false
-    );
+    expect(refresh({ storedOrder: "corrupt", orderedIds: [] })).toBe(false);
+    expect(
+      refresh({ storedOrder: "corrupt", orderedIds: [], blockToWrite: "" })
+    ).toBe(false);
+  });
+
+  it("says nothing when the document has no block at all", () => {
+    expect(refresh({ storedOrder: null, orderedIds: [] })).toBe(false);
+  });
+
+  it("says nothing when the apply would normalize a duplicated stored order", () => {
+    // A hand-edited document can name the same id twice. Both
+    // `mergeOrderWithLive` and `generatePriorityBlock` collapse duplicates, so
+    // this untouched apply rewrites the RANKING — while the copy promises the
+    // saved order is kept exactly as it is. Silence is the honest state here.
+    const stored = [ULT.id, ULT.id, STUDY_NOTES.id];
+    const { ranked } = mergeOrderWithLive(stored, [ULT, STUDY_NOTES]);
+    const deduped = ranked.map((row) => row.id);
+    expect(deduped).toEqual(ORDER);
+    expect(deduped).not.toEqual(stored);
+
+    expect(refresh({ storedOrder: stored, orderedIds: deduped })).toBe(false);
+  });
+
+  it("says nothing when the apply would reorder the stored sequence", () => {
+    // Element-wise, not set-wise: the same ids in a different sequence is a
+    // different ranking, and must not be described as preserving one.
+    expect(
+      refresh({ storedOrder: ORDER, orderedIds: [...ORDER].reverse() })
+    ).toBe(false);
   });
 
   it("says nothing when the apply would write no block at all", () => {

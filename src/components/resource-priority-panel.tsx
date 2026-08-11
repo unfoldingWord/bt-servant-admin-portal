@@ -236,18 +236,20 @@ function PanelBody({
             ? "The order already matches what's saved."
             : null;
 
-  // Apply is live, the user hasn't reordered anything, the stored block is
-  // readable, and this apply would WRITE a block rather than remove one: an
-  // offered refresh, and the only state in which the panel may describe it as
-  // one. Without the explanation an enabled Apply on an untouched panel reads
-  // as a change the user can't account for, and the safest-looking move
-  // (closing the sheet) is the one that leaves the block stale — but the
-  // reassurance is worse than silence anywhere it isn't literally true.
+  // Apply is live, the user hasn't reordered anything, the stored order is
+  // readable AND survives this apply unchanged, and the apply would WRITE a
+  // block rather than remove one: an offered refresh, and the only state in
+  // which the panel may describe it as one. Without the explanation an enabled
+  // Apply on an untouched panel reads as a change the user can't account for,
+  // and the safest-looking move (closing the sheet) is the one that leaves the
+  // block stale — but the reassurance is worse than silence anywhere it isn't
+  // literally true.
   const isOfferedRefresh = isOfferedBlockRefresh({
     applyEnabled: applyBlockedReason === null,
     hasApplyError: applyError !== null,
     userReordered: order !== null,
-    storedOrderIsCorrupt: isCorrupt,
+    storedOrder: parsed,
+    orderedIds,
     blockToWrite: block,
   });
 

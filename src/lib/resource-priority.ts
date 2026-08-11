@@ -69,10 +69,16 @@ export interface OfferedRefreshInput {
   hasApplyError: boolean;
   /** The user has reordered something in this session. */
   userReordered: boolean;
-  /** The stored block is present but its order line could not be read. */
-  storedOrderIsCorrupt: boolean;
+  /** Exactly what `parsePriorityOrder` returned for the current document. */
+  storedOrder: string[] | null | "corrupt";
+  /** The ranking this apply would write, in order. */
+  orderedIds: string[];
   /** The block this apply would write. `""` means the apply REMOVES it. */
   blockToWrite: string;
+}
+
+function sameSequence(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
 }
 
 /**
@@ -89,9 +95,17 @@ export interface OfferedRefreshInput {
  *     rather than refreshing it. The panel is already showing a red notice
  *     saying exactly that; a calm "your ranking is unchanged" next to it
  *     invites the user to click through and lose a ranking they would
- *     otherwise have retyped. Hence both the corruption check and the
+ *     otherwise have retyped. Hence both the readable-order check and the
  *     empty-block check — the latter also covers any other path where the
  *     apply's real effect is removal.
+ *   - A stored order that will be NORMALIZED on the way out. Duplicate ids
+ *     survive in a hand-edited document but are collapsed by both
+ *     `mergeOrderWithLive` and `generatePriorityBlock`, so an untouched panel
+ *     can be offering to rewrite the ranking itself — while the copy promises
+ *     the saved order is kept exactly as it is. The order this apply would
+ *     write therefore has to match the stored one element for element, which
+ *     catches dedup and any normalization added later. Where it doesn't
+ *     match, the plain enabled Apply with no banner is the honest state.
  *   - A healthy block whose DESCRIPTIONS have drifted. The delta is a
  *     description rewrite; the disclosure is already present. Still a
  *     ranking-preserving refresh, so this returns true — but it is why the
@@ -102,7 +116,10 @@ export function isOfferedBlockRefresh(input: OfferedRefreshInput): boolean {
   if (!input.applyEnabled) return false;
   if (input.hasApplyError) return false;
   if (input.userReordered) return false;
-  if (input.storedOrderIsCorrupt) return false;
+  // Covers "corrupt" and "no block at all" in one: neither is an order this
+  // apply could be said to preserve.
+  if (!Array.isArray(input.storedOrder)) return false;
+  if (!sameSequence(input.storedOrder, input.orderedIds)) return false;
   // An apply that writes nothing is a removal, not a refresh.
   if (input.blockToWrite.length === 0) return false;
   return true;
