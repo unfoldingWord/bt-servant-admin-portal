@@ -5,7 +5,9 @@
 // output. No diagram library — the topology is small and fixed-shape
 // (org → servers → subject leaves), so hand-rolled elbows beat a dependency.
 
+import { buildServerNameMap, resolveServerName } from "@/lib/resource-servers";
 import { subjectLabel } from "@/lib/resource-subjects";
+import { truncateLabel } from "@/lib/truncate";
 import type {
   AggregatedResourcesResponse,
   ResourceServerStatus,
@@ -101,12 +103,6 @@ export interface ResourceMapLayout {
   servers: ResourceMapServer[];
 }
 
-/** Ellipsis-truncate to at most `max` characters (including the ellipsis). */
-export function truncateLabel(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
-}
-
 /** The two forms of a server-node caption. */
 export interface ServerCaption {
   /** Untruncated — the sr-only tree and the node <title> carry this. */
@@ -191,6 +187,11 @@ export function buildResourceMapLayout(
   data: AggregatedResourcesResponse
 ): ResourceMapLayout {
   const subjectEntries = Object.entries(data.resources);
+  // Same attribution join the list page and the priority panel use, so a
+  // blank or whitespace-only serverName degrades to the server id here too
+  // rather than labelling a node with an empty string, and untrusted control
+  // characters are collapsed before they reach the sr-only tree or a <title>.
+  const serverNames = buildServerNameMap(data.servers);
 
   let y = MAP.padY;
   const servers: ResourceMapServer[] = data.servers.map((server) => {
@@ -224,10 +225,12 @@ export function buildResourceMapLayout(
 
     y += height + MAP.blockGap;
 
+    const resolvedName = resolveServerName(server.serverId, serverNames);
+
     return {
       serverId: server.serverId,
-      serverName: server.serverName,
-      displayName: truncateLabel(server.serverName, SERVER_NAME_MAX_CHARS),
+      serverName: resolvedName,
+      displayName: truncateLabel(resolvedName, SERVER_NAME_MAX_CHARS),
       status: server.status,
       error: server.error,
       top,

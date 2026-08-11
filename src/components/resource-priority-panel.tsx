@@ -21,6 +21,7 @@ import {
   type MergedEntry,
   type PriorityEntry,
 } from "@/lib/resource-priority";
+import { buildServerNameMap, resolveServerLabel } from "@/lib/resource-servers";
 import { useUiStore } from "@/lib/ui-store";
 import { cn } from "@/lib/utils";
 import { useResources } from "@/hooks/use-resources";
@@ -324,6 +325,13 @@ function PanelBody({
   }, []);
 
   const degraded = (data?.servers ?? []).filter((s) => s.status !== "ok");
+  // Same attribution join the Resources page and the topology map use, so a
+  // server that reports a blank name is still identifiable in the notice that
+  // explains why its resources are absent from the ranking.
+  const serverNames = useMemo(
+    () => buildServerNameMap(data?.servers ?? []),
+    [data]
+  );
 
   return (
     <>
@@ -420,33 +428,41 @@ function PanelBody({
 
         {degraded.length > 0 && (
           <ul className="space-y-1">
-            {degraded.map((server) => (
-              <li
-                key={server.serverId}
-                className={cn(
-                  "flex flex-wrap items-center gap-x-1.5 text-[11px]",
-                  server.status === "error"
-                    ? "text-destructive"
-                    : "text-muted-foreground"
-                )}
-              >
-                <span
-                  aria-hidden
+            {degraded.map((server) => {
+              const label = resolveServerLabel(server.serverId, serverNames);
+              return (
+                <li
+                  key={server.serverId}
                   className={cn(
-                    "size-1.5 rounded-full",
+                    "flex flex-wrap items-center gap-x-1.5 text-[11px]",
                     server.status === "error"
-                      ? "bg-destructive"
-                      : "bg-muted-foreground/40"
+                      ? "text-destructive"
+                      : "text-muted-foreground"
                   )}
-                />
-                <span className="font-medium">{server.serverName}</span>
-                <span>
-                  {server.status === "error"
-                    ? "failed to respond, so its resources are missing from this list"
-                    : "doesn't list resources, so it can't be ranked"}
-                </span>
-              </li>
-            ))}
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "size-1.5 rounded-full",
+                      server.status === "error"
+                        ? "bg-destructive"
+                        : "bg-muted-foreground/40"
+                    )}
+                  />
+                  <span
+                    className="max-w-[14rem] min-w-0 truncate font-medium"
+                    title={label.title}
+                  >
+                    {label.display}
+                  </span>
+                  <span>
+                    {server.status === "error"
+                      ? "failed to respond, so its resources are missing from this list"
+                      : "doesn't list resources, so it can't be ranked"}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
 

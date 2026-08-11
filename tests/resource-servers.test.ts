@@ -96,7 +96,6 @@ describe("resolveServerLabel", () => {
 
     expect(label.display).toBe("Translation Helps");
     expect(label.full).toBe("Translation Helps");
-    expect(label.truncated).toBe(false);
     expect(label.title).toBe("Translation Helps (th)");
   });
 
@@ -112,7 +111,6 @@ describe("resolveServerLabel", () => {
       buildServerNameMap([server("bloated", long)])
     );
 
-    expect(label.truncated).toBe(true);
     expect(label.display.length).toBeLessThanOrEqual(
       RESOURCE_SERVER_LABEL_MAX_CHARS
     );
@@ -127,7 +125,6 @@ describe("resolveServerLabel", () => {
 
     expect(label.display).toBe("Transla…");
     expect(label.display.length).toBe(8);
-    expect(label.truncated).toBe(true);
   });
 
   it("leaves a name exactly at the budget untruncated", () => {
@@ -138,7 +135,6 @@ describe("resolveServerLabel", () => {
     );
 
     expect(label.display).toBe(exact);
-    expect(label.truncated).toBe(false);
   });
 
   it("bounds a name that is only long because of collapsed whitespace", () => {
@@ -148,6 +144,5 @@ describe("resolveServerLabel", () => {
     );
 
     expect(label.full).toBe("Aquifer MCP");
-    expect(label.truncated).toBe(false);
   });
 });

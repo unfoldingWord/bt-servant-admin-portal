@@ -6,8 +6,8 @@ import {
   SERVER_CAPTION_MAX_CHARS,
   buildResourceMapLayout,
   serverCaption,
-  truncateLabel,
 } from "../src/lib/resource-map-layout";
+import { truncateLabel } from "../src/lib/truncate";
 import type {
   AggregatedResourcesResponse,
   ResourceItem,
@@ -51,6 +51,27 @@ describe("truncateLabel", () => {
     // Slicing "abcd efgh" at 6 chars lands on the space — "abcd …" would
     // read as a typo.
     expect(truncateLabel("abcd efgh", 6)).toBe("abcd…");
+  });
+
+  it("never splits an astral character into a lone surrogate", () => {
+    // Budget is counted in code points, not UTF-16 units: slicing the raw
+    // string would cut a 2-unit emoji in half and emit an unpaired surrogate.
+    const emoji = "🌍".repeat(20);
+    const out = truncateLabel(emoji, 28);
+
+    expect(out).toBe(emoji);
+    for (const unit of out) {
+      const code = unit.codePointAt(0) ?? 0;
+      expect(code >= 0xd800 && code <= 0xdfff).toBe(false);
+    }
+  });
+
+  it("counts an astral label in code points when it does exceed the budget", () => {
+    const out = truncateLabel("🌍".repeat(20), 10);
+
+    expect(Array.from(out)).toHaveLength(10);
+    expect(out.endsWith("…")).toBe(true);
+    expect(out.startsWith("🌍🌍")).toBe(true);
   });
 });
 
@@ -287,5 +308,47 @@ describe("org node label", () => {
     expect(layout.orgName).toBe(org);
     expect(layout.orgDisplayName).toHaveLength(ORG_NAME_MAX_CHARS);
     expect(layout.orgDisplayName.endsWith("…")).toBe(true);
+  });
+});
+
+describe("buildResourceMapLayout server attribution", () => {
+  // The map used to read `server.serverName` raw. It now goes through the same
+  // buildServerNameMap/resolveServerName join as the Resources page and the
+  // priority panel, so all three surfaces name a server identically.
+  function named(serverId: string, serverName: string): ResourceServerReport {
+    return { serverId, serverName, status: "ok" };
+  }
+
+  it("falls back to the server id when the report names the server blank", () => {
+    const layout = buildResourceMapLayout(response([named("aquifer", "   ")]));
+
+    expect(layout.servers[0]!.serverName).toBe("aquifer");
+    expect(layout.servers[0]!.displayName).toBe("aquifer");
+  });
+
+  it("collapses control characters before they reach the sr-only tree", () => {
+    // serverName is untrusted third-party text and lands in an SVG <title> and
+    // the screen-reader list; it has to be one display line.
+    const layout = buildResourceMapLayout(
+      response([named("th", "Translation\nHelps\tMCP")])
+    );
+
+    expect(layout.servers[0]!.serverName).toBe("Translation Helps MCP");
+  });
+
+  it("keeps a well-formed name untouched", () => {
+    const layout = buildResourceMapLayout(response([named("th", "Aquifer")]));
+
+    expect(layout.servers[0]!.serverName).toBe("Aquifer");
+    expect(layout.servers[0]!.displayName).toBe("Aquifer");
+  });
+
+  it("truncates a long name for the node while keeping the full one", () => {
+    const long = "The Exceedingly Verbose Translation Helps MCP Server";
+    const layout = buildResourceMapLayout(response([named("th", long)]));
+
+    expect(layout.servers[0]!.serverName).toBe(long);
+    expect(layout.servers[0]!.displayName.endsWith("…")).toBe(true);
+    expect(layout.servers[0]!.displayName.length).toBeLessThan(long.length);
   });
 });

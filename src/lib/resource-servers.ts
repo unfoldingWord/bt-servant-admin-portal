@@ -12,7 +12,7 @@
 // and embedded newlines/control characters break a single-line chip. Both are
 // neutralized on the way in (collapse) and on the way out (truncate).
 
-import { truncateLabel } from "@/lib/resource-map-layout";
+import { truncateLabel } from "@/lib/truncate";
 import type { ResourceServerReport } from "@/types/resources";
 
 /**
@@ -74,8 +74,6 @@ export interface ServerLabel {
   full: string;
   /** `full` bounded to the character budget; what the chip renders. */
   display: string;
-  /** True when `display` had to cut `full` short. */
-  truncated: boolean;
   /**
    * Tooltip text. Always the full name, and additionally the machine id when
    * the two differ — the id was what this badge showed before names landed, and
@@ -102,7 +100,6 @@ export function resolveServerLabel(
   return {
     full,
     display,
-    truncated: display !== full,
     title: full === id ? full : `${full} (${id})`,
   };
 }

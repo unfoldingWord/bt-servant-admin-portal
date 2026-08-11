@@ -565,6 +565,53 @@ describe("buildPriorityEntries", () => {
     expect(entries[0]!.serverName).toBe("Aquifer MCP");
   });
 
+  it("reaches a byte-identical steady state after one apply", () => {
+    // Collapsing untrusted server names DOES change emitted bytes relative to
+    // the pre-collapse block, so a document written before it opens with Apply
+    // enabled once. What must hold from then on is idempotence: generate →
+    // splice → parse → regenerate has to return the same bytes, or the panel
+    // would offer a spurious "apply" forever and the block would churn on
+    // every open. This pins that steady state.
+    const live = buildPriorityEntries(
+      response(
+        [
+          server("th", "Translation\tHelps"),
+          server("aquifer", "  "),
+          server("fia", "FIA"),
+        ],
+        {
+          bible: [
+            item("th", "en_ult", "bible"),
+            item("aquifer", "NIV", "bible"),
+          ],
+          "study-notes": [item("fia", "Notes", "study-notes")],
+        }
+      )
+    );
+    const lookup = byId(live);
+    const ids = live.map((e) => e.id);
+
+    const first = generatePriorityBlock(ids, lookup);
+    const document = splicePriorityBlock(
+      "## Tool Guidance\n\nUse the tools well.\n",
+      first
+    );
+
+    // Round-trip: read the order back out and regenerate from live data.
+    const reparsed = parsePriorityOrder(document);
+    expect(reparsed).toEqual(ids);
+
+    const second = generatePriorityBlock(
+      reparsed as string[],
+      lookup,
+      parsePriorityDescriptions(document)
+    );
+    expect(second).toBe(first);
+
+    // And splicing the regenerated block is a no-op on the document.
+    expect(splicePriorityBlock(document, second)).toBe(document);
+  });
+
   it("keeps the first occurrence when an id surfaces under two subjects", () => {
     const entries = buildPriorityEntries(
       response([server("a", "A")], {

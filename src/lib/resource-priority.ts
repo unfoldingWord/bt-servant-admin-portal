@@ -136,11 +136,21 @@ export function sanitizePromptText(text: string): string {
 export function buildPriorityEntries(
   response: AggregatedResourcesResponse
 ): PriorityEntry[] {
-  // Shared with the Resources page so both surfaces name a server identically.
-  // Note this is the FULL name, deliberately untruncated: the value reaches the
-  // mode document via `describeEntry`, and shortening it would change emitted
-  // prompt text — breaking the byte-identical regeneration that keeps Apply
-  // honestly disabled when nothing changed.
+  // Shared with the Resources page and the topology map so all three surfaces
+  // name a server identically. The name is taken FULL and untruncated: it
+  // reaches the mode document via `describeEntry`, and the display budget is a
+  // property of a badge, not of the prompt.
+  //
+  // This DOES change emitted bytes for some pre-existing documents. Collapsing
+  // rewrites any name carrying a tab, a run of spaces, an NBSP, a zero-width
+  // character or a soft hyphen, and a blank name now resolves to the server id
+  // instead of an empty string. For an affected document the regenerated block
+  // no longer matches the stored one, so the panel opens with Apply enabled
+  // once even though the user changed nothing — a cosmetic false positive, not
+  // a data risk: applying rewrites the block to the collapsed form, and every
+  // regeneration after that is byte-identical again. The round-trip test in
+  // tests/resource-priority.test.ts pins that steady state, so the invariant is
+  // machine-checked rather than asserted here in prose.
   const serverNames = buildServerNameMap(response.servers);
   const entries: PriorityEntry[] = [];
   const seen = new Set<string>();

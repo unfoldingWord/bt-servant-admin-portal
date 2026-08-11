@@ -34,13 +34,19 @@ import type { ResourceItem, ResourceServerReport } from "@/types/resources";
 // and a transient failure is not a capability gap.
 function ServerChip({
   server,
+  serverNames,
   onRetry,
   isRetrying,
 }: {
   server: ResourceServerReport;
+  serverNames: ServerNameMap;
   onRetry: () => void;
   isRetrying: boolean;
 }) {
+  // Resolved rather than read raw: a server reporting a blank name would
+  // otherwise render an unidentifiable chip — worst exactly in the `error`
+  // case, where the chip's whole job is to say WHICH server failed.
+  const label = resolveServerLabel(server.serverId, serverNames);
   return (
     <span
       className={cn(
@@ -59,8 +65,11 @@ function ServerChip({
           server.status === "error" && "bg-destructive"
         )}
       />
-      <span className="text-foreground/80 font-medium">
-        {server.serverName}
+      <span
+        className="text-foreground/80 max-w-[16rem] min-w-0 truncate font-medium"
+        title={label.title}
+      >
+        {label.display}
       </span>
       {server.status === "unsupported" && <span>no resource listing</span>}
       {server.status === "error" && (
@@ -99,10 +108,13 @@ function ServerBadge({
   return (
     <Badge
       variant="outline"
-      className="max-w-[14rem] truncate px-1.5 py-0 text-[10px]"
+      className="max-w-[14rem] px-1.5 py-0 text-[10px]"
       title={label.title}
     >
-      {label.display}
+      {/* `truncate` has to sit on a child, not on the Badge: the Badge is an
+          inline-flex container, where overflow clips the flex item hard
+          instead of ellipsising it. */}
+      <span className="min-w-0 truncate">{label.display}</span>
     </Badge>
   );
 }
@@ -296,6 +308,7 @@ export function ResourcesPage() {
                   <ServerChip
                     key={server.serverId}
                     server={server}
+                    serverNames={serverNames}
                     onRetry={() => void resources.refetch()}
                     isRetrying={resources.isFetching}
                   />
