@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { decideContextChange } from "../src/lib/context-org-guard";
+import {
+  contextSwitchReason,
+  decideContextChange,
+} from "../src/lib/context-org-guard";
 
 describe("decideContextChange", () => {
   // The no-op branch must fire before any dirty/saving check — picking
@@ -62,5 +65,31 @@ describe("decideContextChange", () => {
         "confirm"
       );
     });
+  });
+});
+
+// #286 widened the guard's trigger to include in-flight org-scoped writes
+// (setting/clearing the org default, deleting a language). Those are not
+// unsaved edits, and the dialog must not say they are — a warning about
+// typing you never did is a false alarm, and false alarms teach people to
+// click through the one that matters.
+describe("contextSwitchReason", () => {
+  it("dirty editor only → 'dirty'", () => {
+    expect(contextSwitchReason(true, false)).toBe("dirty");
+  });
+
+  it("in-flight write with a clean editor → 'pending-write', not 'dirty'", () => {
+    expect(contextSwitchReason(false, true)).toBe("pending-write");
+  });
+
+  it("both at once → 'both'", () => {
+    expect(contextSwitchReason(true, true)).toBe("both");
+  });
+
+  it("never reports 'dirty' when nothing was edited", () => {
+    // The dialog only opens when decideContextChange says confirm, so the
+    // all-false input is unreachable in practice; pin that it still can't
+    // produce the edits-at-risk copy.
+    expect(contextSwitchReason(false, false)).not.toBe("dirty");
   });
 });
