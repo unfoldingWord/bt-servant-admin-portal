@@ -4,10 +4,11 @@ import {
   MAP,
   ORG_NAME_MAX_CHARS,
   SERVER_CAPTION_MAX_CHARS,
+  SERVER_NAME_MAX_CHARS,
   buildResourceMapLayout,
   serverCaption,
 } from "../src/lib/resource-map-layout";
-import { codePointLength, truncateLabel } from "../src/lib/truncate";
+import { displayColumns, truncateLabel } from "../src/lib/truncate";
 import type {
   AggregatedResourcesResponse,
   ResourceItem,
@@ -53,25 +54,59 @@ describe("truncateLabel", () => {
     expect(truncateLabel("abcd efgh", 6)).toBe("abcd…");
   });
 
-  it("never splits an astral character into a lone surrogate", () => {
-    // Budget is counted in code points, not UTF-16 units: slicing the raw
-    // string would cut a 2-unit emoji in half and emit an unpaired surrogate.
+  it("truncates a wide label that fits on a code-point count but not on ink", () => {
+    // 20 emoji is 20 code points but ~40 Latin columns of ink, so a 28-column
+    // node cannot hold it. Budgeting by code point would pass it through
+    // unchanged and let the text overflow its fixed-width node.
     const emoji = "🌍".repeat(20);
     const out = truncateLabel(emoji, 28);
 
-    expect(out).toBe(emoji);
-    for (const unit of out) {
-      const code = unit.codePointAt(0) ?? 0;
+    expect(out).not.toBe(emoji);
+    expect(out.endsWith("…")).toBe(true);
+    expect(displayColumns(out)).toBeLessThanOrEqual(28);
+    // Still surrogate-safe: the cut lands on a code point boundary.
+    for (const char of out) {
+      const code = char.codePointAt(0) ?? 0;
       expect(code >= 0xd800 && code <= 0xdfff).toBe(false);
     }
   });
 
-  it("counts an astral label in code points when it does exceed the budget", () => {
+  it("spends two columns per wide glyph when cutting", () => {
     const out = truncateLabel("🌍".repeat(20), 10);
 
-    expect(Array.from(out)).toHaveLength(10);
-    expect(out.endsWith("…")).toBe(true);
-    expect(out.startsWith("🌍🌍")).toBe(true);
+    // 9 columns of budget after the ellipsis = 4 emoji (8 columns); a 5th
+    // would overrun.
+    expect(Array.from(out)).toHaveLength(5);
+    expect(out).toBe("🌍🌍🌍🌍…");
+    expect(displayColumns(out)).toBeLessThanOrEqual(10);
+  });
+
+  it("is byte-for-byte unchanged for plain Latin labels", () => {
+    // Columns and characters coincide for narrow text, so the column budget
+    // must not perturb the overwhelmingly common case.
+    expect(truncateLabel("a very long resource subject label", 12)).toBe(
+      "a very long…"
+    );
+    expect(truncateLabel("abcd efgh", 6)).toBe("abcd…");
+    expect(truncateLabel("exactly-10", 10)).toBe("exactly-10");
+  });
+});
+
+describe("displayColumns", () => {
+  it("counts an astral glyph as two Latin columns", () => {
+    expect(displayColumns("🌍🌍🌍")).toBe(6);
+  });
+
+  it("counts CJK and fullwidth text as two columns per glyph", () => {
+    expect(displayColumns("漢字")).toBe(4);
+    expect(displayColumns("ＡＢ")).toBe(4);
+  });
+
+  it("matches String.length for plain BMP text", () => {
+    expect(displayColumns("Bible Translations")).toBe(
+      "Bible Translations".length
+    );
+    expect(displayColumns("")).toBe(0);
   });
 });
 
@@ -311,17 +346,26 @@ describe("org node label", () => {
   });
 });
 
-describe("codePointLength", () => {
-  it("counts astral characters once, unlike String.length", () => {
-    expect(codePointLength("🌍🌍🌍")).toBe(3);
-    expect("🌍🌍🌍".length).toBe(6);
+describe("leaf width for wide labels", () => {
+  function leafWidthFor(slug: string): number {
+    const layout = buildResourceMapLayout(
+      response([server("a")], { [slug]: [item("a", slug, "x")] })
+    );
+    return layout.servers[0]!.leaves[0]!.width;
+  }
+
+  it("sizes a wide label by its ink, not by its code-point count", () => {
+    // 5 emoji ≈ 10 Latin columns, so the node must be as wide as a 10-character
+    // Latin label — which is exactly what the pre-round-1 UTF-16 estimate gave.
+    // Code-point counting would have sized this like a 5-character label.
+    expect(leafWidthFor("🌍🌍🌍🌍🌍")).toBe(leafWidthFor("abcdefghij"));
+    expect(leafWidthFor("🌍🌍🌍🌍🌍")).toBeGreaterThan(leafWidthFor("abcde"));
   });
 
-  it("matches String.length for plain BMP text", () => {
-    expect(codePointLength("Bible Translations")).toBe(
-      "Bible Translations".length
-    );
-    expect(codePointLength("")).toBe(0);
+  it("leaves narrow labels at their established width", () => {
+    // Pin the common case in absolute terms: a 5-character Latin label is
+    // measured exactly as it was before the column budget landed.
+    expect(leafWidthFor("abcde")).toBe(71);
   });
 });
 
@@ -355,6 +399,21 @@ describe("buildResourceMapLayout server attribution", () => {
 
     expect(layout.servers[0]!.serverName).toBe("Aquifer");
     expect(layout.servers[0]!.displayName).toBe("Aquifer");
+  });
+
+  it("truncates a wide server name a code-point budget would have passed", () => {
+    // The reported symptom: 20 emoji is 20 code points, under the 24 budget,
+    // but ~40 columns of ink — it would have overflowed the fixed-width node.
+    const wide = "🌍".repeat(20);
+    const layout = buildResourceMapLayout(response([named("emoji", wide)]));
+    const node = layout.servers[0]!;
+
+    expect(node.serverName).toBe(wide);
+    expect(node.displayName).not.toBe(wide);
+    expect(node.displayName.endsWith("…")).toBe(true);
+    expect(displayColumns(node.displayName)).toBeLessThanOrEqual(
+      SERVER_NAME_MAX_CHARS
+    );
   });
 
   it("truncates a long name for the node while keeping the full one", () => {

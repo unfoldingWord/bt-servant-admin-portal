@@ -7,7 +7,7 @@
 
 import { buildServerNameMap, resolveServerName } from "@/lib/resource-servers";
 import { subjectLabel } from "@/lib/resource-subjects";
-import { codePointLength, truncateLabel } from "@/lib/truncate";
+import { displayColumns, truncateLabel } from "@/lib/truncate";
 import type {
   AggregatedResourcesResponse,
   ResourceServerStatus,
@@ -117,10 +117,15 @@ function quoteLanguage(tag: string): string {
   return `${EMPTY_CAPTION_PREFIX}“${tag}”`;
 }
 
-/** What the tag itself may spend once the prose and quotes are paid for. */
+/**
+ * What the tag itself may spend once the prose and quotes are paid for. The
+ * surrounding prose is fixed narrow text, so this is the same number either
+ * way — but it is a column budget being subtracted from a column budget, and
+ * measuring it as one keeps that true if the prose ever changes.
+ */
 const LANGUAGE_TAG_MAX_CHARS = Math.max(
   1,
-  SERVER_CAPTION_MAX_CHARS - quoteLanguage("").length
+  SERVER_CAPTION_MAX_CHARS - displayColumns(quoteLanguage(""))
 );
 
 function bounded(full: string): ServerCaption {
@@ -166,13 +171,15 @@ export function serverCaption(
   return bounded(counted);
 }
 
-// Counted in code points, matching truncateLabel: budgeting an astral label by
-// UTF-16 units would double-count every emoji and overestimate its ink, cutting
-// the node wider than the glyphs need.
+// Measured in display columns, the same budget truncateLabel cuts to — so the
+// width computed here and the length the label was cut to agree. Counting code
+// points instead would size an emoji label at half its ink and overflow the
+// node; counting UTF-16 units would misjudge it the other way for anything
+// else astral.
 function leafWidth(label: string, count: number): number {
   const raw =
     LEAF_PAD_X * 2 +
-    codePointLength(label) * LEAF_CHAR_W +
+    displayColumns(label) * LEAF_CHAR_W +
     LEAF_COUNT_GAP +
     String(count).length * COUNT_CHAR_W;
   return Math.min(Math.ceil(raw), MAX_LEAF_WIDTH);
