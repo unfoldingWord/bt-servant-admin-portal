@@ -1,9 +1,24 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { faLanguage } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Eye, EyeOff, Plus, Send, SendHorizontal, Trash2 } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  Plus,
+  Send,
+  SendHorizontal,
+  Star,
+  StarOff,
+  Trash2,
+} from "lucide-react";
 
+import {
+  defaultLanguageName,
+  describeLanguageDefault,
+  type LanguageDefaultState,
+} from "@/lib/language-default-state";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
+import { cn } from "@/lib/utils";
 import type { Language, OrgLanguages } from "@/types/language";
 import {
   AlertDialog,
@@ -66,6 +81,20 @@ interface LanguageSelectorProps {
       collision would otherwise surface as a bare worker 403 from an
       affordance the UI offered. */
   takenNames: string[];
+  /** #286 — org default language, already reduced to a renderable state by
+      the page (`computeLanguageDefaultState`). `kind: "unsupported"` covers
+      both "the query hasn't answered" and "this worker predates
+      worker#236"; the control renders nothing but a quiet admin-only note
+      in that case. */
+  defaultState: LanguageDefaultState;
+  /** Setting/clearing the org default is admin-only — it's one org-wide
+      pointer, not a per-row right (mirror of the worker's PUT gate on
+      /api/config/languages-default). */
+  canSetDefault: boolean;
+  /** Must reject on error — the set path renders the message inline and the
+      clear path keeps its confirmation dialog open (#102 pattern). */
+  onSetDefault: (name: string | null) => Promise<void>;
+  isSettingDefault: boolean;
 }
 
 function isPublished(lang: Pick<Language, "published">): boolean {
@@ -90,6 +119,10 @@ export function LanguageSelector({
   isScaffoldReady,
   scaffoldError,
   takenNames,
+  defaultState,
+  canSetDefault,
+  onSetDefault,
+  isSettingDefault,
 }: LanguageSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -104,6 +137,13 @@ export function LanguageSelector({
   const [unpublishError, setUnpublishError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [clearDefaultOpen, setClearDefaultOpen] = useState(false);
+  const [clearDefaultError, setClearDefaultError] = useState<string | null>(
+    null
+  );
+  // The set path has no dialog to render into, so its failure lands in the
+  // notice row beneath the toolbar.
+  const [setDefaultError, setSetDefaultError] = useState<string | null>(null);
 
   const handleConfirmUnpublish = useCallback(() => {
     if (selectedLanguage === null) return;
@@ -125,6 +165,36 @@ export function LanguageSelector({
     );
   }, [onDeleteLanguage, selectedLanguage]);
 
+  const handleConfirmClearDefault = useCallback(
+    () =>
+      runConfirmedAction(
+        () => onSetDefault(null),
+        setClearDefaultError,
+        () => setClearDefaultOpen(false),
+        "Failed to clear the default language."
+      ),
+    [onSetDefault]
+  );
+
+  const handleSetDefault = useCallback(() => {
+    if (selectedLanguage === null) return;
+    setSetDefaultError(null);
+    onSetDefault(selectedLanguage).catch((err: unknown) => {
+      setSetDefaultError(
+        err instanceof Error
+          ? err.message
+          : "Failed to set the default language."
+      );
+    });
+  }, [onSetDefault, selectedLanguage]);
+
+  // A set-default failure describes an attempt on one row; switching rows
+  // makes it stale. (The set path has no dialog whose dismissal would
+  // otherwise clear it.)
+  useEffect(() => {
+    setSetDefaultError(null);
+  }, [selectedLanguage]);
+
   // Memoized: handleCreate's collision check depends on this, and the
   // `?? []` fallback would otherwise mint a fresh array identity every
   // render (react-hooks/exhaustive-deps).
@@ -139,6 +209,15 @@ export function LanguageSelector({
   const visibleLanguages = languages.filter(
     (l) => showDrafts || isPublished(l) || l.name === selectedLanguage
   );
+
+  // #286 org default. `defaultName` drives the per-row badge; the notice
+  // carries the three end-user-facing states (healthy / draft-warning /
+  // none) plus the drift case.
+  const defaultName = defaultLanguageName(defaultState);
+  const defaultNotice = describeLanguageDefault(defaultState);
+  const defaultUnsupported = defaultState.kind === "unsupported";
+  const selectedIsDefault =
+    selectedLanguage !== null && selectedLanguage === defaultName;
 
   const handleCreate = useCallback(() => {
     const slug = newName
@@ -204,6 +283,15 @@ export function LanguageSelector({
                           Draft
                         </Badge>
                       )}
+                      {l.name === defaultName && (
+                        <Badge
+                          variant="secondary"
+                          className="gap-1 px-1.5 py-0 text-[10px]"
+                        >
+                          <Star className="size-2.5 fill-current" />
+                          Default
+                        </Badge>
+                      )}
                     </span>
                   </SelectItem>
                 ))
@@ -241,6 +329,80 @@ export function LanguageSelector({
             >
               {selectedIsPublished ? "Published" : "Draft"}
             </Badge>
+
+            {/* #286 — set/clear the org default for the selected language.
+                Admin-only (the worker's PUT gate is admin-only too), and
+                absent entirely on a worker without the route pair. */}
+            {canSetDefault &&
+              !defaultUnsupported &&
+              (selectedIsDefault ? (
+                <AlertDialog
+                  open={clearDefaultOpen}
+                  onOpenChange={(next) => {
+                    setClearDefaultOpen(next);
+                    if (!next) setClearDefaultError(null);
+                  }}
+                >
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={isSettingDefault}
+                    >
+                      <StarOff className="mr-1.5 size-3.5" />
+                      Clear default
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Clear the org default language?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        End users will stop receiving this language&rsquo;s
+                        tuning automatically — after this, tuning only applies
+                        when they ask for a language with{" "}
+                        <span className="text-foreground font-medium">
+                          @language
+                        </span>
+                        . The language itself is not changed.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    {clearDefaultError && (
+                      <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+                        {clearDefaultError}
+                      </p>
+                    )}
+                    <AlertDialogFooter>
+                      <AlertDialogCancel disabled={isSettingDefault}>
+                        Cancel
+                      </AlertDialogCancel>
+                      {/* Plain Button — see comment in Unpublish dialog. */}
+                      <Button
+                        onClick={handleConfirmClearDefault}
+                        disabled={isSettingDefault}
+                      >
+                        {isSettingDefault ? "Clearing…" : "Clear default"}
+                      </Button>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={isSettingDefault}
+                  onClick={handleSetDefault}
+                  title={
+                    defaultName === null
+                      ? "Make this the language end users get without asking"
+                      : `Replace "${defaultName}" as the org default`
+                  }
+                >
+                  <Star className="mr-1.5 size-3.5" />
+                  Set as default
+                </Button>
+              ))}
 
             {canPublishSelected &&
               (selectedIsPublished ? (
@@ -369,6 +531,41 @@ export function LanguageSelector({
           </div>
         )}
       </div>
+
+      {/* #286 — one line that says what end users actually get. Rendered
+          for every viewer (shepherds included: whether their draft is the
+          org default changes what "publish" means for them), while the
+          set/clear control above stays admin-only. */}
+      {defaultUnsupported
+        ? canSetDefault && (
+            <p className="text-muted-foreground text-xs" aria-live="polite">
+              Setting an org default language isn&rsquo;t available on this
+              org&rsquo;s worker yet.
+            </p>
+          )
+        : defaultNotice && (
+            <p
+              className={cn(
+                "flex items-center gap-1.5 text-xs",
+                defaultNotice.tone === "warning"
+                  ? "rounded-r-md border-l-2 border-amber-500 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-400"
+                  : "text-muted-foreground"
+              )}
+              role={defaultNotice.tone === "warning" ? "status" : undefined}
+              aria-live="polite"
+            >
+              {defaultNotice.tone === "healthy" && (
+                <Star className="size-3 shrink-0 fill-current" />
+              )}
+              {defaultNotice.message}
+            </p>
+          )}
+
+      {setDefaultError && (
+        <p className="text-destructive text-xs" role="alert">
+          {setDefaultError}
+        </p>
+      )}
 
       {showCreate && (
         <div className="bg-card animate-in fade-in slide-in-from-bottom-4 rounded-xl border p-4 shadow-sm duration-200">

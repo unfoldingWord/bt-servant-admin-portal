@@ -6,7 +6,11 @@ import { useBlocker } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
-import { LanguageForbiddenError } from "@/lib/languages-api";
+import { computeLanguageDefaultState } from "@/lib/language-default-state";
+import {
+  LanguageForbiddenError,
+  LanguageIsDefaultError,
+} from "@/lib/languages-api";
 import {
   effectiveLanguageEditRights,
   effectiveLanguagePublishRights,
@@ -21,7 +25,9 @@ import {
   useDeleteLanguage,
   useLanguage,
   useLanguages,
+  useOrgDefaultLanguage,
   useSaveLanguage,
+  useSetOrgDefaultLanguage,
 } from "@/hooks/use-languages";
 import { useLanguageScaffold } from "@/hooks/use-language-scaffold";
 import type { MarkdownHeading } from "@/types/markdown";
@@ -88,6 +94,12 @@ export function LanguagesPage() {
   const canPublishSelected =
     selectedLanguage !== null && hasRights(publishRights, selectedLanguage);
   const canDeleteSelected = canEditSelected && canPublishSelected;
+  // #286 — the org default is one pointer shared by the whole org, so it
+  // is admin-only rather than per-row (the worker's PUT gate on
+  // /api/config/languages-default enforces the same rule; this is the UI
+  // mirror). Cross-org context is super-admin-only, so it carries admin
+  // powers by construction.
+  const canSetDefault = isAdmin || isCrossOrg;
 
   // Queries / mutations
   const languagesQuery = useLanguages(contextOrg);
@@ -95,6 +107,13 @@ export function LanguagesPage() {
   const saveLanguage = useSaveLanguage(contextOrg);
   const deleteLanguage = useDeleteLanguage(contextOrg);
   const scaffoldQuery = useLanguageScaffold(contextOrg);
+  // #286 — org default. Its own query rather than the list's
+  // `defaultLanguage` echo, because only the dedicated endpoint can tell
+  // "no default set" apart from "this worker predates worker#236"; the
+  // query resolves (never rejects) on that 404, so a portal running ahead
+  // of the worker shows no control instead of an error on page load.
+  const orgDefaultQuery = useOrgDefaultLanguage(contextOrg);
+  const setOrgDefault = useSetOrgDefaultLanguage(contextOrg);
 
   // Every keystroke re-renders this page (the editor draft lives in
   // component state), so the raw-name list for the create-dialog
@@ -355,6 +374,26 @@ export function LanguagesPage() {
     [draft, languageQuery.data, saveLanguage, selectedLanguage, serverLabel]
   );
 
+  // #286 — set (`name`) or clear (`null`) the org default. mutateAsync so
+  // the selector's clear-confirmation dialog can await it and render its
+  // failure inline (#102 pattern), and so the set path can surface its own
+  // message without a page-level banner.
+  const handleSetDefault = useCallback(
+    async (name: string | null) => {
+      await setOrgDefault.mutateAsync(name);
+    },
+    [setOrgDefault]
+  );
+
+  const defaultState = useMemo(
+    () =>
+      computeLanguageDefaultState(
+        orgDefaultQuery.data,
+        languagesQuery.data?.languages
+      ),
+    [orgDefaultQuery.data, languagesQuery.data]
+  );
+
   const handleDeleteLanguage = useCallback(
     async (name: string) => {
       await deleteLanguage.mutateAsync(name);
@@ -446,6 +485,10 @@ export function LanguagesPage() {
               isScaffoldReady={scaffoldQuery.isSuccess}
               scaffoldError={scaffoldQuery.isError}
               takenNames={takenNames}
+              defaultState={defaultState}
+              canSetDefault={canSetDefault}
+              onSetDefault={handleSetDefault}
+              isSettingDefault={setOrgDefault.isPending}
             />
           </div>
 
@@ -490,7 +533,13 @@ export function LanguagesPage() {
           role="alert"
           aria-live="polite"
         >
-          Save failed: {genericMutationError.message}
+          {/* #286 — the org-default 409 already reads as an instruction
+              ("set a different default first"); prefixing it with "Save
+              failed" would misdescribe a delete that was refused for a
+              reason the user can act on. */}
+          {genericMutationError instanceof LanguageIsDefaultError
+            ? genericMutationError.message
+            : `Save failed: ${genericMutationError.message}`}
         </div>
       )}
 

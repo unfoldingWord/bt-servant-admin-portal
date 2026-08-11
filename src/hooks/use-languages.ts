@@ -8,6 +8,11 @@ const keys = {
   languages: (org: string | null) => ["languages", org] as const,
   language: (name: string, org: string | null) =>
     ["languages", name, org] as const,
+  // NOT ["languages", "default", org]: `default` is a legal language slug,
+  // so that key would collide with the per-language key for a language
+  // literally named "default" — the same collision worker#236 avoided by
+  // naming the route `languages-default` instead of `languages/default`.
+  orgDefault: (org: string | null) => ["languages-default", org] as const,
 };
 
 function normalize(org?: string | null): string | null {
@@ -65,6 +70,42 @@ export function useDeleteLanguage(org?: string | null) {
     mutationFn: (name: string) =>
       languagesApi.deleteLanguage(name, undefined, key),
     onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.languages(key) });
+    },
+  });
+}
+
+// Org default language (#286). Read through its own endpoint rather than
+// off the collection's `defaultLanguage` echo: the collection can't
+// distinguish "no default" from "this worker predates worker#236", and the
+// control must hide itself in the second case instead of asserting the org
+// has no default.
+//
+// `retry: false` — the graceful-absence path already resolves (404/501 →
+// `{ supported: false }`), so a rejection here is a genuine failure and
+// retrying it three times only delays the panel.
+export function useOrgDefaultLanguage(org?: string | null) {
+  const key = normalize(org);
+  return useQuery({
+    queryKey: keys.orgDefault(key),
+    queryFn: ({ signal }) => languagesApi.getOrgDefaultLanguage(signal, key),
+    retry: false,
+  });
+}
+
+// Set (`name`) or clear (`null`) the org default. Writes the server's echo
+// straight into the cache so the badge and the notice flip immediately —
+// the list invalidation that follows only refreshes the published flags the
+// notice reads, and waiting for it would leave the control looking inert
+// for a round-trip.
+export function useSetOrgDefaultLanguage(org?: string | null) {
+  const qc = useQueryClient();
+  const key = normalize(org);
+  return useMutation({
+    mutationFn: (name: string | null) =>
+      languagesApi.setOrgDefaultLanguage(name, undefined, key),
+    onSuccess: (data) => {
+      qc.setQueryData(keys.orgDefault(key), data);
       void qc.invalidateQueries({ queryKey: keys.languages(key) });
     },
   });
