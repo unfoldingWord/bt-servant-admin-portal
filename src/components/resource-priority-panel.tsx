@@ -44,6 +44,13 @@ import {
 const EXPECTATION_COPY =
   "Ranking strongly increases the likelihood that BT Servant answers from higher-ranked sources first. It is not a guarantee — a lower-ranked source can still be used when it fits the question better.";
 const SCOPE_COPY = "Priorities apply to this mode in every language.";
+// Shown when Apply is enabled on a panel nobody has touched — see
+// `isOfferedRefresh`. Same trigger vocabulary as the block's own instruction,
+// and honest about scope: the refresh rewrites the whole generated block, so
+// descriptions that have drifted since it was written move too. The ranking is
+// the part that is guaranteed not to.
+const OFFERED_REFRESH_COPY =
+  "The ranking is unchanged. Applying refreshes this mode's saved block, so it asks BT Servant to say so when an answer draws on a lower-ranked source, or a resource not ranked here.";
 
 // Same sentence the Modes header uses for the same denial (see
 // NO_EDIT_RIGHTS_REASON in app/pages/modes.tsx). The header already gates the
@@ -225,6 +232,15 @@ function PanelBody({
           : unchanged && applyError === null
             ? "The order already matches what's saved."
             : null;
+
+  // Apply is live and the user hasn't touched anything: by elimination, the
+  // only reason it is live is that this mode's stored block differs from the
+  // one we'd write — an OFFERED refresh, not a ranking change. Without saying
+  // so, an enabled Apply on an untouched panel reads as a change the user
+  // can't account for, and the safest-looking move (close the sheet) is the
+  // one that leaves the block stale.
+  const isOfferedRefresh =
+    applyBlockedReason === null && applyError === null && order === null;
 
   const submitLanguage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -652,6 +668,15 @@ function PanelBody({
             This document is already too close to the 64,000-character limit to
             rewrite its priorities block. The saved ranking is untouched — trim
             the document elsewhere, and it can be updated again.
+          </p>
+        )}
+
+        {isOfferedRefresh && (
+          <p
+            className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs leading-relaxed"
+            role="status"
+          >
+            {OFFERED_REFRESH_COPY}
           </p>
         )}
 
