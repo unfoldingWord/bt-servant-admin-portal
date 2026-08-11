@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Download, Save } from "lucide-react";
+import { Download, ListOrdered, Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
@@ -65,6 +65,7 @@ import {
 import { MarkdownToc } from "@/components/markdown-toc";
 import { ModeSelector } from "@/components/mode-selector";
 import { PageHeader } from "@/components/page-header";
+import { ResourcePriorityPanel } from "@/components/resource-priority-panel";
 
 const AUTO_SAVE_DEBOUNCE_MS = 800;
 
@@ -74,6 +75,8 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 const NO_EDIT_RIGHTS_REASON = "You don't have edit rights on this mode.";
 const REQUIRES_GROUP_HELP =
   "When on, this mode is only offered in group chats (Telegram groups) — hidden from WhatsApp, web, and DMs.";
+const RESOURCE_PRIORITIES_HELP =
+  "Rank the resources this mode answers from first. Written into the mode document, under Tool Guidance.";
 
 export function ModesPage() {
   const user = useAuthStore((s) => s.user);
@@ -277,6 +280,10 @@ export function ModesPage() {
             if (!trackersOwn(target)) return;
             setLastSyncedDoc(doc);
             setLastFailedDoc(null);
+            // Any successful document sync retires a stale priority-apply
+            // failure — the draft it complained about is now persisted, and a
+            // reopened panel must not claim otherwise.
+            setPriorityApplyError(null);
             applyLastSyncedFlags(reconcileModeFlags(sent, saved));
           },
           onError: () => {
@@ -382,6 +389,39 @@ export function ModesPage() {
   const [pendingContextOrg, setPendingContextOrg] = useState<{
     value: string | null;
   } | null>(null);
+
+  // #277 — the resource-priority panel. Open state lives here, not in the
+  // panel, so a failed apply-save leaves it exactly where the user left it.
+  // The error lives here for the same reason, one step further: Radix unmounts
+  // the sheet's subtree on close, so panel-local error state would let
+  // close-then-reopen silently forget that the draft is unsaved.
+  const [prioritiesOpen, setPrioritiesOpen] = useState(false);
+  const [priorityApplyError, setPriorityApplyError] = useState<string | null>(
+    null
+  );
+
+  // A stale apply failure — and an open panel — are about another mode's
+  // draft the moment the selection moves (rights revocation and org-context
+  // switches clear the selection out from under the modal sheet). Close both;
+  // the prior mode's unsaved state is already reported by the ordinary
+  // save-status machinery.
+  useEffect(() => {
+    setPrioritiesOpen(false);
+    setPriorityApplyError(null);
+  }, [selectedMode]);
+
+  // The apply error is a claim about ONE document — the failed apply's
+  // `nextDocument`, which is exactly what `lastFailedDoc` holds after the
+  // catch below. The moment the draft diverges from it (the user edited away
+  // or undid the ranking, or any save landed and cleared `lastFailedDoc`),
+  // the banner's "your ranking is still here, apply again" story is false —
+  // retire it. This is the recovery path the per-save clears can't see:
+  // divergence without a save.
+  useEffect(() => {
+    if (priorityApplyError !== null && draft !== lastFailedDoc) {
+      setPriorityApplyError(null);
+    }
+  }, [draft, lastFailedDoc, priorityApplyError]);
 
   // #260 — post-rename display-name sync prompt. Holds the rename
   // response (server truth for label/description/document/published) so
@@ -520,6 +560,7 @@ export function ModesPage() {
         });
         if (!trackersOwn(name)) return;
         setLastSyncedDoc(draft);
+        setPriorityApplyError(null);
         applyLastSyncedFlags(reconcileModeFlags(sent, saved));
       } finally {
         inFlightSavesRef.current -= 1;
@@ -568,6 +609,7 @@ export function ModesPage() {
         });
         if (!trackersOwn(target)) return;
         setLastSyncedDoc(draft);
+        setPriorityApplyError(null);
         applyLastSyncedFlags(reconcileModeFlags(sent, saved));
       } finally {
         inFlightSavesRef.current -= 1;
@@ -576,6 +618,91 @@ export function ModesPage() {
     [
       applyLastSyncedFlags,
       draft,
+      saveMode,
+      selectedMode,
+      serverDescription,
+      serverLabel,
+      trackersOwn,
+    ]
+  );
+
+  // #277 — resource prioritization is a DOCUMENT edit, not a new field: the
+  // panel hands back the next document and this flushes it through the same
+  // save machinery as everything else on the page. No flags move, so the
+  // tracked pair is re-asserted verbatim (the worker has no partial update),
+  // and no new PUT body field is introduced anywhere. Serialized on the same
+  // synchronous lock as the flag toggles, and for the mirror-image reason:
+  // this PUT carries the whole document, so starting one mid-flight would
+  // ship a pre-flight document over whatever that write is landing.
+  const handleApplyResourcePriorities = useCallback(
+    async (nextDocument: string) => {
+      if (!selectedMode) return;
+      // Symmetry with flushSave: the button and the panel are already
+      // rights-gated, but the worker's gate deserves a local mirror.
+      if (!canEditSelected) return;
+      // Silent: the panel's controls are busy-disabled while a save is in
+      // flight, and an error here is about no document in particular — the
+      // draft-divergence effect below would clear it on the next paint anyway.
+      if (inFlightSavesRef.current > 0 || saveMode.isPending) return;
+      const target = selectedMode;
+      const sent = lastSyncedFlagsRef.current;
+      // Show the edit immediately; the flush below is what persists it. On
+      // failure it stays in the draft as ordinary unsaved changes, which is
+      // what the Save button and the status chip already know how to report.
+      setDraft(nextDocument);
+      setPriorityApplyError(null);
+      inFlightSavesRef.current += 1;
+      try {
+        const saved = await saveMode.mutateAsync({
+          name: target,
+          body: {
+            label: serverLabel,
+            description: serverDescription,
+            document: nextDocument,
+            ...sent,
+          },
+        });
+        if (trackersOwn(target)) {
+          setLastSyncedDoc(nextDocument);
+          setLastFailedDoc(null);
+          applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+          // Also retires the error a second Apply click recorded after this
+          // attempt cleared it (the lost-the-in-flight-race case is same-mode
+          // by construction, so the ownership guard keeps it covered). Then
+          // close — but only on success: a failed save keeps the panel open
+          // with the user's ordering intact and the failure reported inside
+          // the sheet. Both stay ownership-gated so a save that outlives the
+          // selection can't close (or repaint) a panel now showing another
+          // mode; the selection-change effect already reset panel state.
+          setPriorityApplyError(null);
+          setPrioritiesOpen(false);
+        }
+      } catch (err) {
+        // Unlike the flag toggles, this path CHANGED the draft. Without
+        // marking the failed document, the autosave effect would re-fire it
+        // on every isPending → false transition (the loop Frank flagged on
+        // PR #122). The user recovers with Apply again, Save, or by editing.
+        if (trackersOwn(target)) {
+          setLastFailedDoc(nextDocument);
+          // Recorded rather than rethrown: the promise contract with the
+          // panel is that it never rejects, so the error survives the sheet
+          // unmounting on close instead of dying with the panel's state.
+          // Ownership-gated like every other write here — a failure from a
+          // save that outlived the selection must not be pinned on whatever
+          // mode the panel would now be showing.
+          setPriorityApplyError(
+            err instanceof Error && err.message
+              ? err.message
+              : "The ranking could not be saved."
+          );
+        }
+      } finally {
+        inFlightSavesRef.current -= 1;
+      }
+    },
+    [
+      applyLastSyncedFlags,
+      canEditSelected,
       saveMode,
       selectedMode,
       serverDescription,
@@ -799,6 +926,9 @@ export function ModesPage() {
   const requiresGroupHelp = canEditSelected
     ? REQUIRES_GROUP_HELP
     : `${REQUIRES_GROUP_HELP} ${NO_EDIT_RIGHTS_REASON}`;
+  const resourcePrioritiesHelp = canEditSelected
+    ? RESOURCE_PRIORITIES_HELP
+    : `${RESOURCE_PRIORITIES_HELP} ${NO_EDIT_RIGHTS_REASON}`;
 
   const saveStatus = useMemo(() => {
     if (isSaving) return "Saving…";
@@ -901,6 +1031,26 @@ export function ModesPage() {
                 aria-live="polite"
               >
                 {saveStatus}
+              </span>
+              {/* #277 — opens the ranking panel. Gated by the same right
+                  the Save button and the group-chat switch are gated by; the
+                  panel itself refuses to apply without it as a backstop. */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setPrioritiesOpen(true)}
+                disabled={!canEditSelected || isSaving}
+                title={resourcePrioritiesHelp}
+                aria-describedby="mode-resource-priorities-help"
+              >
+                <ListOrdered className="mr-1.5 size-3.5" />
+                Resource priorities
+              </Button>
+              {/* Same reason as the switch's sr-only span: a disabled control
+                  is out of the tab order and gets no hover on touch, so the
+                  denial has to exist in the accessibility tree too. */}
+              <span id="mode-resource-priorities-help" className="sr-only">
+                {resourcePrioritiesHelp}
               </span>
               <Button
                 size="sm"
@@ -1144,6 +1294,29 @@ export function ModesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* #277 — per-mode resource prioritization. Reads the live draft and
+          emits the next document; saving stays this page's job. Unlike the
+          group-chat switch, a failure is not left to the saveError banner:
+          the sheet's modal overlay covers this page while it is open, so that
+          banner is dimmed and inert. The failure is recorded here in
+          priorityApplyError and rendered by the panel, inside the sheet,
+          where the user is. */}
+      <ResourcePriorityPanel
+        open={prioritiesOpen}
+        onOpenChange={(open) => {
+          // The footer disables Cancel while a save is in flight, and Escape /
+          // overlay-click must keep the same promise — dismissing mid-PUT
+          // would unmount the panel's busy state while the save runs on.
+          if (!open && isSaving) return;
+          setPrioritiesOpen(open);
+        }}
+        document={draft}
+        canEdit={canEditSelected}
+        isSaving={isSaving}
+        onApply={handleApplyResourcePriorities}
+        applyError={priorityApplyError}
+      />
     </div>
   );
 }
