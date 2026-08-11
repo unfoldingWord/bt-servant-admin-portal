@@ -4,12 +4,15 @@ import {
   computeLanguageDefaultState,
   defaultLanguageName,
   describeLanguageDefault,
+  isDefaultControlAvailable,
+  type LanguageDefaultInputs,
 } from "../src/lib/language-default-state";
 import type { Language, OrgDefaultLanguage } from "../src/types/language";
 
 // #286 — the three states Ian asked the Languages page to render, plus the
-// two the implementation has to survive: an endpoint that isn't deployed
-// yet, and a default pointing at a slug that isn't in the list.
+// four the implementation has to survive: an endpoint that isn't deployed
+// yet, a read that genuinely failed, either query still in flight, and a
+// default pointing at a slug that isn't in the list.
 
 const hindi: Language = {
   name: "hindi",
@@ -25,65 +28,117 @@ const supported = (name: string | null): OrgDefaultLanguage => ({
   name,
 });
 
-describe("computeLanguageDefaultState", () => {
+// Settled, successful, list-loaded — the baseline every test perturbs.
+function inputs(over: Partial<LanguageDefaultInputs> = {}) {
+  return {
+    orgDefault: supported("hindi"),
+    isPending: false,
+    isError: false,
+    languages: [hindi, swahili],
+    ...over,
+  } satisfies LanguageDefaultInputs;
+}
+
+describe("computeLanguageDefaultState — resolved states", () => {
   it("default + published → healthy", () => {
-    const state = computeLanguageDefaultState(supported("hindi"), [
-      hindi,
-      swahili,
-    ]);
-    expect(state).toEqual({ kind: "healthy", name: "hindi", label: "Hindi" });
+    expect(computeLanguageDefaultState(inputs())).toEqual({
+      kind: "healthy",
+      name: "hindi",
+      label: "Hindi",
+    });
   });
 
   it("default + unpublished → unpublished (deliberately legal per worker#236)", () => {
-    const state = computeLanguageDefaultState(supported("hindi"), [hindiDraft]);
+    const state = computeLanguageDefaultState(
+      inputs({ languages: [hindiDraft] })
+    );
     expect(state.kind).toBe("unpublished");
   });
 
   it("treats a language with no `published` field as a draft", () => {
     // Engine rows predating the published flag omit it; a missing flag must
     // never read as "live for end users".
-    const state = computeLanguageDefaultState(supported("swahili"), [
-      { name: "swahili" },
-    ]);
+    const state = computeLanguageDefaultState(
+      inputs({
+        orgDefault: supported("swahili"),
+        languages: [{ name: "swahili" }],
+      })
+    );
     expect(state.kind).toBe("unpublished");
   });
 
   it("no default set → none", () => {
-    expect(computeLanguageDefaultState(supported(null), [hindi])).toEqual({
-      kind: "none",
-    });
+    expect(
+      computeLanguageDefaultState(inputs({ orgDefault: supported(null) }))
+    ).toEqual({ kind: "none" });
   });
 
-  it("endpoint absent (worker predates worker#236) → unsupported", () => {
-    expect(computeLanguageDefaultState({ supported: false }, [hindi])).toEqual({
-      kind: "unsupported",
-    });
-  });
-
-  it("query not answered yet → unsupported, NOT 'none'", () => {
-    // "No default is set" is a claim about the org. Rendering it while the
-    // query is still in flight would flash a warning on every page load and
-    // then silently contradict itself.
-    expect(computeLanguageDefaultState(undefined, [hindi])).toEqual({
-      kind: "unsupported",
-    });
-  });
-
-  it("default pointing at a slug that isn't in the list → missing", () => {
-    const state = computeLanguageDefaultState(supported("gone"), [hindi]);
-    expect(state).toEqual({ kind: "missing", name: "gone" });
-  });
-
-  it("tolerates an undefined language list (list query still loading)", () => {
-    expect(computeLanguageDefaultState(supported("hindi"), undefined)).toEqual({
-      kind: "missing",
-      name: "hindi",
-    });
+  it("default pointing at a slug that isn't in the RESOLVED list → missing", () => {
+    expect(
+      computeLanguageDefaultState(inputs({ orgDefault: supported("gone") }))
+    ).toEqual({ kind: "missing", name: "gone" });
   });
 
   it("omits `label` when the entry has none (no fabricated display name)", () => {
-    const state = computeLanguageDefaultState(supported("swahili"), [swahili]);
-    expect(state).toEqual({ kind: "healthy", name: "swahili" });
+    expect(
+      computeLanguageDefaultState(
+        inputs({ orgDefault: supported("swahili"), languages: [swahili] })
+      )
+    ).toEqual({ kind: "healthy", name: "swahili" });
+  });
+});
+
+describe("computeLanguageDefaultState — unresolved reads never make claims", () => {
+  it("in-flight collection + resolved default → pending, NOT the drift warning", () => {
+    // The default payload is tiny and lands first on essentially every
+    // page load and org switch. Collapsing `undefined` into an empty list
+    // made that ordinary window render the amber "points at X, which isn't
+    // in this org's language list" — a false accusation, and a permanent
+    // one whenever the collection query failed.
+    expect(
+      computeLanguageDefaultState(inputs({ languages: undefined }))
+    ).toEqual({ kind: "pending" });
+  });
+
+  it("in-flight default query → pending, NOT 'no default set'", () => {
+    expect(
+      computeLanguageDefaultState(
+        inputs({ orgDefault: undefined, isPending: true })
+      )
+    ).toEqual({ kind: "pending" });
+  });
+
+  it("data absent with no pending flag wired → still pending, never a claim", () => {
+    expect(
+      computeLanguageDefaultState(
+        inputs({ orgDefault: undefined, isPending: false })
+      )
+    ).toEqual({ kind: "pending" });
+  });
+
+  it("a failed default read → error, NOT 'not available on this worker'", () => {
+    // 404/501 resolve as `{ supported: false }` in languages-api, so a
+    // rejection is a 5xx or a network fault. Claiming the feature doesn't
+    // exist would hide a real outage behind a permanent, undiagnosable lie.
+    expect(
+      computeLanguageDefaultState(
+        inputs({ orgDefault: undefined, isError: true })
+      )
+    ).toEqual({ kind: "error" });
+  });
+
+  it("error wins over a stale pending flag", () => {
+    expect(
+      computeLanguageDefaultState(
+        inputs({ orgDefault: undefined, isPending: true, isError: true })
+      )
+    ).toEqual({ kind: "error" });
+  });
+
+  it("endpoint absent (worker predates worker#236) → unsupported", () => {
+    expect(
+      computeLanguageDefaultState(inputs({ orgDefault: { supported: false } }))
+    ).toEqual({ kind: "unsupported" });
   });
 });
 
@@ -120,13 +175,44 @@ describe("describeLanguageDefault", () => {
     expect(notice.message).toContain("gone");
   });
 
-  it("unsupported renders nothing at all", () => {
+  it("error says the READ failed and that the default is untouched", () => {
+    const notice = describeLanguageDefault({ kind: "error" })!;
+    expect(notice.tone).toBe("error");
+    expect(notice.message).toMatch(/Couldn't load/);
+    expect(notice.message).toContain("unchanged");
+  });
+
+  it("pending and unsupported render no notice at all", () => {
+    expect(describeLanguageDefault({ kind: "pending" })).toBeNull();
     expect(describeLanguageDefault({ kind: "unsupported" })).toBeNull();
   });
 
   it("falls back to the slug when the entry has no label", () => {
     const notice = describeLanguageDefault({ kind: "healthy", name: "hindi" })!;
     expect(notice.message).toContain('"hindi"');
+  });
+});
+
+describe("isDefaultControlAvailable", () => {
+  it("offers the set/clear control only once the current default is known", () => {
+    expect(isDefaultControlAvailable({ kind: "none" })).toBe(true);
+    expect(isDefaultControlAvailable({ kind: "healthy", name: "hindi" })).toBe(
+      true
+    );
+    expect(
+      isDefaultControlAvailable({ kind: "unpublished", name: "hindi" })
+    ).toBe(true);
+    expect(isDefaultControlAvailable({ kind: "missing", name: "gone" })).toBe(
+      true
+    );
+  });
+
+  it("withholds it while pending, unsupported, or failed", () => {
+    // Offering "Set as default" against an unknown current value invites a
+    // write whose effect the admin can't predict.
+    expect(isDefaultControlAvailable({ kind: "pending" })).toBe(false);
+    expect(isDefaultControlAvailable({ kind: "unsupported" })).toBe(false);
+    expect(isDefaultControlAvailable({ kind: "error" })).toBe(false);
   });
 });
 
@@ -144,5 +230,7 @@ describe("defaultLanguageName", () => {
   it("returns null when there is no default to badge", () => {
     expect(defaultLanguageName({ kind: "none" })).toBeNull();
     expect(defaultLanguageName({ kind: "unsupported" })).toBeNull();
+    expect(defaultLanguageName({ kind: "pending" })).toBeNull();
+    expect(defaultLanguageName({ kind: "error" })).toBeNull();
   });
 });

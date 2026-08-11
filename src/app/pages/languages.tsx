@@ -377,13 +377,26 @@ export function LanguagesPage() {
     [setOrgDefault]
   );
 
+  // Both queries feed the state machine, loading flags included: "no
+  // default is set" and "the default points at nothing" are claims about
+  // the org, and an unresolved read is not evidence for either. `isError`
+  // is threaded separately because 404/501 RESOLVE as unsupported — a
+  // rejection here is a real failure and must not masquerade as "this
+  // worker doesn't have the feature".
   const defaultState = useMemo(
     () =>
-      computeLanguageDefaultState(
-        orgDefaultQuery.data,
-        languagesQuery.data?.languages
-      ),
-    [orgDefaultQuery.data, languagesQuery.data]
+      computeLanguageDefaultState({
+        orgDefault: orgDefaultQuery.data,
+        isPending: orgDefaultQuery.isPending,
+        isError: orgDefaultQuery.isError,
+        languages: languagesQuery.data?.languages,
+      }),
+    [
+      orgDefaultQuery.data,
+      orgDefaultQuery.isPending,
+      orgDefaultQuery.isError,
+      languagesQuery.data,
+    ]
   );
 
   const handleDeleteLanguage = useCallback(

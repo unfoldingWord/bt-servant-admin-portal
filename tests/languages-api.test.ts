@@ -248,6 +248,16 @@ describe("deleteLanguage", () => {
     }
   });
 
+  it("hedges the 409 copy — worker#236 pins no error body to discriminate on", async () => {
+    // Every delete 409 lands on this class, so the message must stay true
+    // if upstream ever adds a second conflict reason: it states the
+    // observable fact (refused) and offers the known cause as likely.
+    mockFetchOnce(409, "");
+    const err = await deleteLanguage("hindi").catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/can't be deleted right now/);
+    expect((err as Error).message).toMatch(/may be/);
+  });
+
   it("409 is distinguishable from a permission failure", async () => {
     mockFetchOnce(409, "");
     await expect(deleteLanguage("hindi")).rejects.not.toBeInstanceOf(
@@ -358,6 +368,45 @@ describe("setOrgDefaultLanguage", () => {
     expect(await setOrgDefaultLanguage("hindi")).toEqual({
       supported: true,
       name: "hindi",
+    });
+  });
+
+  it.each([
+    ["an empty object", {}],
+    ["an ack envelope", { ok: true }],
+    ["a differently-named key", { defaultLanguage: "hindi" }],
+    ["a wrapped envelope", { org: "acme", message: "saved" }],
+  ])(
+    "a successful set with %s still reports the slug we set, not 'no default'",
+    async (_label, body) => {
+      // worker#236 fixes the REQUEST shape only. Reading an unrecognized
+      // 2xx body as `name: null` would make a successful set immediately
+      // render "No default language is set" — a lie with no self-
+      // correction until the next page load. The mutation's invalidation
+      // is what reconciles this optimistic guess.
+      mockFetchOnce(200, body);
+      expect(await setOrgDefaultLanguage("hindi")).toEqual({
+        supported: true,
+        name: "hindi",
+      });
+    }
+  );
+
+  it("a recognized echo still wins over the requested value", async () => {
+    // If the server says the default is something else, believe the
+    // server — the fallback is for unreadable bodies, not a veto.
+    mockFetchOnce(200, { name: "swahili" });
+    expect(await setOrgDefaultLanguage("hindi")).toEqual({
+      supported: true,
+      name: "swahili",
+    });
+  });
+
+  it("clearing reports null even when the body is unrecognizable", async () => {
+    mockFetchOnce(200, { ok: true });
+    expect(await setOrgDefaultLanguage(null)).toEqual({
+      supported: true,
+      name: null,
     });
   });
 

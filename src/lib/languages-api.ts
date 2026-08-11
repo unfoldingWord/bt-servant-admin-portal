@@ -22,14 +22,18 @@ export class LanguageForbiddenError extends Error {
   }
 }
 
-// Thrown when DELETE is refused because the language is the org's default
-// (#286 — upstream answers 409, "unset or reassign the default first").
-// A distinct class so the delete dialog can render the actionable recovery
-// step instead of the raw `Failed to delete language (409)` text.
+// Thrown when DELETE is refused with a 409. worker#236 specifies exactly
+// one 409 on this route — "the language is the org default; unset or
+// reassign it first" — but does NOT pin an error body, so there is no
+// discriminator to key on and a future second conflict reason would land
+// here too. The wording therefore leads with the observable fact (the
+// delete was refused) and offers the known cause as the likely one:
+// confidently wrong copy is worse than hedged copy the user can act on.
+// Tighten this to an exact claim once the upstream body shape is known.
 export class LanguageIsDefaultError extends Error {
   constructor(public readonly languageName: string) {
     super(
-      `"${languageName}" is this org's default language. Set a different default — or clear it — before deleting this language.`
+      `"${languageName}" can't be deleted right now — it may be this org's default language. Set a different default, or clear it, then try again.`
     );
     this.name = "LanguageIsDefaultError";
   }
@@ -237,11 +241,14 @@ export async function setOrgDefaultLanguage(
     );
   }
 
-  // Trust the server's echo when it sends one; a bodyless 204 falls back to
-  // what we asked for, which is what the caller is about to render.
+  // Trust the server's echo only when we can actually read a slug out of
+  // it; otherwise fall back to what we asked for. worker#236 fixes the
+  // request shape but not the response envelope, so a 2xx body we don't
+  // recognize (`{}`, `{"ok":true}`, `{"defaultLanguage":"hindi"}`, a
+  // bodyless 204) must not be read as "the default is now unset" — that
+  // would make a SUCCESSFUL set render "No default language is set" with
+  // nothing to correct it until the next page load. The mutation's cache
+  // invalidation is the backstop that reconciles a wrong guess here.
   const data: unknown = await res.json().catch(() => null);
-  return {
-    supported: true,
-    name: data === null ? name : readDefaultName(data),
-  };
+  return { supported: true, name: readDefaultName(data) ?? name };
 }

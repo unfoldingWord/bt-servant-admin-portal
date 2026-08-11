@@ -1,6 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 
 import * as languagesApi from "@/lib/languages-api";
+import type { OrgDefaultLanguage } from "@/types/language";
 
 // Org is part of every key so a super-admin's cross-org view doesn't collide
 // with the same-org cache. `null` is the canonical same-org placeholder.
@@ -69,9 +75,7 @@ export function useDeleteLanguage(org?: string | null) {
   return useMutation({
     mutationFn: (name: string) =>
       languagesApi.deleteLanguage(name, undefined, key),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.languages(key) });
-    },
+    onSuccess: () => applyLanguageDeletionToCache(qc, key),
   });
 }
 
@@ -95,18 +99,58 @@ export function useOrgDefaultLanguage(org?: string | null) {
 
 // Set (`name`) or clear (`null`) the org default. Writes the server's echo
 // straight into the cache so the badge and the notice flip immediately —
-// the list invalidation that follows only refreshes the published flags the
-// notice reads, and waiting for it would leave the control looking inert
-// for a round-trip.
+// waiting for a refetch would leave the control looking inert for a round
+// trip — and THEN invalidates, so the optimistic value is reconciled
+// against the server rather than trusted indefinitely. Order matters:
+// setQueryData first (instant paint), invalidate second (the correction,
+// including for the echo-shape guess in `setOrgDefaultLanguage`).
 export function useSetOrgDefaultLanguage(org?: string | null) {
   const qc = useQueryClient();
   const key = normalize(org);
   return useMutation({
     mutationFn: (name: string | null) =>
       languagesApi.setOrgDefaultLanguage(name, undefined, key),
-    onSuccess: (data) => {
-      qc.setQueryData(keys.orgDefault(key), data);
-      void qc.invalidateQueries({ queryKey: keys.languages(key) });
-    },
+    onSuccess: (data) => applyOrgDefaultToCache(qc, key, data),
   });
 }
+
+// Cache effects of the two mutations that can move the org default, split
+// out of the hooks so they're unit-testable against a real QueryClient
+// (same convention as the mode-list helpers in use-prompt-config.ts).
+// `org` is the normalized key, never a raw prop.
+
+export function applyOrgDefaultToCache(
+  qc: QueryClient,
+  org: string | null,
+  data: OrgDefaultLanguage
+): void {
+  // Paint first…
+  qc.setQueryData(keys.orgDefault(org), data);
+  // …then reconcile. The optimistic value can be a GUESS: worker#236 pins
+  // the request shape but not the response envelope, so an unrecognized
+  // 2xx body makes `setOrgDefaultLanguage` fall back to the slug we asked
+  // for. Without this invalidation that guess would stand until the next
+  // page load.
+  void qc.invalidateQueries({ queryKey: keys.orgDefault(org) });
+  // The notice reads `published` off the collection, so refresh it too — a
+  // default set on a row published in another tab would otherwise keep
+  // warning "still a draft".
+  void qc.invalidateQueries({ queryKey: keys.languages(org) });
+}
+
+export function applyLanguageDeletionToCache(
+  qc: QueryClient,
+  org: string | null
+): void {
+  void qc.invalidateQueries({ queryKey: keys.languages(org) });
+  // #286 — a delete that SUCCEEDS proves this language was not the org
+  // default (upstream 409s otherwise). That makes a cached default naming
+  // it provably stale: another admin cleared or repointed the default
+  // since our last read, and keeping our copy would render the drift
+  // warning as a pure cache artifact against a language we just deleted.
+  void qc.invalidateQueries({ queryKey: keys.orgDefault(org) });
+}
+
+// Exported for unit tests (tests/use-languages-cache.test.ts) so the
+// key-collision rule above is asserted, not just commented.
+export const languageQueryKeys = keys;

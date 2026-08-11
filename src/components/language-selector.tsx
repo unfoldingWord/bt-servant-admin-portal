@@ -15,6 +15,7 @@ import {
 import {
   defaultLanguageName,
   describeLanguageDefault,
+  isDefaultControlAvailable,
   type LanguageDefaultState,
 } from "@/lib/language-default-state";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
@@ -78,10 +79,10 @@ interface LanguageSelectorProps {
   isScaffoldReady: boolean;
   scaffoldError: boolean;
   /** #286 — org default language, already reduced to a renderable state by
-      the page (`computeLanguageDefaultState`). `kind: "unsupported"` covers
-      both "the query hasn't answered" and "this worker predates
-      worker#236"; the control renders nothing but a quiet admin-only note
-      in that case. */
+      the page (`computeLanguageDefaultState`), loading and failure states
+      included. This component renders what the state says and never infers
+      readiness itself: `pending` renders nothing, `unsupported` renders a
+      quiet admin-only note, `error` renders a real error. */
   defaultState: LanguageDefaultState;
   /** Setting/clearing the org default is admin-only — it's one org-wide
       pointer, not a per-row right (mirror of the worker's PUT gate on
@@ -189,9 +190,9 @@ export function LanguageSelector({
     setSetDefaultError(null);
   }, [selectedLanguage]);
 
-  // Memoized: handleCreate's collision check depends on this, and the
-  // `?? []` fallback would otherwise mint a fresh array identity every
-  // render (react-hooks/exhaustive-deps).
+  // Memoized: the `?? []` fallback would otherwise mint a fresh array
+  // identity every render, and this page re-renders on every keystroke
+  // (the editor draft lives in the parent's state).
   const languages = useMemo(
     () => languagesData?.languages ?? [],
     [languagesData]
@@ -206,10 +207,12 @@ export function LanguageSelector({
 
   // #286 org default. `defaultName` drives the per-row badge; the notice
   // carries the three end-user-facing states (healthy / draft-warning /
-  // none) plus the drift case.
+  // none) plus the drift and read-failure cases. Every "should this render
+  // at all?" decision comes from the state machine, so an unresolved read
+  // renders nothing at all rather than a claim about the org.
   const defaultName = defaultLanguageName(defaultState);
   const defaultNotice = describeLanguageDefault(defaultState);
-  const defaultUnsupported = defaultState.kind === "unsupported";
+  const defaultControlAvailable = isDefaultControlAvailable(defaultState);
   const selectedIsDefault =
     selectedLanguage !== null && selectedLanguage === defaultName;
 
@@ -318,7 +321,7 @@ export function LanguageSelector({
                 Admin-only (the worker's PUT gate is admin-only too), and
                 absent entirely on a worker without the route pair. */}
             {canSetDefault &&
-              !defaultUnsupported &&
+              defaultControlAvailable &&
               (selectedIsDefault ? (
                 <AlertDialog
                   open={clearDefaultOpen}
@@ -519,8 +522,15 @@ export function LanguageSelector({
       {/* #286 — one line that says what end users actually get. Rendered
           for every viewer (shepherds included: whether their draft is the
           org default changes what "publish" means for them), while the
-          set/clear control above stays admin-only. */}
-      {defaultUnsupported
+          set/clear control above stays admin-only.
+
+          Three renders are deliberately distinct, because they were one
+          line in the first draft and that conflated a slow network with a
+          missing feature:
+            pending     → nothing (no text, no layout shift)
+            unsupported → the quiet admin-only note below
+            error       → a real error notice, never "not available" */}
+      {defaultState.kind === "unsupported"
         ? canSetDefault && (
             <p className="text-muted-foreground text-xs" aria-live="polite">
               Setting an org default language isn&rsquo;t available on this
@@ -531,11 +541,15 @@ export function LanguageSelector({
             <p
               className={cn(
                 "flex items-center gap-1.5 text-xs",
-                defaultNotice.tone === "warning"
-                  ? "rounded-r-md border-l-2 border-amber-500 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-400"
-                  : "text-muted-foreground"
+                defaultNotice.tone === "warning" &&
+                  "rounded-r-md border-l-2 border-amber-500 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-400",
+                defaultNotice.tone === "error" &&
+                  "bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2",
+                (defaultNotice.tone === "healthy" ||
+                  defaultNotice.tone === "info") &&
+                  "text-muted-foreground"
               )}
-              role={defaultNotice.tone === "warning" ? "status" : undefined}
+              role={defaultNotice.tone === "error" ? "alert" : undefined}
               aria-live="polite"
             >
               {defaultNotice.tone === "healthy" && (
