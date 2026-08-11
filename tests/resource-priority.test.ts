@@ -544,6 +544,27 @@ describe("buildPriorityEntries", () => {
     expect(entries[0]!.serverName).toBe("orphan");
   });
 
+  it("falls back to the server id when the report names the server blank", () => {
+    // Shared with the Resources page via buildServerNameMap: an empty
+    // serverName is not an improvement on the id, so attribution degrades to
+    // the id rather than to nothing.
+    const entries = buildPriorityEntries(
+      response([server("aquifer", "  ")], {
+        bible: [item("aquifer", "x", "bible")],
+      })
+    );
+    expect(entries[0]!.serverName).toBe("aquifer");
+  });
+
+  it("collapses an untrusted multi-line server name before it reaches the prompt", () => {
+    const entries = buildPriorityEntries(
+      response([server("aquifer", "Aquifer\nMCP")], {
+        bible: [item("aquifer", "x", "bible")],
+      })
+    );
+    expect(entries[0]!.serverName).toBe("Aquifer MCP");
+  });
+
   it("keeps the first occurrence when an id surfaces under two subjects", () => {
     const entries = buildPriorityEntries(
       response([server("a", "A")], {

@@ -12,6 +12,7 @@
 // Everything here is pure and DOM-free: it runs (and is tested) under the
 // workers-pool tsconfig, and the panel component is a thin projection of it.
 
+import { buildServerNameMap, resolveServerName } from "@/lib/resource-servers";
 import { subjectLabel } from "@/lib/resource-subjects";
 import type { PromptSlot } from "@/types/prompt-override";
 import { PROMPT_SLOTS, SLOT_LABELS } from "@/types/prompt-override";
@@ -135,9 +136,12 @@ export function sanitizePromptText(text: string): string {
 export function buildPriorityEntries(
   response: AggregatedResourcesResponse
 ): PriorityEntry[] {
-  const serverNames = new Map(
-    response.servers.map((server) => [server.serverId, server.serverName])
-  );
+  // Shared with the Resources page so both surfaces name a server identically.
+  // Note this is the FULL name, deliberately untruncated: the value reaches the
+  // mode document via `describeEntry`, and shortening it would change emitted
+  // prompt text — breaking the byte-identical regeneration that keeps Apply
+  // honestly disabled when nothing changed.
+  const serverNames = buildServerNameMap(response.servers);
   const entries: PriorityEntry[] = [];
   const seen = new Set<string>();
 
@@ -149,7 +153,7 @@ export function buildPriorityEntries(
       entries.push({
         id,
         label: item.label ?? item.name,
-        serverName: serverNames.get(item.serverId) ?? item.serverId,
+        serverName: resolveServerName(item.serverId, serverNames),
         subjectLabelText: subjectLabel(slug),
       });
     }

@@ -10,6 +10,11 @@ import {
 } from "lucide-react";
 
 import { safeResourceHref } from "@/lib/resource-href";
+import {
+  buildServerNameMap,
+  resolveServerLabel,
+  type ServerNameMap,
+} from "@/lib/resource-servers";
 import { subjectLabel } from "@/lib/resource-subjects";
 import { useUiStore } from "@/lib/ui-store";
 import { cn } from "@/lib/utils";
@@ -76,7 +81,39 @@ function ServerChip({
   );
 }
 
-function ResourceRow({ item }: { item: ResourceItem }) {
+// Source attribution, resolved from `servers[]` (#230 "indicate the source MCP
+// server for each resource"). Renders the human-readable serverName rather than
+// the machine id — the same attribution the topology map and the priority panel
+// already show — with the id retained in the tooltip. serverName is untrusted
+// third-party text, so it arrives collapsed and character-bounded from
+// lib/resource-servers; the extra `max-w` is a CSS backstop for a name that is
+// short in characters but wide in glyphs.
+function ServerBadge({
+  serverId,
+  serverNames,
+}: {
+  serverId: string;
+  serverNames: ServerNameMap;
+}) {
+  const label = resolveServerLabel(serverId, serverNames);
+  return (
+    <Badge
+      variant="outline"
+      className="max-w-[14rem] truncate px-1.5 py-0 text-[10px]"
+      title={label.title}
+    >
+      {label.display}
+    </Badge>
+  );
+}
+
+function ResourceRow({
+  item,
+  serverNames,
+}: {
+  item: ResourceItem;
+  serverNames: ServerNameMap;
+}) {
   // Scheme-guarded: item.url is third-party MCP server output relayed by
   // the worker — see lib/resource-href.ts.
   const href = safeResourceHref(item.url);
@@ -95,9 +132,7 @@ function ResourceRow({ item }: { item: ResourceItem }) {
       {item.label && (
         <code className="text-muted-foreground text-[11px]">{item.name}</code>
       )}
-      <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-        {item.serverId}
-      </Badge>
+      <ServerBadge serverId={item.serverId} serverNames={serverNames} />
       {meta.length > 0 && (
         <span className="text-muted-foreground text-xs">
           {meta.join(" · ")}
@@ -146,7 +181,12 @@ export function ResourcesPage() {
   // map (#261). No separate fetch: the map renders whatever the list has.
   const [view, setView] = useState<"list" | "map">("list");
 
-  const servers = data?.servers ?? [];
+  // Memoized so the attribution map below has a stable identity across renders
+  // (same reason `subjects` is memoized off `data`).
+  const servers = useMemo(() => data?.servers ?? [], [data]);
+  // One join for the whole page: every per-resource and per-subject badge below
+  // resolves its attribution through this map rather than re-scanning servers[].
+  const serverNames = useMemo(() => buildServerNameMap(servers), [servers]);
   const noneListable =
     servers.length > 0 && servers.every((s) => s.status !== "ok");
 
@@ -337,13 +377,11 @@ export function ResourcesPage() {
                           </span>
                           <span className="hidden shrink-0 gap-1 sm:flex">
                             {serverIds.map((id) => (
-                              <Badge
+                              <ServerBadge
                                 key={id}
-                                variant="outline"
-                                className="px-1.5 py-0 text-[10px]"
-                              >
-                                {id}
-                              </Badge>
+                                serverId={id}
+                                serverNames={serverNames}
+                              />
                             ))}
                           </span>
                         </button>
@@ -353,6 +391,7 @@ export function ResourcesPage() {
                               <ResourceRow
                                 key={`${item.serverId}:${item.name}`}
                                 item={item}
+                                serverNames={serverNames}
                               />
                             ))}
                           </ul>
