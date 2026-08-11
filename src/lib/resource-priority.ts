@@ -410,8 +410,10 @@ export function generatePriorityBlock(
 //
 // The block's one blank line is deliberately NOT a member: a blank line is
 // also what separates a leftover marker from a user's own prose, so it can't
-// be recognized on its own text. `orphanRemnantEnd` handles it by lookahead
-// into this set instead.
+// be recognized on its own text — and it can't be recognized off this set
+// either, since a line like `### Resource priorities` is one a person may well
+// have typed. `orphanRemnantEnd` crosses a blank only for a byte-exact match
+// of the ENTIRE disclosure paragraph; see there.
 const GENERATED_BODY_LINES = new Set<string>([
   PRIORITY_BLOCK_HEADING,
   ...PRIORITY_BLOCK_PROSE.split("\n"),
@@ -436,16 +438,25 @@ const RANKED_LIST_LINE_RE = /^\d+\.\s/;
  * matches the ranked-list shape, and a user who kept the leftover marker but
  * hand-wrote their own list directly beneath it must not have it absorbed.
  *
- * A BLANK line is the one case that needs lookahead. The block contains one of
- * its own (before the disclosure paragraph, so CommonMark reads that paragraph
- * as a sibling of the ranked list rather than as trailing text inside its last
- * item), and stopping there would strand the paragraph in the document on
- * every repair. But a blank line is also exactly what separates a leftover
- * marker from a user's own prose, and swallowing THAT is the one thing this
- * function must never do. So a blank line is consumed only when the very next
- * physical line is generated vocabulary — the strict vocabulary, deliberately
- * not the ranked-list shape, since a blank line followed by a hand-written
- * numbered list has to terminate the walk.
+ * A BLANK line is the one case that needs lookahead, and the lookahead is
+ * deliberately as narrow as the problem that created it. The block contains
+ * exactly one blank line of its own — before the disclosure paragraph, so
+ * CommonMark reads that paragraph as a sibling of the ranked list rather than
+ * as trailing text inside its last item — and stopping there would strand the
+ * paragraph in the document on every repair. But a blank line is also exactly
+ * what separates a leftover marker from a user's own prose, so crossing one on
+ * a weaker signal is how this function would come to delete something a human
+ * wrote. Recognizing merely "vocabulary on the next line" is such a weaker
+ * signal: `### Resource priorities` is a heading a person can perfectly well
+ * type themselves, and accepting it after a blank would set `blockBodySeen`
+ * and hand their own numbered list to the ranked-list rule below.
+ *
+ * So the crossing recognizes ONLY the complete disclosure paragraph: all of
+ * its lines, byte-exact, in order, starting on the line after the blank.
+ * Anything less — a hand-written heading, a lone first line, a truncated
+ * remnant — stops the walk and is left in the document, which is the safe
+ * direction. (Within an unbroken run, single generated lines still match one
+ * at a time; that pre-existing exposure is bounded by never crossing a blank.)
  */
 function isGeneratedVocabulary(line: string): boolean {
   return GENERATED_BODY_LINES.has(line) || ORDER_COMMENT_LINE_RE.test(line);
@@ -468,17 +479,45 @@ function remnantLineAt(document: string, cursor: number): RemnantLine | null {
   return { text: document.slice(lineStart, end).replace(/\r$/, ""), end };
 }
 
+const DISCLOSURE_LINES = RESOURCE_PRIORITY_DISCLOSURE.split("\n");
+
+/**
+ * End offset of the whole disclosure paragraph if it begins on the line after
+ * `cursor`, or `null` — the only thing allowed to carry the walk over a blank
+ * line. All-or-nothing on purpose: a partial match is indistinguishable from
+ * a person having typed one of these sentences, so it isn't a match.
+ */
+function disclosureParagraphEnd(
+  document: string,
+  cursor: number
+): number | null {
+  let at = cursor;
+  for (const expected of DISCLOSURE_LINES) {
+    const line = remnantLineAt(document, at);
+    if (!line || line.text !== expected) return null;
+    at = line.end;
+  }
+  return at;
+}
+
 function orphanRemnantEnd(document: string, from: number): number {
   let cursor = from;
   let blockBodySeen = false;
   for (;;) {
     const line = remnantLineAt(document, cursor);
     if (!line) break;
+
+    if (line.text.length === 0) {
+      const paragraphEnd = disclosureParagraphEnd(document, line.end);
+      if (paragraphEnd === null) break;
+      // The blank and the whole paragraph, consumed as one unit.
+      blockBodySeen = true;
+      cursor = paragraphEnd;
+      continue;
+    }
+
     if (isGeneratedVocabulary(line.text)) {
       blockBodySeen = true;
-    } else if (line.text.length === 0) {
-      const next = remnantLineAt(document, line.end);
-      if (!next || !isGeneratedVocabulary(next.text)) break;
     } else if (!blockBodySeen || !RANKED_LIST_LINE_RE.test(line.text)) {
       break;
     }

@@ -1034,6 +1034,66 @@ describe("orphan repair vs hand-written lists", () => {
     expect(repaired).toContain("2. Another hand-written step");
   });
 
+  it("never crosses a blank line for a hand-written heading that looks generated", () => {
+    // The blank-line crossing's sharpest edge: `### Resource priorities` is a
+    // heading a person can perfectly well type, and it is byte-identical to
+    // one this module emits. Crossing the blank for it would mark the body as
+    // "generated", hand the user's own numbered list to the ranked-list rule,
+    // and delete the whole section on the next apply.
+    const doc = [
+      "## Tool Guidance",
+      "",
+      RESOURCE_PRIORITY_BEGIN,
+      "",
+      "### Resource priorities",
+      "1. My own first source",
+      "2. My own second source",
+      "",
+      "## Instructions",
+      "",
+      "Be brief.",
+      "",
+    ].join("\n");
+
+    const bounds = findPriorityBlock(doc);
+    expect(bounds?.orphan).toBe(true);
+    expect(doc.slice(bounds!.start, bounds!.end)).toBe(RESOURCE_PRIORITY_BEGIN);
+
+    const repaired = splicePriorityBlock(doc, BLOCK);
+    expect(repaired).toContain(
+      "### Resource priorities\n1. My own first source"
+    );
+    expect(repaired).toContain("2. My own second source");
+    expect(repaired).toContain("Be brief.");
+  });
+
+  it("stops at a blank line only part of the disclosure follows", () => {
+    // All-or-nothing: a lone first line is indistinguishable from a person
+    // having quoted the sentence, so the walk stops and the remnant is left in
+    // the document. Stranding one stale line is the recoverable failure; the
+    // other direction deletes prose.
+    const firstLine = DISCLOSURE_TEXT.split("\n")[0]!;
+    const doc = [
+      "## Tool Guidance",
+      "",
+      RESOURCE_PRIORITY_BEGIN,
+      "",
+      firstLine,
+      "",
+      "Always cite the passage reference before quoting.",
+      "",
+    ].join("\n");
+
+    const bounds = findPriorityBlock(doc);
+    expect(doc.slice(bounds!.start, bounds!.end)).toBe(RESOURCE_PRIORITY_BEGIN);
+
+    const repaired = splicePriorityBlock(doc, BLOCK);
+    expect(repaired).toContain(firstLine);
+    expect(repaired).toContain(
+      "Always cite the passage reference before quoting."
+    );
+  });
+
   it("stops at a blank line a hand-written list follows", () => {
     // The blank-line lookahead exists so the block's OWN blank line (before
     // the disclosure) is absorbed. It must not become a licence to reach past
