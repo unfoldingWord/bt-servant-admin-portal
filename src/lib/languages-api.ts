@@ -36,7 +36,7 @@ export class LanguageForbiddenError extends Error {
 // default is admin-only, while deleting a language only needs per-row
 // edit+publish) is not knowable in this layer, so the render layer
 // composes the actionable sentence — see `describeLanguageDeleteError` in
-// src/lib/language-default-state.ts.
+// src/lib/language-error-surface.ts.
 export class LanguageIsDefaultError extends Error {
   constructor(public readonly languageName: string) {
     super(

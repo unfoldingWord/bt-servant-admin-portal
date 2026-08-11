@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  computeLanguageDefaultState,
+  isDefaultControlAvailable,
+} from "../src/lib/language-default-state";
+import {
   describeLanguageDeleteError,
   isDefaultBlockedDeleteError,
   selectLanguageMutationBanner,
+  shouldOfferDefaultRecovery,
 } from "../src/lib/language-error-surface";
 import {
   LanguageForbiddenError,
@@ -92,6 +97,61 @@ describe("isDefaultBlockedDeleteError — the recovery path", () => {
     const afterReset = null;
     expect(selectLanguageMutationBanner(null, afterReset)).toBeNull();
     expect(isDefaultBlockedDeleteError(afterReset)).toBe(false);
+  });
+});
+
+describe("shouldOfferDefaultRecovery — the dead-end the error state created", () => {
+  it("offers the inline recovery even when the default READ is failing", () => {
+    // The dead-end chain: GET languages-default 5xx → state "error" →
+    // isDefaultControlAvailable false → the toolbar Set/Clear controls are
+    // withheld. But the SERVER still has a default, so the delete still
+    // 409s, and the admin was left reading "set a different default, or
+    // clear it" about controls that weren't on screen. The recovery must
+    // therefore key on the ERROR, not on the read.
+    const state = computeLanguageDefaultState({
+      orgDefault: undefined,
+      isPending: false,
+      isError: true,
+      languages: [{ name: "hindi", published: true }],
+    });
+    expect(state.kind).toBe("error");
+    expect(isDefaultControlAvailable(state)).toBe(false);
+
+    expect(
+      shouldOfferDefaultRecovery(new LanguageIsDefaultError("hindi"), true)
+    ).toBe(true);
+  });
+
+  it("offers it while the queries are still pending, too", () => {
+    const state = computeLanguageDefaultState({
+      orgDefault: undefined,
+      isPending: true,
+      isError: false,
+      languages: undefined,
+    });
+    expect(isDefaultControlAvailable(state)).toBe(false);
+    expect(
+      shouldOfferDefaultRecovery(new LanguageIsDefaultError("hindi"), true)
+    ).toBe(true);
+  });
+
+  it("withholds it from a shepherd — the BFF PUT is admin-only", () => {
+    // They keep the "ask an admin" copy; offering a button that always
+    // 403s would be worse than the sentence.
+    expect(
+      shouldOfferDefaultRecovery(new LanguageIsDefaultError("hindi"), false)
+    ).toBe(false);
+  });
+
+  it("withholds it for unrelated delete failures", () => {
+    expect(shouldOfferDefaultRecovery(new Error("boom"), true)).toBe(false);
+    expect(
+      shouldOfferDefaultRecovery(
+        new LanguageForbiddenError("hindi", "delete"),
+        true
+      )
+    ).toBe(false);
+    expect(shouldOfferDefaultRecovery(null, true)).toBe(false);
   });
 });
 

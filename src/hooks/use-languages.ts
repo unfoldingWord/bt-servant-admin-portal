@@ -42,22 +42,32 @@ export function useLanguage(name: string | null, org?: string | null) {
   });
 }
 
-export function useSaveLanguage(org?: string | null) {
-  const qc = useQueryClient();
-  const key = normalize(org);
-  return useMutation({
-    mutationFn: ({
-      name,
-      body,
-    }: {
-      name: string;
-      body: { label?: string; document: string; published?: boolean };
-    }) => languagesApi.putLanguage(name, body, undefined, key),
-    onSuccess: (_data, { name }) => {
-      void qc.invalidateQueries({ queryKey: keys.languages(key) });
-      void qc.invalidateQueries({ queryKey: keys.language(name, key) });
+export interface LanguageSaveTarget {
+  name: string;
+  body: { label?: string; document: string; published?: boolean };
+  org: string | null;
+}
+
+// Org pinned in the VARIABLES, same rule as the delete/default mutations
+// (#286 review rd-2 P2-2). The org-context switch dialog offers "Discard
+// and switch" while a save is in flight, so this is a reachable path, not
+// a theoretical one: the PUT for org A settles after the ambient key has
+// become B, and a closure-read key would invalidate B while leaving A's
+// cache holding the pre-save document — a completed save looking lost,
+// and the next edit from that stale base overwriting it for real.
+export function languageSaveMutationOptions(qc: QueryClient) {
+  return {
+    mutationFn: ({ name, body, org }: LanguageSaveTarget) =>
+      languagesApi.putLanguage(name, body, undefined, org),
+    onSuccess: (_data: unknown, { name, org }: LanguageSaveTarget) => {
+      void qc.invalidateQueries({ queryKey: keys.languages(org) });
+      void qc.invalidateQueries({ queryKey: keys.language(name, org) });
     },
-  });
+  };
+}
+
+export function useSaveLanguage() {
+  return useMutation(languageSaveMutationOptions(useQueryClient()));
 }
 
 // Note: publish/unpublish flows through useSaveLanguage with the full body

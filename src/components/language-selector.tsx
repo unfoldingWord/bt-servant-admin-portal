@@ -18,7 +18,10 @@ import {
   isDefaultControlAvailable,
   type LanguageDefaultState,
 } from "@/lib/language-default-state";
-import { describeLanguageDeleteError } from "@/lib/language-error-surface";
+import {
+  describeLanguageDeleteError,
+  shouldOfferDefaultRecovery,
+} from "@/lib/language-error-surface";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import { cn } from "@/lib/utils";
 import type { Language, OrgLanguages } from "@/types/language";
@@ -132,7 +135,12 @@ export function LanguageSelector({
   const [unpublishOpen, setUnpublishOpen] = useState(false);
   const [unpublishError, setUnpublishError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // The delete failure is kept as the thrown VALUE, not as a message
+  // string: the dialog needs its class to decide both the wording (role-
+  // aware) and whether to offer the inline recovery action (#286 review
+  // rd-2 P2-1). `recoveryError` is the recovery attempt's own failure.
+  const [deleteFailure, setDeleteFailure] = useState<unknown>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   // The set path has no dialog to render into, so its failure lands in the
   // notice row beneath the toolbar.
   const [setDefaultError, setSetDefaultError] = useState<string | null>(null);
@@ -147,22 +155,49 @@ export function LanguageSelector({
     );
   }, [onSetPublished, selectedLanguage]);
 
-  const handleConfirmDelete = useCallback(() => {
+  // Not `runConfirmedAction` (unlike its siblings): this dialog needs the
+  // error CLASS, not just its message — the 409 both selects role-aware
+  // copy and unlocks the inline recovery action below. Same contract
+  // otherwise: stay open on failure, close only on success (#102).
+  const handleConfirmDelete = useCallback(async () => {
     if (selectedLanguage === null) return;
-    return runConfirmedAction(
-      // The 409 "this is the org default" copy is composed HERE rather
-      // than in the API layer, because the recovery step depends on the
-      // viewer: deleting needs per-row edit+publish, changing the org
-      // default needs admin powers (#286 review P2-2).
-      () =>
-        onDeleteLanguage(selectedLanguage).catch((err: unknown) => {
-          throw new Error(describeLanguageDeleteError(err, canSetDefault));
-        }),
-      setDeleteError,
-      () => setDeleteOpen(false),
-      "Failed to delete language."
-    );
-  }, [canSetDefault, onDeleteLanguage, selectedLanguage]);
+    setDeleteFailure(null);
+    setRecoveryError(null);
+    try {
+      await onDeleteLanguage(selectedLanguage);
+      setDeleteOpen(false);
+    } catch (err: unknown) {
+      setDeleteFailure(err);
+    }
+  }, [onDeleteLanguage, selectedLanguage]);
+
+  // Inline recovery from the 409, offered inside the delete dialog itself.
+  // Deliberately independent of `defaultState`: when the languages-default
+  // GET is failing, the state machine withholds the toolbar Set/Clear
+  // controls, yet the server still HAS a default and still 409s the
+  // delete — which left the admin reading an instruction pointing at
+  // controls that weren't on screen (#286 review rd-2 P2-1). Clearing is
+  // a write; it doesn't need a successful read to be legal.
+  const handleRecoverClearDefault = useCallback(() => {
+    setRecoveryError(null);
+    onSetDefault(null)
+      .then(() => {
+        // The block is gone — drop the stale 409 and its recovery
+        // affordance so the dialog shows a plain, retryable Delete
+        // (#286 review rd-2 P3: the dialog-local error outliving the
+        // recovery is reachable now that the recovery happens INSIDE the
+        // open dialog).
+        setDeleteFailure(null);
+        setRecoveryError(null);
+      })
+      .catch((err: unknown) => {
+        setRecoveryError(
+          err instanceof Error
+            ? err.message
+            : "Failed to clear the default language."
+        );
+      });
+  }, [onSetDefault]);
 
   const handleSetDefault = useCallback(() => {
     if (selectedLanguage === null) return;
@@ -214,6 +249,19 @@ export function LanguageSelector({
   // leave the button live — disabling it would offer no recovery at all,
   // and the 409 they get carries the "ask an admin" copy.
   const deleteBlockedByDefault = selectedIsDefault && canSetDefault;
+  // Recovery is offered from the ERROR, never from `defaultState`: the
+  // state machine withholds the toolbar controls while the
+  // languages-default GET is failing, but the server still has a default
+  // and still 409s the delete.
+  const deleteErrorMessage =
+    recoveryError ??
+    (deleteFailure === null
+      ? null
+      : describeLanguageDeleteError(deleteFailure, canSetDefault));
+  const offerDefaultRecovery = shouldOfferDefaultRecovery(
+    deleteFailure,
+    canSetDefault
+  );
 
   const handleCreate = useCallback(() => {
     const slug = newName
@@ -434,7 +482,10 @@ export function LanguageSelector({
                 open={deleteOpen}
                 onOpenChange={(next) => {
                   setDeleteOpen(next);
-                  if (!next) setDeleteError(null);
+                  if (!next) {
+                    setDeleteFailure(null);
+                    setRecoveryError(null);
+                  }
                 }}
               >
                 <AlertDialogTrigger asChild>
@@ -464,10 +515,31 @@ export function LanguageSelector({
                       ? This action cannot be undone.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
-                  {deleteError && (
-                    <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
-                      {deleteError}
-                    </p>
+                  {deleteErrorMessage && (
+                    <div className="bg-destructive/10 border-destructive space-y-2 border-l-2 px-3 py-2">
+                      <p className="text-destructive text-sm">
+                        {deleteErrorMessage}
+                      </p>
+                      {/* The recovery the copy prescribes, right where the
+                          user reads it — and reachable even when the
+                          org-default READ is failing, which is exactly
+                          when the toolbar control is withheld. Shepherds
+                          don't get it: their copy says "ask an admin"
+                          because the worker's PUT is admin-only. */}
+                      {offerDefaultRecovery && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleRecoverClearDefault}
+                          disabled={isSettingDefault}
+                        >
+                          <StarOff className="mr-1.5 size-3.5" />
+                          {isSettingDefault
+                            ? "Clearing…"
+                            : "Clear the org default"}
+                        </Button>
+                      )}
+                    </div>
                   )}
                   <AlertDialogFooter>
                     <AlertDialogCancel disabled={isDeleting}>

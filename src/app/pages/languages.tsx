@@ -5,7 +5,10 @@ import { Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
-import { decideContextChange } from "@/lib/context-org-guard";
+import {
+  contextSwitchReason,
+  decideContextChange,
+} from "@/lib/context-org-guard";
 import { computeLanguageDefaultState } from "@/lib/language-default-state";
 import {
   isDefaultBlockedDeleteError,
@@ -105,7 +108,7 @@ export function LanguagesPage() {
   // Queries / mutations
   const languagesQuery = useLanguages(contextOrg);
   const languageQuery = useLanguage(selectedLanguage, contextOrg);
-  const saveLanguage = useSaveLanguage(contextOrg);
+  const saveLanguage = useSaveLanguage();
   const deleteLanguage = useDeleteLanguage();
   const scaffoldQuery = useLanguageScaffold(contextOrg);
   // #286 — org default. Its own query rather than the list's
@@ -193,6 +196,8 @@ export function LanguagesPage() {
       saveLanguage.mutate(
         {
           name: selectedLanguage,
+          // Org pinned at call time — see handleSetDefault.
+          org: contextOrg,
           body: {
             label: serverLabel,
             document: doc,
@@ -211,7 +216,13 @@ export function LanguagesPage() {
         }
       );
     },
-    [lastSyncedPublished, saveLanguage, selectedLanguage, serverLabel]
+    [
+      contextOrg,
+      lastSyncedPublished,
+      saveLanguage,
+      selectedLanguage,
+      serverLabel,
+    ]
   );
 
   // Auto-save when debouncedDraft diverges from what we last saved.
@@ -316,6 +327,14 @@ export function LanguagesPage() {
     ]
   );
 
+  // Captured from the state that TRIGGERED the dialog would be ideal, but
+  // the flags are stable while it's open (the switch is blocked, so no new
+  // writes start), so reading them live is equivalent and simpler.
+  const contextSwitchCause = contextSwitchReason(
+    isDirty,
+    isSaving || setOrgDefault.isPending || deleteLanguage.isPending
+  );
+
   const confirmContextSwitch = useCallback(() => {
     if (!pendingContextOrg) return;
     setContextOrg(pendingContextOrg.value);
@@ -340,6 +359,7 @@ export function LanguagesPage() {
       saveLanguage.mutate(
         {
           name,
+          org: contextOrg,
           body: {
             label: label || undefined,
             document: scaffold.document,
@@ -356,7 +376,7 @@ export function LanguagesPage() {
         }
       );
     },
-    [saveLanguage, scaffoldQuery.data, setSelectedLanguage]
+    [contextOrg, saveLanguage, scaffoldQuery.data, setSelectedLanguage]
   );
 
   const handleSetPublished = useCallback(
@@ -373,6 +393,7 @@ export function LanguagesPage() {
       const doc = isSelected ? draft : (languageQuery.data?.document ?? "");
       await saveLanguage.mutateAsync({
         name,
+        org: contextOrg,
         body: { label: serverLabel, document: doc, published },
       });
       if (isSelected) {
@@ -380,7 +401,14 @@ export function LanguagesPage() {
         setLastSyncedPublished(published);
       }
     },
-    [draft, languageQuery.data, saveLanguage, selectedLanguage, serverLabel]
+    [
+      contextOrg,
+      draft,
+      languageQuery.data,
+      saveLanguage,
+      selectedLanguage,
+      serverLabel,
+    ]
   );
 
   // #286 — set (`name`) or clear (`null`) the org default. mutateAsync so
@@ -688,11 +716,38 @@ export function LanguagesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Switch org context?</AlertDialogTitle>
             <AlertDialogDescription>
-              You have unsaved edits to{" "}
-              <span className="text-foreground font-medium">
-                &ldquo;{selectedLanguage}&rdquo;
-              </span>
-              . Switching org context will discard them.
+              {/* #286 rd-2 P3: the guard now also fires for an in-flight
+                  org-scoped write (setting the default, deleting), which
+                  is not an unsaved edit. Saying "you have unsaved edits"
+                  to someone who hasn't typed anything is a false alarm,
+                  and false alarms train people to click through. */}
+              {contextSwitchCause === "pending-write" ? (
+                <>
+                  A change to this org is still saving. Switching now leaves it
+                  to finish against{" "}
+                  <span className="text-foreground font-medium">
+                    {contextOrg ?? "your own org"}
+                  </span>{" "}
+                  while you look at another org.
+                </>
+              ) : contextSwitchCause === "both" ? (
+                <>
+                  You have unsaved edits to{" "}
+                  <span className="text-foreground font-medium">
+                    &ldquo;{selectedLanguage}&rdquo;
+                  </span>{" "}
+                  and a change that is still saving. Switching org context will
+                  discard the edits.
+                </>
+              ) : (
+                <>
+                  You have unsaved edits to{" "}
+                  <span className="text-foreground font-medium">
+                    &ldquo;{selectedLanguage}&rdquo;
+                  </span>
+                  . Switching org context will discard them.
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

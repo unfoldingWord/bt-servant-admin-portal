@@ -25,6 +25,23 @@ export function isDefaultBlockedDeleteError(error: unknown): boolean {
   return error instanceof LanguageIsDefaultError;
 }
 
+// Should the delete dialog offer an inline "clear the org default" action
+// alongside the 409?
+//
+// Deliberately does NOT consult `LanguageDefaultState`: when the
+// languages-default GET is failing, that state machine withholds the
+// toolbar Set/Clear controls (correctly — it can't say what the default
+// currently is), but the SERVER still has a default and still refuses the
+// delete. Keying the recovery off the read would leave an admin holding a
+// 409 whose instructions name controls that aren't on screen. Clearing is
+// a write; it doesn't require a successful read to be legal.
+export function shouldOfferDefaultRecovery(
+  deleteError: unknown,
+  canSetDefault: boolean
+): boolean {
+  return canSetDefault && isDefaultBlockedDeleteError(deleteError);
+}
+
 // The error the page-level "Save failed:" banner should render, or null.
 // Forbidden errors have their own dedicated banner; the org-default 409
 // belongs to the delete dialog alone.

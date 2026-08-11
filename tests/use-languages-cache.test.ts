@@ -6,6 +6,7 @@ import {
   applyOrgDefaultToCache,
   languageDeleteMutationOptions,
   languageQueryKeys,
+  languageSaveMutationOptions,
   orgDefaultMutationOptions,
 } from "../src/hooks/use-languages";
 import type { OrgDefaultLanguage, OrgLanguages } from "../src/types/language";
@@ -171,6 +172,59 @@ describe("orgDefaultMutationOptions — org travels in the variables", () => {
       supported: true,
       name: null,
     });
+  });
+});
+
+describe("languageSaveMutationOptions — org travels in the variables", () => {
+  it("sends the PUT to the org named at mutate time", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ language: { name: "hindi" } }))
+      );
+    const opts = languageSaveMutationOptions(makeClient());
+    await opts.mutationFn({
+      name: "hindi",
+      body: { document: "x" },
+      org: "alpha",
+    });
+    expect(String(spy.mock.calls[0]![0])).toBe(
+      "/api/config/languages/hindi?org=alpha"
+    );
+  });
+
+  it("invalidates the mutate-time org after the ambient key moved on", () => {
+    // Reachable, not theoretical: the org-context dialog offers "Discard
+    // and switch" WHILE a save is in flight. With a closure-read key, org
+    // A's completed save would refresh org B and leave A's cache holding
+    // the pre-save document — a save that looks lost, and a stale base for
+    // the next edit to overwrite it from.
+    const qc = makeClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    languageSaveMutationOptions(qc).onSuccess(undefined, {
+      name: "hindi",
+      body: { document: "x" },
+      org: "alpha",
+    });
+    for (const key of invalidatedKeys(spy)) {
+      expect(key).toContain("alpha");
+    }
+  });
+
+  it("refreshes both the collection and the saved row's own entry", () => {
+    const qc = makeClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    languageSaveMutationOptions(qc).onSuccess(undefined, {
+      name: "hindi",
+      body: { document: "x" },
+      org: null,
+    });
+    expect(invalidatedKeys(spy)).toContainEqual(
+      languageQueryKeys.languages(null)
+    );
+    expect(invalidatedKeys(spy)).toContainEqual(
+      languageQueryKeys.language("hindi", null)
+    );
   });
 });
 
