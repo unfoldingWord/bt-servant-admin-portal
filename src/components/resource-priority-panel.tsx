@@ -11,12 +11,14 @@ import {
 } from "lucide-react";
 
 import {
-  MAX_MODE_DOCUMENT_LENGTH,
+  RESOURCE_PRIORITY_DISCLOSURE_SUMMARY,
   buildPriorityEntries,
   generatePriorityBlock,
+  isOfferedBlockRefresh,
   mergeOrderWithLive,
   parsePriorityDescriptions,
   parsePriorityOrder,
+  priorityLengthVerdict,
   splicePriorityBlock,
   type MergedEntry,
   type PriorityEntry,
@@ -49,6 +51,15 @@ import {
 const EXPECTATION_COPY =
   "Ranking strongly increases the likelihood that BT Servant answers from higher-ranked sources first. It is not a guarantee — a lower-ranked source can still be used when it fits the question better.";
 const SCOPE_COPY = "Priorities apply to this mode in every language.";
+// Shown when Apply is enabled on a panel nobody has touched — see
+// `isOfferedBlockRefresh`, which is what decides that this sentence is true.
+// It describes the WHOLE delta rather than naming the disclosure as the
+// reason: on a block written before #281 the disclosure is the visible change,
+// but on a later one it is already there and the delta is the descriptions. A
+// sentence that named only the disclosure would be steering with the wrong
+// story half the time. What is guaranteed either way is the order.
+const OFFERED_REFRESH_COPY =
+  "Nothing here has been reordered. Applying keeps the saved order exactly as it is and rewrites the rest of the generated block — the resource descriptions and the disclosure line — from the catalog loaded above.";
 
 // Same sentence the Modes header uses for the same denial (see
 // NO_EDIT_RIGHTS_REASON in app/pages/modes.tsx). The header already gates the
@@ -201,7 +212,12 @@ function PanelBody({
   // comparison misses — a corrupt or orphaned block that this apply would
   // repair, a duplicated stored id that it would normalize.
   const unchanged = nextDocument === document;
-  const tooLong = nextDocument.length > MAX_MODE_DOCUMENT_LENGTH;
+  // Over the limit is over the limit either way — but WHOSE doing it is
+  // decides what we're allowed to say about it. `order === null` is a panel
+  // the user hasn't touched: the overflow is the document plus whatever this
+  // version of the generated block costs, not a ranking they made.
+  const lengthVerdict = priorityLengthVerdict(nextDocument, order !== null);
+  const tooLong = lengthVerdict !== "ok";
   const busy = isSaving || applying;
 
   // Applying before the aggregation lands would regenerate every line from an
@@ -225,6 +241,23 @@ function PanelBody({
           : unchanged && applyError === null
             ? "The order already matches what's saved."
             : null;
+
+  // Apply is live, the user hasn't reordered anything, the stored order is
+  // readable AND survives this apply unchanged, and the apply would WRITE a
+  // block rather than remove one: an offered refresh, and the only state in
+  // which the panel may describe it as one. Without the explanation an enabled
+  // Apply on an untouched panel reads as a change the user can't account for,
+  // and the safest-looking move (closing the sheet) is the one that leaves the
+  // block stale — but the reassurance is worse than silence anywhere it isn't
+  // literally true.
+  const isOfferedRefresh = isOfferedBlockRefresh({
+    applyEnabled: applyBlockedReason === null,
+    hasApplyError: applyError !== null,
+    userReordered: order !== null,
+    storedOrder: parsed,
+    orderedIds,
+    blockToWrite: block,
+  });
 
   const submitLanguage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -366,6 +399,13 @@ function PanelBody({
           </p>
           <p className="text-muted-foreground mt-1.5 text-xs leading-relaxed">
             {SCOPE_COPY}
+          </p>
+          {/* #281 — the other half of the honesty: the ranking can't bind
+              retrieval, so the prompt asks BT Servant to name it when the
+              answer came from somewhere else. Sourced from the lib beside the
+              instruction it paraphrases, so the two can't drift apart. */}
+          <p className="text-muted-foreground mt-1.5 text-xs leading-relaxed">
+            {RESOURCE_PRIORITY_DISCLOSURE_SUMMARY}
           </p>
         </div>
 
@@ -647,13 +687,35 @@ function PanelBody({
           </pre>
         </details>
 
-        {tooLong && (
+        {lengthVerdict === "over-from-edit" && (
           <p
             className="bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2 text-xs"
             role="alert"
           >
             This ranking would push the mode document past the 64,000-character
             limit. Rank fewer resources, or trim the document.
+          </p>
+        )}
+        {/* Nothing has been ranked in this session, so nothing here is the
+            user's fault and "rank fewer resources" is not their lever. Say what
+            is true and what would help, without the alarm. */}
+        {lengthVerdict === "over-untouched" && (
+          <p
+            className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs"
+            role="status"
+          >
+            This document is already too close to the 64,000-character limit to
+            rewrite its priorities block. The saved ranking is untouched — trim
+            the document elsewhere, and it can be updated again.
+          </p>
+        )}
+
+        {isOfferedRefresh && (
+          <p
+            className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs leading-relaxed"
+            role="status"
+          >
+            {OFFERED_REFRESH_COPY}
           </p>
         )}
 

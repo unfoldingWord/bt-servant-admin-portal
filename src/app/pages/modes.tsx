@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Download, ListOrdered, Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
+import { shouldAutoSaveDraft } from "@/lib/autosave-gate";
 import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
 import { CloneCollisionError, type CloneModeResult } from "@/lib/config-api";
@@ -256,10 +257,33 @@ export function ModesPage() {
   const isSaving = saveMode.isPending;
   const hasSelection = selectedMode !== null && modeQuery.data;
 
+  // The live draft, readable from a callback without going through a closure
+  // that a stale render could have captured. See the guard in `performSave`.
+  //
+  // Synced in an effect, NOT during render: a render can be thrown away under
+  // concurrent rendering, and a ref written by a discarded render would then
+  // describe a draft that was never committed — leaving `performSave` to
+  // silently no-op on a document that is in fact current. Committed state is
+  // the only thing this guard may compare against. Registered here, ahead of
+  // the autosave effect below, so within one commit the ref is already current
+  // by the time anything can call `performSave`.
+  const draftRef = useRef(draft);
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
   const performSave = useCallback(
     (doc: string) => {
       if (!selectedMode) return;
       if (inFlightSavesRef.current > 0) return;
+      // Last line of defence, one layer below `shouldAutoSaveDraft`: never PUT
+      // a document the draft has already moved past. Both callers pass what
+      // should be the current draft, so this only ever fires on a stale
+      // closure — which is precisely the failure that is invisible in review.
+      // `handleApplyResourcePriorities` does NOT route through here; it sets
+      // the draft first and sends the same value, so it is current by
+      // construction.
+      if (doc !== draftRef.current) return;
       const sent = lastSyncedFlagsRef.current;
       // Bind the completion to the mode this PUT is FOR, not to whatever
       // happens to be selected when it lands.
@@ -306,17 +330,27 @@ export function ModesPage() {
     ]
   );
 
+  // Every condition — including the rights check (Frank rd-2 P2) and the
+  // lagging-debounce refusal that keeps a stale snapshot from overwriting an
+  // out-of-band save like the priority panel's Apply — lives in
+  // `shouldAutoSaveDraft`, where it is tested directly.
   useEffect(() => {
-    if (!selectedMode) return;
-    if (saveMode.isPending) return;
-    if (debouncedDraft === lastSyncedDoc) return;
-    if (debouncedDraft === lastFailedDoc) return;
-    // Frank rd-2 P2: skip autosave when the user has no edit rights on
-    // the selected mode. The editor below is also rendered readOnly,
-    // so this branch only fires if the gate state changed mid-edit.
-    if (!canEditSelected) return;
+    if (
+      !shouldAutoSaveDraft({
+        selectedMode,
+        isSaving: saveMode.isPending,
+        draft,
+        debouncedDraft,
+        lastSyncedDoc,
+        lastFailedDoc,
+        canEdit: canEditSelected,
+      })
+    ) {
+      return;
+    }
     performSave(debouncedDraft);
   }, [
+    draft,
     debouncedDraft,
     saveMode.isPending,
     lastSyncedDoc,

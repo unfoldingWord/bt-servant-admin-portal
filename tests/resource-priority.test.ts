@@ -1,20 +1,31 @@
 import { describe, expect, it } from "vitest";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import { MODE_DOCUMENT_SCAFFOLD } from "../src/lib/mode-scaffold";
 import {
+  MAX_MODE_DOCUMENT_LENGTH,
   RESOURCE_PRIORITY_BEGIN,
+  RESOURCE_PRIORITY_DISCLOSURE,
+  RESOURCE_PRIORITY_DISCLOSURE_SUMMARY,
   RESOURCE_PRIORITY_END,
   buildPriorityEntries,
   findPriorityBlock,
   generatePriorityBlock,
+  isOfferedBlockRefresh,
   mergeOrderWithLive,
   parsePriorityDescriptions,
   parsePriorityOrder,
+  priorityLengthVerdict,
   resourceEntryId,
   sanitizePromptText,
   splicePriorityBlock,
 } from "../src/lib/resource-priority";
-import type { PriorityEntry } from "../src/lib/resource-priority";
+import type {
+  OfferedRefreshInput,
+  PriorityEntry,
+} from "../src/lib/resource-priority";
 import {
   buildServerNameMap,
   resolveServerName,
@@ -58,6 +69,49 @@ const STUDY_NOTES = entry(
 );
 const ORDER = [ULT.id, STUDY_NOTES.id];
 const BLOCK = generatePriorityBlock(ORDER, byId([ULT, STUDY_NOTES]));
+
+// The exact instruction the block carries (#281). Spelled out rather than just
+// re-exported because it is product-visible prompt wording: an edit to it
+// should have to be deliberate enough to update a test.
+const DISCLOSURE_TEXT = [
+  "When your answer draws on anything other than the highest-ranked source that covers the question —",
+  "a lower-ranked source, or a resource not ranked here — say so in the same reply, and name what you",
+  "drew on instead. One short sentence is enough.",
+].join("\n");
+
+// CommonMark + GFM, the same pair the portal already ships for rendering
+// (`components/chat-message.tsx`). Standing in here for every CommonMark
+// reader downstream of the block — starting with the model the prompt is
+// built for, which reads grouping off exactly this structure.
+function parseMarkdown(source: string) {
+  return unified().use(remarkParse).use(remarkGfm).parse(source);
+}
+
+/** Source text of a parsed node, via its mdast offsets. */
+function sliceNode(
+  source: string,
+  node: { position?: { start: { offset?: number }; end: { offset?: number } } }
+): string {
+  return source.slice(
+    node.position?.start.offset ?? 0,
+    node.position?.end.offset ?? 0
+  );
+}
+
+// Byte-for-byte what the portal emitted for ORDER before #281 (v1.11.0, PR
+// #282). Frozen on purpose: this is the block sitting in real mode documents
+// right now, and every parse path has to keep handling it.
+const PRE_281_BLOCK = [
+  RESOURCE_PRIORITY_BEGIN,
+  '<!-- order: ["translation-helps:en_ult","aquifer:BiblicaStudyNotes"] -->',
+  "### Resource priorities",
+  "When answering from resources, strongly prefer the sources below, in this order. Answer from the",
+  "highest-ranked source that covers the question; fall back to the next-ranked source only when the",
+  "higher one does not cover it. Use unranked resources only when none of the ranked sources apply.",
+  "1. unfoldingWord Literal Text — translation-helps (Bible Translations)",
+  "2. Biblica Study Notes — aquifer (Study Notes)",
+  RESOURCE_PRIORITY_END,
+].join("\n");
 
 function server(serverId: string, serverName: string): ResourceServerReport {
   return { serverId, serverName, status: "ok" };
@@ -213,6 +267,231 @@ describe("generatePriorityBlock", () => {
 
   it("has no block for an empty order", () => {
     expect(generatePriorityBlock([], byId([ULT]))).toBe("");
+  });
+
+  it("asks for a disclosure when the answer leaves the ranking (#281)", () => {
+    expect(RESOURCE_PRIORITY_DISCLOSURE).toBe(DISCLOSURE_TEXT);
+    expect(BLOCK).toContain(DISCLOSURE_TEXT);
+  });
+
+  it("keeps the panel's explainer in scope with the instruction it paraphrases", () => {
+    // Two descriptions of one behavior, for two audiences. Nothing but this
+    // test stops them drifting into promising different things — so every
+    // phrase that names WHAT TRIGGERS the disclosure has to appear in both.
+    for (const trigger of [
+      "draws on",
+      "a lower-ranked source",
+      "a resource not ranked here",
+      "say so",
+    ]) {
+      expect(RESOURCE_PRIORITY_DISCLOSURE).toContain(trigger);
+      expect(RESOURCE_PRIORITY_DISCLOSURE_SUMMARY).toContain(trigger);
+    }
+    // And the summary stays a summary — one line, for a panel.
+    expect(RESOURCE_PRIORITY_DISCLOSURE_SUMMARY).not.toContain("\n");
+  });
+
+  it("parses as a sibling block of the ranked list, not as part of its last item", () => {
+    // The whole point of the paragraph is that it is GLOBAL. Under CommonMark
+    // a non-indented paragraph butted against a list is a lazy continuation of
+    // the last list item, so without a blank line every renderer downstream
+    // would present a global instruction as a footnote on the lowest-ranked
+    // resource — the exact inversion of its meaning.
+    const tree = parseMarkdown(BLOCK);
+    const types = tree.children.map((node) => node.type);
+    const listIndex = types.indexOf("list");
+    expect(listIndex).toBeGreaterThan(-1);
+    expect(types[listIndex + 1]).toBe("paragraph");
+
+    const list = tree.children[listIndex];
+    expect(list?.type).toBe("list");
+    if (list?.type !== "list") throw new Error("expected a list node");
+    expect(list.children).toHaveLength(ORDER.length);
+    expect(sliceNode(BLOCK, list)).not.toContain("say so in the same reply");
+
+    const paragraph = tree.children[listIndex + 1];
+    expect(paragraph).toBeDefined();
+    expect(sliceNode(BLOCK, paragraph!)).toBe(DISCLOSURE_TEXT);
+  });
+
+  it("would be swallowed into the last ranked item without the blank line", () => {
+    // Guards the guard: proves the assertion above is about the blank line and
+    // not about something CommonMark would have done for us anyway.
+    const glued = BLOCK.replace(
+      `\n\n${DISCLOSURE_TEXT}`,
+      `\n${DISCLOSURE_TEXT}`
+    );
+    const tree = parseMarkdown(glued);
+    const types = tree.children.map((node) => node.type);
+    const listIndex = types.indexOf("list");
+    expect(types[listIndex + 1]).not.toBe("paragraph");
+    expect(sliceNode(glued, tree.children[listIndex]!)).toContain(
+      "say so in the same reply"
+    );
+  });
+
+  it("puts the disclosure after the ranked list, so it can refer back to it", () => {
+    const lines = BLOCK.split("\n");
+    let lastRanked = -1;
+    lines.forEach((line, index) => {
+      if (/^\d+\.\s/.test(line)) lastRanked = index;
+    });
+    const disclosure = lines.indexOf(DISCLOSURE_TEXT.split("\n")[0]!);
+    expect(lastRanked).toBeGreaterThan(-1);
+    expect(disclosure).toBe(lastRanked + 2);
+    expect(lines[lastRanked + 1]).toBe("");
+  });
+
+  it("emits no dangling disclosure when nothing is ranked", () => {
+    // The instruction only makes sense relative to a ranking. There is no
+    // block without one, so there is no instruction either — including on the
+    // path that removes the last ranked resource from a configured document.
+    const empty = generatePriorityBlock([], byId([ULT]));
+    expect(empty).toBe("");
+    expect(empty).not.toContain("say so in the same reply");
+
+    const configured = splicePriorityBlock(MODE_DOCUMENT_SCAFFOLD, BLOCK);
+    const emptied = splicePriorityBlock(configured, empty);
+    expect(emptied).toBe(MODE_DOCUMENT_SCAFFOLD);
+    expect(emptied).not.toContain("say so in the same reply");
+  });
+
+  it("adds the disclosure to the pre-#281 block and changes nothing else", () => {
+    // The whole back-compat argument in one assertion: markers, order comment,
+    // heading, prose and numbered lines are untouched, so every pre-#281 parse
+    // path keeps working and a re-save is a paragraph insertion, not a rewrite.
+    expect(BLOCK).toBe(
+      PRE_281_BLOCK.replace(
+        `\n${RESOURCE_PRIORITY_END}`,
+        `\n\n${DISCLOSURE_TEXT}\n${RESOURCE_PRIORITY_END}`
+      )
+    );
+  });
+});
+
+describe("pre-#281 documents", () => {
+  const doc = splicePriorityBlock(MODE_DOCUMENT_SCAFFOLD, PRE_281_BLOCK);
+  const handWritten = [
+    "## Tool Guidance",
+    "",
+    "Always cite the passage reference before quoting.",
+    "",
+    PRE_281_BLOCK,
+    "",
+    "## Instructions",
+    "",
+    "Be brief.",
+    "",
+  ].join("\n");
+
+  it("parses the stored order, and never reads as corrupt", () => {
+    // A corrupt verdict would put the "we couldn't read the saved ordering"
+    // banner in front of every user who ranked anything before today.
+    expect(parsePriorityOrder(doc)).toEqual(ORDER);
+    expect(parsePriorityOrder(handWritten)).toEqual(ORDER);
+  });
+
+  it("still recovers each ranked id's description", () => {
+    const recovered = parsePriorityDescriptions(doc);
+    expect(recovered.size).toBe(2);
+    expect(recovered.get(ULT.id)).toBe(
+      "unfoldingWord Literal Text — translation-helps (Bible Translations)"
+    );
+    expect(recovered.get(STUDY_NOTES.id)).toBe(
+      "Biblica Study Notes — aquifer (Study Notes)"
+    );
+  });
+
+  it("upgrades in place on re-save, losing nothing around it", () => {
+    const regenerated = generatePriorityBlock(ORDER, byId([ULT, STUDY_NOTES]));
+    const out = splicePriorityBlock(handWritten, regenerated);
+
+    // Exactly one block, in the same place, with the guidance around it intact.
+    expect(out.split(RESOURCE_PRIORITY_BEGIN)).toHaveLength(2);
+    expect(out.split(RESOURCE_PRIORITY_END)).toHaveLength(2);
+    expect(out).toContain("Always cite the passage reference before quoting.");
+    expect(out).toContain("Be brief.");
+    expect(out.indexOf(RESOURCE_PRIORITY_BEGIN)).toBe(
+      handWritten.indexOf(RESOURCE_PRIORITY_BEGIN)
+    );
+
+    // The ranking survives verbatim, and the disclosure is now there once.
+    expect(parsePriorityOrder(out)).toEqual(ORDER);
+    expect(out.split(DISCLOSURE_TEXT)).toHaveLength(2);
+    expect(parsePriorityDescriptions(out).size).toBe(2);
+
+    // And it settles: the upgrade happens once, not on every open.
+    expect(splicePriorityBlock(out, regenerated)).toBe(out);
+  });
+
+  it("offers the upgrade rather than performing it silently", () => {
+    // `unchanged` on the panel is document equality. A pre-#281 document is no
+    // longer byte-identical to its regeneration, so Apply comes up enabled —
+    // deliberately: the block is only rewritten when a user applies.
+    const regenerated = generatePriorityBlock(ORDER, byId([ULT, STUDY_NOTES]));
+    expect(splicePriorityBlock(doc, regenerated)).not.toBe(doc);
+    expect(parsePriorityOrder(doc)).not.toBe("corrupt");
+  });
+
+  it("repairs a pre-#281 orphan without stranding its body", () => {
+    // An older document whose closing marker was hand-deleted: the remnant is
+    // pre-#281 vocabulary, which is why GENERATED_BODY_LINES is append-only.
+    const orphaned = [
+      "## Tool Guidance",
+      "",
+      PRE_281_BLOCK.replace(`\n${RESOURCE_PRIORITY_END}`, ""),
+      "",
+      "Always cite the passage reference before quoting.",
+      "",
+      "## Instructions",
+      "",
+      "Be brief.",
+      "",
+    ].join("\n");
+
+    expect(findPriorityBlock(orphaned)?.orphan).toBe(true);
+
+    const repaired = splicePriorityBlock(orphaned, BLOCK);
+    expect(repaired.split(RESOURCE_PRIORITY_BEGIN)).toHaveLength(2);
+    expect(repaired.split(RESOURCE_PRIORITY_END)).toHaveLength(2);
+    // One copy of every generated line, not two: the stale remnant was
+    // replaced, not left sitting above the new block.
+    expect(
+      repaired.split(
+        "When answering from resources, strongly prefer the sources below, in this order. Answer from the"
+      )
+    ).toHaveLength(2);
+    expect(repaired.split("1. unfoldingWord Literal Text")).toHaveLength(2);
+    expect(repaired).toContain(
+      "Always cite the passage reference before quoting."
+    );
+    expect(parsePriorityOrder(repaired)).toEqual(ORDER);
+    expect(splicePriorityBlock(repaired, BLOCK)).toBe(repaired);
+  });
+
+  it("absorbs the disclosure when a current-format block is orphaned", () => {
+    // Same repair, one version forward: the new paragraph has to be inside the
+    // orphan's bounds too, or every repair would leave a second copy behind.
+    const orphaned = [
+      "## Tool Guidance",
+      "",
+      BLOCK.replace(`\n${RESOURCE_PRIORITY_END}`, ""),
+      "",
+      "Always cite the passage reference before quoting.",
+      "",
+    ].join("\n");
+
+    const repaired = splicePriorityBlock(orphaned, BLOCK);
+    expect(repaired.split(DISCLOSURE_TEXT)).toHaveLength(2);
+    expect(repaired.split(RESOURCE_PRIORITY_BEGIN)).toHaveLength(2);
+    expect(repaired).toContain(
+      "Always cite the passage reference before quoting."
+    );
+    expect(splicePriorityBlock(repaired, BLOCK)).toBe(repaired);
+  });
+
+  it("removes a pre-#281 block cleanly", () => {
+    expect(splicePriorityBlock(doc, null)).toBe(MODE_DOCUMENT_SCAFFOLD);
   });
 });
 
@@ -791,6 +1070,9 @@ describe("parsePriorityDescriptions", () => {
 
   it("recovers each ranked id's description line from the block", () => {
     const recovered = parsePriorityDescriptions(doc);
+    // Exactly the ranked ids: pairing is positional and count-gated, so the
+    // disclosure paragraph must not read as a list line (#281).
+    expect(recovered.size).toBe(2);
     expect(recovered.get(ULT.id)).toBe(
       "unfoldingWord Literal Text — translation-helps (Bible Translations)"
     );
@@ -910,10 +1192,250 @@ describe("orphan repair vs hand-written lists", () => {
     expect(repaired).toContain("2. Another hand-written step");
   });
 
+  it("never crosses a blank line for a hand-written heading that looks generated", () => {
+    // The blank-line crossing's sharpest edge: `### Resource priorities` is a
+    // heading a person can perfectly well type, and it is byte-identical to
+    // one this module emits. Crossing the blank for it would mark the body as
+    // "generated", hand the user's own numbered list to the ranked-list rule,
+    // and delete the whole section on the next apply.
+    const doc = [
+      "## Tool Guidance",
+      "",
+      RESOURCE_PRIORITY_BEGIN,
+      "",
+      "### Resource priorities",
+      "1. My own first source",
+      "2. My own second source",
+      "",
+      "## Instructions",
+      "",
+      "Be brief.",
+      "",
+    ].join("\n");
+
+    const bounds = findPriorityBlock(doc);
+    expect(bounds?.orphan).toBe(true);
+    expect(doc.slice(bounds!.start, bounds!.end)).toBe(RESOURCE_PRIORITY_BEGIN);
+
+    const repaired = splicePriorityBlock(doc, BLOCK);
+    expect(repaired).toContain(
+      "### Resource priorities\n1. My own first source"
+    );
+    expect(repaired).toContain("2. My own second source");
+    expect(repaired).toContain("Be brief.");
+  });
+
+  it("stops at a blank line only part of the disclosure follows", () => {
+    // All-or-nothing: a lone first line is indistinguishable from a person
+    // having quoted the sentence, so the walk stops and the remnant is left in
+    // the document. Stranding one stale line is the recoverable failure; the
+    // other direction deletes prose.
+    const firstLine = DISCLOSURE_TEXT.split("\n")[0]!;
+    const doc = [
+      "## Tool Guidance",
+      "",
+      RESOURCE_PRIORITY_BEGIN,
+      "",
+      firstLine,
+      "",
+      "Always cite the passage reference before quoting.",
+      "",
+    ].join("\n");
+
+    const bounds = findPriorityBlock(doc);
+    expect(doc.slice(bounds!.start, bounds!.end)).toBe(RESOURCE_PRIORITY_BEGIN);
+
+    const repaired = splicePriorityBlock(doc, BLOCK);
+    expect(repaired).toContain(firstLine);
+    expect(repaired).toContain(
+      "Always cite the passage reference before quoting."
+    );
+  });
+
+  it("stops at a blank line a hand-written list follows", () => {
+    // The blank-line lookahead exists so the block's OWN blank line (before
+    // the disclosure) is absorbed. It must not become a licence to reach past
+    // any blank line: here the next line is a numbered list the user wrote.
+    const doc = `## Tool Guidance\n\n${RESOURCE_PRIORITY_BEGIN}\n\n1. My own hand-written step\n2. Another hand-written step\n\n## Instructions\n\nBe brief.\n`;
+    const bounds = findPriorityBlock(doc);
+    expect(bounds?.orphan).toBe(true);
+    expect(doc.slice(bounds!.start, bounds!.end)).toBe(RESOURCE_PRIORITY_BEGIN);
+
+    const repaired = splicePriorityBlock(doc, BLOCK);
+    expect(repaired).toContain("1. My own hand-written step");
+    expect(repaired).toContain("2. Another hand-written step");
+  });
+
+  it("stops at a blank line the document simply ends after", () => {
+    // Lookahead off the end of the document: nothing follows, so nothing is
+    // recognized, so the walk stops rather than running past the end.
+    const doc = `${RESOURCE_PRIORITY_BEGIN}\n### Resource priorities\n1. stale line\n`;
+    const bounds = findPriorityBlock(doc);
+    expect(doc.slice(bounds!.start, bounds!.end)).toBe(
+      `${RESOURCE_PRIORITY_BEGIN}\n### Resource priorities\n1. stale line`
+    );
+  });
+
+  it("repairs an orphaned current-format block in a CRLF document", () => {
+    const orphaned = [
+      "## Tool Guidance",
+      "",
+      BLOCK.replace(`\n${RESOURCE_PRIORITY_END}`, ""),
+      "",
+      "Always cite the passage reference before quoting.",
+      "",
+    ]
+      .join("\n")
+      .replace(/\n/g, "\r\n");
+
+    expect(findPriorityBlock(orphaned)?.orphan).toBe(true);
+
+    const repaired = splicePriorityBlock(orphaned, BLOCK);
+    expect(repaired.split(RESOURCE_PRIORITY_BEGIN)).toHaveLength(2);
+    expect(repaired.split(RESOURCE_PRIORITY_END)).toHaveLength(2);
+    expect(repaired.split(DISCLOSURE_TEXT.replace(/\n/g, "\r\n"))).toHaveLength(
+      2
+    );
+    expect(repaired).toContain(
+      "Always cite the passage reference before quoting."
+    );
+    // Still CRLF throughout — every LF is half of a pair.
+    expect(repaired.split("\n")).toHaveLength(repaired.split("\r\n").length);
+    expect(splicePriorityBlock(repaired, BLOCK)).toBe(repaired);
+  });
+
   it("still absorbs generated list lines once a block body line was seen", () => {
     const doc = `## Tool Guidance\n\n${RESOURCE_PRIORITY_BEGIN}\n### Resource priorities\n1. stale generated line\n\nKeep me.\n\n## Instructions\n\nBe brief.\n`;
     const repaired = splicePriorityBlock(doc, BLOCK);
     expect(repaired).not.toContain("stale generated line");
     expect(repaired).toContain("Keep me.");
+  });
+});
+
+describe("isOfferedBlockRefresh", () => {
+  // Apply live, nothing reordered, stored order readable and written back
+  // unchanged, and a block to write.
+  function refresh(overrides: Partial<OfferedRefreshInput> = {}) {
+    return isOfferedBlockRefresh({
+      applyEnabled: true,
+      hasApplyError: false,
+      userReordered: false,
+      storedOrder: ORDER,
+      orderedIds: ORDER,
+      blockToWrite: BLOCK,
+      ...overrides,
+    });
+  }
+
+  it("recognizes a genuine untouched refresh", () => {
+    expect(refresh()).toBe(true);
+  });
+
+  it("says nothing when Apply is blocked", () => {
+    expect(refresh({ applyEnabled: false })).toBe(false);
+  });
+
+  it("says nothing while a failed apply is still being reported", () => {
+    // That banner is the one asking for the user's attention.
+    expect(refresh({ hasApplyError: true })).toBe(false);
+  });
+
+  it("says nothing once the user has reordered", () => {
+    // Then Apply means what it usually means, and needs no explaining.
+    expect(refresh({ userReordered: true })).toBe(false);
+  });
+
+  it("says nothing over a corrupt block", () => {
+    // The unreadable order line reads as an empty order, so this apply would
+    // REMOVE the block. The panel is already showing the red "we couldn't read
+    // the saved ordering" notice; a calm "your ranking is unchanged" beside it
+    // would talk a user into clicking through and losing a ranking they would
+    // otherwise have retyped.
+    expect(refresh({ storedOrder: "corrupt", orderedIds: [] })).toBe(false);
+    expect(
+      refresh({ storedOrder: "corrupt", orderedIds: [], blockToWrite: "" })
+    ).toBe(false);
+  });
+
+  it("says nothing when the document has no block at all", () => {
+    expect(refresh({ storedOrder: null, orderedIds: [] })).toBe(false);
+  });
+
+  it("says nothing when the apply would normalize a duplicated stored order", () => {
+    // A hand-edited document can name the same id twice. Both
+    // `mergeOrderWithLive` and `generatePriorityBlock` collapse duplicates, so
+    // this untouched apply rewrites the RANKING — while the copy promises the
+    // saved order is kept exactly as it is. Silence is the honest state here.
+    const stored = [ULT.id, ULT.id, STUDY_NOTES.id];
+    const { ranked } = mergeOrderWithLive(stored, [ULT, STUDY_NOTES]);
+    const deduped = ranked.map((row) => row.id);
+    expect(deduped).toEqual(ORDER);
+    expect(deduped).not.toEqual(stored);
+
+    expect(refresh({ storedOrder: stored, orderedIds: deduped })).toBe(false);
+  });
+
+  it("says nothing when the apply would reorder the stored sequence", () => {
+    // Element-wise, not set-wise: the same ids in a different sequence is a
+    // different ranking, and must not be described as preserving one.
+    expect(
+      refresh({ storedOrder: ORDER, orderedIds: [...ORDER].reverse() })
+    ).toBe(false);
+  });
+
+  it("says nothing when the apply would write no block at all", () => {
+    // Empty block = removal, whatever led to it. Independent of the
+    // corruption check on purpose: either one alone must be disqualifying.
+    expect(refresh({ blockToWrite: "" })).toBe(false);
+  });
+
+  it("still holds when only the descriptions have drifted", () => {
+    // A post-#281 block already carries the disclosure, so the delta here is a
+    // description rewrite. It is still order-preserving, so the panel may say
+    // so — which is exactly why the copy describes the whole delta instead of
+    // naming the disclosure as the reason.
+    const drifted = generatePriorityBlock(
+      ORDER,
+      byId([
+        entry(ULT.id, "unfoldingWord Literal Text (2026 revision)", "uW"),
+        STUDY_NOTES,
+      ])
+    );
+    expect(drifted).toContain(DISCLOSURE_TEXT);
+    expect(drifted).not.toBe(BLOCK);
+    expect(refresh({ blockToWrite: drifted })).toBe(true);
+  });
+});
+
+describe("priorityLengthVerdict", () => {
+  const under = "x".repeat(MAX_MODE_DOCUMENT_LENGTH);
+  const over = "x".repeat(MAX_MODE_DOCUMENT_LENGTH + 1);
+
+  it("passes a document that fits, edited or not", () => {
+    // The limit itself fits — upstream rejects above it, not at it. (Nothing
+    // in this repo enforces it; the constant is a preflight mirror of the
+    // engine's limit, so the panel can refuse before a save comes back 400.)
+    expect(under).toHaveLength(MAX_MODE_DOCUMENT_LENGTH);
+    expect(priorityLengthVerdict(under, true)).toBe("ok");
+    expect(priorityLengthVerdict(under, false)).toBe("ok");
+  });
+
+  it("blames the ranking when the user actually made one", () => {
+    expect(priorityLengthVerdict(over, true)).toBe("over-from-edit");
+  });
+
+  it("does not blame an untouched panel for a document that arrives over", () => {
+    // The regression this exists for: a large pre-#281 document is measured
+    // against a block this version regenerates one paragraph longer, so it can
+    // be over the limit the instant the panel opens. Telling that admin "this
+    // ranking would push the document past the limit" names a ranking they did
+    // not make and prescribes a fix that is not theirs to apply.
+    expect(priorityLengthVerdict(over, false)).toBe("over-untouched");
+  });
+
+  it("separates the two verdicts on one and the same document", () => {
+    expect(priorityLengthVerdict(over, false)).not.toBe(
+      priorityLengthVerdict(over, true)
+    );
   });
 });
