@@ -163,10 +163,14 @@ export async function validateSession(
 
 // Shared between validateSession and handleLogin so the session shape is
 // identical whether the session is freshly minted or rehydrated from KV.
-// Exported for the #247 bootstrap auto-grant (worker/rights-migration.ts),
-// which must materialize explicit verb fields under EXACTLY this rule — a
-// third hand-rolled copy of the partner-aware fallback is how the original
-// #256 review bug happened.
+//
+// #272: the export note used to point at the #247 bootstrap auto-grant in
+// worker/rights-migration.ts. That consumer is gone — #249 made admin
+// powers trump per-row language rights, so creating an org's first
+// language draft is an ordinary admin write with no explicit verb fields
+// to materialize at create time. The export stays so that any future
+// caller reuses THIS partner-aware rule rather than hand-rolling a third
+// copy of it, which is how the original #256 review bug happened.
 export function lazyMigrateLanguageRights(user: StoredUser): {
   language_edit_rights: LanguageRights | undefined;
   language_publish_rights: LanguageRights | undefined;

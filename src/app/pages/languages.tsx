@@ -5,7 +5,15 @@ import { Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
-import { decideContextChange } from "@/lib/context-org-guard";
+import {
+  contextSwitchReason,
+  decideContextChange,
+} from "@/lib/context-org-guard";
+import { computeLanguageDefaultState } from "@/lib/language-default-state";
+import {
+  isDefaultBlockedDeleteError,
+  selectLanguageMutationBanner,
+} from "@/lib/language-error-surface";
 import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
   effectiveLanguageEditRights,
@@ -21,7 +29,9 @@ import {
   useDeleteLanguage,
   useLanguage,
   useLanguages,
+  useOrgDefaultLanguage,
   useSaveLanguage,
+  useSetOrgDefaultLanguage,
 } from "@/hooks/use-languages";
 import { useLanguageScaffold } from "@/hooks/use-language-scaffold";
 import type { MarkdownHeading } from "@/types/markdown";
@@ -88,21 +98,26 @@ export function LanguagesPage() {
   const canPublishSelected =
     selectedLanguage !== null && hasRights(publishRights, selectedLanguage);
   const canDeleteSelected = canEditSelected && canPublishSelected;
+  // #286 — the org default is one pointer shared by the whole org, so it
+  // is admin-only rather than per-row (the worker's PUT gate on
+  // /api/config/languages-default enforces the same rule; this is the UI
+  // mirror). Cross-org context is super-admin-only, so it carries admin
+  // powers by construction.
+  const canSetDefault = isAdmin || isCrossOrg;
 
   // Queries / mutations
   const languagesQuery = useLanguages(contextOrg);
   const languageQuery = useLanguage(selectedLanguage, contextOrg);
-  const saveLanguage = useSaveLanguage(contextOrg);
-  const deleteLanguage = useDeleteLanguage(contextOrg);
+  const saveLanguage = useSaveLanguage();
+  const deleteLanguage = useDeleteLanguage();
   const scaffoldQuery = useLanguageScaffold(contextOrg);
-
-  // Every keystroke re-renders this page (the editor draft lives in
-  // component state), so the raw-name list for the create-dialog
-  // collision check must keep a stable identity between data changes.
-  const takenNames = useMemo(
-    () => languagesQuery.data?.languages.map((l) => l.name) ?? [],
-    [languagesQuery.data]
-  );
+  // #286 — org default. Its own query rather than the list's
+  // `defaultLanguage` echo, because only the dedicated endpoint can tell
+  // "no default set" apart from "this worker predates worker#236"; the
+  // query resolves (never rejects) on that 404, so a portal running ahead
+  // of the worker shows no control instead of an error on page load.
+  const orgDefaultQuery = useOrgDefaultLanguage(contextOrg);
+  const setOrgDefault = useSetOrgDefaultLanguage();
 
   // Local document draft (auto-save target).
   //
@@ -181,6 +196,8 @@ export function LanguagesPage() {
       saveLanguage.mutate(
         {
           name: selectedLanguage,
+          // Org pinned at call time — see handleSetDefault.
+          org: contextOrg,
           body: {
             label: serverLabel,
             document: doc,
@@ -199,7 +216,13 @@ export function LanguagesPage() {
         }
       );
     },
-    [lastSyncedPublished, saveLanguage, selectedLanguage, serverLabel]
+    [
+      contextOrg,
+      lastSyncedPublished,
+      saveLanguage,
+      selectedLanguage,
+      serverLabel,
+    ]
   );
 
   // Auto-save when debouncedDraft diverges from what we last saved.
@@ -277,7 +300,16 @@ export function LanguagesPage() {
 
   const handleRequestContextChange = useCallback(
     (next: string | null) => {
-      const outcome = decideContextChange(contextOrg, next, isDirty, isSaving);
+      // In-flight org-scoped writes count as "saving": switching context
+      // under one would strand the write's result in another org's view
+      // (#286 review P2-3). The hooks pin their target org too, so this
+      // guard is the user-visible half of a two-layer fix.
+      const outcome = decideContextChange(
+        contextOrg,
+        next,
+        isDirty,
+        isSaving || setOrgDefault.isPending || deleteLanguage.isPending
+      );
       if (outcome === "no-op") return;
       if (outcome === "confirm") {
         setPendingContextOrg({ value: next });
@@ -285,7 +317,22 @@ export function LanguagesPage() {
       }
       setContextOrg(next);
     },
-    [contextOrg, isDirty, isSaving, setContextOrg]
+    [
+      contextOrg,
+      deleteLanguage.isPending,
+      isDirty,
+      isSaving,
+      setContextOrg,
+      setOrgDefault.isPending,
+    ]
+  );
+
+  // Captured from the state that TRIGGERED the dialog would be ideal, but
+  // the flags are stable while it's open (the switch is blocked, so no new
+  // writes start), so reading them live is equivalent and simpler.
+  const contextSwitchCause = contextSwitchReason(
+    isDirty,
+    isSaving || setOrgDefault.isPending || deleteLanguage.isPending
   );
 
   const confirmContextSwitch = useCallback(() => {
@@ -312,6 +359,7 @@ export function LanguagesPage() {
       saveLanguage.mutate(
         {
           name,
+          org: contextOrg,
           body: {
             label: label || undefined,
             document: scaffold.document,
@@ -328,7 +376,7 @@ export function LanguagesPage() {
         }
       );
     },
-    [saveLanguage, scaffoldQuery.data, setSelectedLanguage]
+    [contextOrg, saveLanguage, scaffoldQuery.data, setSelectedLanguage]
   );
 
   const handleSetPublished = useCallback(
@@ -345,6 +393,7 @@ export function LanguagesPage() {
       const doc = isSelected ? draft : (languageQuery.data?.document ?? "");
       await saveLanguage.mutateAsync({
         name,
+        org: contextOrg,
         body: { label: serverLabel, document: doc, published },
       });
       if (isSelected) {
@@ -352,15 +401,67 @@ export function LanguagesPage() {
         setLastSyncedPublished(published);
       }
     },
-    [draft, languageQuery.data, saveLanguage, selectedLanguage, serverLabel]
+    [
+      contextOrg,
+      draft,
+      languageQuery.data,
+      saveLanguage,
+      selectedLanguage,
+      serverLabel,
+    ]
+  );
+
+  // #286 — set (`name`) or clear (`null`) the org default. mutateAsync so
+  // the selector's clear-confirmation dialog can await it and render its
+  // failure inline (#102 pattern), and so the set path can surface its own
+  // message without a page-level banner.
+  const handleSetDefault = useCallback(
+    async (name: string | null) => {
+      // `org` is pinned HERE, at click time, and travels with the request:
+      // the hook must not read an ambient key when the mutation settles,
+      // or an org-context switch mid-flight lands org A's result in org
+      // B's cache (#286 review P2-3).
+      await setOrgDefault.mutateAsync({ name, org: contextOrg });
+      // The delete dialog's 409 ("may be the org default") is exactly the
+      // failure this action fixes. Leaving the mutation error in place
+      // would keep asserting the block after the block is gone — the
+      // sticky-banner path the review found.
+      if (isDefaultBlockedDeleteError(deleteLanguage.error)) {
+        deleteLanguage.reset();
+      }
+    },
+    [contextOrg, deleteLanguage, setOrgDefault]
+  );
+
+  // Both queries feed the state machine, loading flags included: "no
+  // default is set" and "the default points at nothing" are claims about
+  // the org, and an unresolved read is not evidence for either. `isError`
+  // is threaded separately because 404/501 RESOLVE as unsupported — a
+  // rejection here is a real failure and must not masquerade as "this
+  // worker doesn't have the feature".
+  const defaultState = useMemo(
+    () =>
+      computeLanguageDefaultState({
+        orgDefault: orgDefaultQuery.data,
+        isPending: orgDefaultQuery.isPending,
+        isError: orgDefaultQuery.isError,
+        languages: languagesQuery.data?.languages,
+      }),
+    [
+      orgDefaultQuery.data,
+      orgDefaultQuery.isPending,
+      orgDefaultQuery.isError,
+      languagesQuery.data,
+    ]
   );
 
   const handleDeleteLanguage = useCallback(
     async (name: string) => {
-      await deleteLanguage.mutateAsync(name);
+      // Org pinned at click time — same reason as handleSetDefault.
+      await deleteLanguage.mutateAsync({ name, org: contextOrg });
       if (name === selectedLanguage) setSelectedLanguage(null);
     },
-    [deleteLanguage, selectedLanguage, setSelectedLanguage]
+    [contextOrg, deleteLanguage, selectedLanguage, setSelectedLanguage]
   );
 
   const handleJumpToLine = useCallback((line: number) => {
@@ -388,15 +489,14 @@ export function LanguagesPage() {
   // Surface non-forbidden save / delete failures so the user can see *why* a
   // save didn't stick — previously these were silently swallowed, leaving the
   // "Unsaved changes" chip stuck without any explanation.
-  const genericMutationError = useMemo<Error | null>(() => {
-    if (saveError && !(saveError instanceof LanguageForbiddenError)) {
-      return saveError;
-    }
-    if (deleteError && !(deleteError instanceof LanguageForbiddenError)) {
-      return deleteError;
-    }
-    return null;
-  }, [saveError, deleteError]);
+  // One surface per failure. The org-default 409 is deliberately NOT
+  // folded in here: the delete dialog renders it inline and stays open to
+  // do so, and a page banner would both duplicate it and outlive it — see
+  // src/lib/language-error-surface.ts for the rule and its tests.
+  const genericMutationError = useMemo<Error | null>(
+    () => selectLanguageMutationBanner(saveError, deleteError),
+    [saveError, deleteError]
+  );
 
   // #249 — with the dropdown listing every draft in the org, opening a
   // row you can't edit is an ordinary state rather than an error, so
@@ -445,7 +545,10 @@ export function LanguagesPage() {
               canDeleteSelected={canDeleteSelected}
               isScaffoldReady={scaffoldQuery.isSuccess}
               scaffoldError={scaffoldQuery.isError}
-              takenNames={takenNames}
+              defaultState={defaultState}
+              canSetDefault={canSetDefault}
+              onSetDefault={handleSetDefault}
+              isSettingDefault={setOrgDefault.isPending}
             />
           </div>
 
@@ -613,11 +716,38 @@ export function LanguagesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Switch org context?</AlertDialogTitle>
             <AlertDialogDescription>
-              You have unsaved edits to{" "}
-              <span className="text-foreground font-medium">
-                &ldquo;{selectedLanguage}&rdquo;
-              </span>
-              . Switching org context will discard them.
+              {/* #286 rd-2 P3: the guard now also fires for an in-flight
+                  org-scoped write (setting the default, deleting), which
+                  is not an unsaved edit. Saying "you have unsaved edits"
+                  to someone who hasn't typed anything is a false alarm,
+                  and false alarms train people to click through. */}
+              {contextSwitchCause === "pending-write" ? (
+                <>
+                  A change to this org is still saving. Switching now leaves it
+                  to finish against{" "}
+                  <span className="text-foreground font-medium">
+                    {contextOrg ?? "your own org"}
+                  </span>{" "}
+                  while you look at another org.
+                </>
+              ) : contextSwitchCause === "both" ? (
+                <>
+                  You have unsaved edits to{" "}
+                  <span className="text-foreground font-medium">
+                    &ldquo;{selectedLanguage}&rdquo;
+                  </span>{" "}
+                  and a change that is still saving. Switching org context will
+                  discard the edits.
+                </>
+              ) : (
+                <>
+                  You have unsaved edits to{" "}
+                  <span className="text-foreground font-medium">
+                    &ldquo;{selectedLanguage}&rdquo;
+                  </span>
+                  . Switching org context will discard them.
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   LanguageForbiddenError,
+  LanguageIsDefaultError,
   deleteLanguage,
   getLanguage,
+  getOrgDefaultLanguage,
   listLanguages,
   putLanguage,
+  setOrgDefaultLanguage,
 } from "../src/lib/languages-api";
 
 afterEach(() => {
@@ -224,6 +227,250 @@ describe("deleteLanguage", () => {
     mockFetchOnce(404, "Language not found");
     await expect(deleteLanguage("missing")).rejects.toThrow(
       /Failed to delete language \(404\)/
+    );
+  });
+
+  it("throws LanguageIsDefaultError on 409, carrying the slug (#286)", async () => {
+    // The class is the discriminator the render layer keys on to compose
+    // role-aware copy (describeLanguageDeleteError) — so what this layer
+    // owes is the type and the slug, not the wording.
+    mockFetchOnce(409, "unset or reassign the default first");
+    try {
+      await deleteLanguage("hindi");
+      throw new Error("expected rejection");
+    } catch (e) {
+      expect(e).toBeInstanceOf(LanguageIsDefaultError);
+      const err = e as LanguageIsDefaultError;
+      expect(err.languageName).toBe("hindi");
+      expect(err.message).toContain("default");
+    }
+  });
+
+  it("keeps the API-layer message ROLE-NEUTRAL (no admin-only instruction)", async () => {
+    // Deleting needs per-row edit+publish; changing the org default is
+    // admin-only. This layer can't know which the reader holds, so it must
+    // not prescribe — the render layer composes that.
+    mockFetchOnce(409, "");
+    const err = (await deleteLanguage("hindi").catch(
+      (e: unknown) => e
+    )) as Error;
+    expect(err.message).not.toMatch(/Set a different default|Ask an admin/);
+  });
+
+  it("hedges the 409 copy — worker#236 pins no error body to discriminate on", async () => {
+    // Every delete 409 lands on this class, so the message must stay true
+    // if upstream ever adds a second conflict reason: it states the
+    // observable fact (refused) and offers the known cause as likely.
+    mockFetchOnce(409, "");
+    const err = await deleteLanguage("hindi").catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/can't be deleted right now/);
+    expect((err as Error).message).toMatch(/may be/);
+  });
+
+  it("409 is distinguishable from a permission failure", async () => {
+    mockFetchOnce(409, "");
+    await expect(deleteLanguage("hindi")).rejects.not.toBeInstanceOf(
+      LanguageForbiddenError
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Org default language (#286 / worker#236)
+// ---------------------------------------------------------------------------
+
+describe("getOrgDefaultLanguage", () => {
+  it("reads the sibling route, not /languages/default", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: "hindi" })));
+    await getOrgDefaultLanguage();
+    expect(spy.mock.calls[0]![0]).toBe("/api/config/languages-default");
+  });
+
+  it("returns the slug when one is set", async () => {
+    mockFetchOnce(200, { name: "hindi" });
+    expect(await getOrgDefaultLanguage()).toEqual({
+      supported: true,
+      name: "hindi",
+    });
+  });
+
+  it("returns supported-with-null when no default is set", async () => {
+    mockFetchOnce(200, { name: null });
+    expect(await getOrgDefaultLanguage()).toEqual({
+      supported: true,
+      name: null,
+    });
+  });
+
+  it("RESOLVES as unsupported on 404 — the worker route isn't deployed yet", async () => {
+    // Rejecting here would put an error banner on the Languages page for
+    // every org until worker#236 ships. The control hides itself instead.
+    mockFetchOnce(404, "Not found");
+    expect(await getOrgDefaultLanguage()).toEqual({ supported: false });
+  });
+
+  it("RESOLVES as unsupported on 501", async () => {
+    mockFetchOnce(501, "Not implemented");
+    expect(await getOrgDefaultLanguage()).toEqual({ supported: false });
+  });
+
+  it("still rejects on a real failure (500) — absence is not the same as broken", async () => {
+    mockFetchOnce(500, "boom");
+    await expect(getOrgDefaultLanguage()).rejects.toThrow(
+      /Failed to load default language \(500\)/
+    );
+  });
+
+  it("normalizes a blank or non-string name to 'no default'", async () => {
+    mockFetchOnce(200, { name: "   " });
+    expect(await getOrgDefaultLanguage()).toEqual({
+      supported: true,
+      name: null,
+    });
+    mockFetchOnce(200, { name: 42 });
+    expect(await getOrgDefaultLanguage()).toEqual({
+      supported: true,
+      name: null,
+    });
+  });
+
+  it("threads ?org= for the cross-org view", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: null })));
+    await getOrgDefaultLanguage(undefined, "word-collective");
+    expect(spy.mock.calls[0]![0]).toBe(
+      "/api/config/languages-default?org=word-collective"
+    );
+  });
+});
+
+describe("setOrgDefaultLanguage", () => {
+  it("PUTs { name } to set", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: "hindi" })));
+    const result = await setOrgDefaultLanguage("hindi");
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body as string)).toEqual({ name: "hindi" });
+    expect(result).toEqual({ supported: true, name: "hindi" });
+  });
+
+  it("PUTs { name: null } to clear", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: null })));
+    const result = await setOrgDefaultLanguage(null);
+    expect(
+      JSON.parse((spy.mock.calls[0]![1] as RequestInit).body as string)
+    ).toEqual({ name: null });
+    expect(result).toEqual({ supported: true, name: null });
+  });
+
+  it("falls back to the requested value when the server sends no body", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(null, { status: 204 })
+    );
+    expect(await setOrgDefaultLanguage("hindi")).toEqual({
+      supported: true,
+      name: "hindi",
+    });
+  });
+
+  it.each([
+    ["an empty object", {}],
+    ["an ack envelope", { ok: true }],
+    ["a differently-named key", { defaultLanguage: "hindi" }],
+    ["a wrapped envelope", { org: "acme", message: "saved" }],
+    ["a name of the wrong type", { name: 42 }],
+  ])(
+    "a successful set with %s (no readable name) still reports the slug we set",
+    async (_label, body) => {
+      // worker#236 fixes the REQUEST shape only. Reading an unrecognized
+      // 2xx body as `name: null` would make a successful set immediately
+      // render "No default language is set" — a lie with no self-
+      // correction until the next page load. The mutation's invalidation
+      // is what reconciles this optimistic guess. A `name` of the wrong
+      // TYPE belongs here too: garbage is evidence the envelope isn't what
+      // we think it is, not a statement that the default is unset.
+      mockFetchOnce(200, body);
+      expect(await setOrgDefaultLanguage("hindi")).toEqual({
+        supported: true,
+        name: "hindi",
+      });
+    }
+  );
+
+  it("a recognized echo still wins over the requested value", async () => {
+    // If the server says the default is something else, believe the
+    // server — the fallback is for unreadable bodies, not a veto.
+    mockFetchOnce(200, { name: "swahili" });
+    expect(await setOrgDefaultLanguage("hindi")).toEqual({
+      supported: true,
+      name: "swahili",
+    });
+  });
+
+  it("an explicit { name: null } echo wins over the slug we requested", async () => {
+    // The server accepted the request but reports the default as UNSET —
+    // upstream declined to store the slug (a race with another admin's
+    // clear, say). Falling back to the requested name here would have the
+    // cache assert a default the server just said doesn't exist. Absent is
+    // not the same answer as null (#286 review rd-3).
+    mockFetchOnce(200, { name: null });
+    expect(await setOrgDefaultLanguage("hindi")).toEqual({
+      supported: true,
+      name: null,
+    });
+  });
+
+  it("a blank-string echo is a name-shaped nothing, not a slug", async () => {
+    mockFetchOnce(200, { name: "   " });
+    expect(await setOrgDefaultLanguage("hindi")).toEqual({
+      supported: true,
+      name: null,
+    });
+  });
+
+  it("clearing reports null even when the body is unrecognizable", async () => {
+    mockFetchOnce(200, { ok: true });
+    expect(await setOrgDefaultLanguage(null)).toEqual({
+      supported: true,
+      name: null,
+    });
+  });
+
+  it("403 rejects with the admin-only explanation", async () => {
+    mockFetchOnce(403, { error: "Forbidden" });
+    await expect(setOrgDefaultLanguage("hindi")).rejects.toThrow(
+      /Only admins can set or clear it/
+    );
+  });
+
+  it("404 rejects with the not-deployed-yet explanation, not a bare status", async () => {
+    mockFetchOnce(404, "Not found");
+    await expect(setOrgDefaultLanguage("hindi")).rejects.toThrow(
+      /doesn't support a default language yet/
+    );
+  });
+
+  it("surfaces the upstream reason on a validation failure", async () => {
+    mockFetchOnce(409, "no such language: nope");
+    await expect(setOrgDefaultLanguage("nope")).rejects.toThrow(
+      /no such language: nope/
+    );
+  });
+
+  it("threads ?org= so the write lands on the org being viewed", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: "hindi" })));
+    await setOrgDefaultLanguage("hindi", undefined, "word-collective");
+    expect(spy.mock.calls[0]![0]).toBe(
+      "/api/config/languages-default?org=word-collective"
     );
   });
 });

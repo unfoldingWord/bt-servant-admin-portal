@@ -1090,6 +1090,49 @@ export async function handleConfig(
     );
   }
 
+  // /api/config/languages-default → GET (any session) / PUT (admin-only)
+  //
+  // Org default language, rung 3 of the language cascade (#286, contract
+  // on worker#236). The upstream pair is `languages-default`, NOT
+  // `languages/default`: `default` is a legal language slug, so the nested
+  // form would be ambiguous with a real language named "default". The
+  // literal match here is likewise unambiguous — the `/languages/(.+)`
+  // route below needs a slash and never sees this path — but the arm sits
+  // beside the languages routes so the pair reads as one surface.
+  //
+  // Authorization: PUT is ADMIN-ONLY (`isAdminMutation` — the same gate
+  // org-wide prompt-overrides use), deliberately stricter than the
+  // per-language DELETE rule (edit + publish on the row). No verb right
+  // governs it, because no verb right is org-wide: the default is one
+  // pointer shared by every end user in the org, so a shepherd holding
+  // edit+publish on "hindi" would otherwise be able to redirect the whole
+  // org's tuning to their own language — or away from another shepherd's —
+  // without holding a single right on the language they demoted. Rights
+  // scope non-admin shepherds to rows; org policy stays with admins
+  // (#249's trump already gives admins every row). Super admins pass via
+  // hasAdminPowers even if self-demoted, and cross-org targeting is
+  // already super-admin-only with an EXACT org compare in `resolveOrg`
+  // (#247).
+  //
+  // GET stays open to any session, matching the languages list/read
+  // convention: shepherds need to see which language is the org default to
+  // understand whether their draft is the one end users receive.
+  //
+  // Body validation (`name` must reference an existing entry) is upstream's
+  // job; this proxy stays thin and passes 400/409 through untouched, as it
+  // does for every other config route.
+  if (pathname === "/api/config/languages-default") {
+    if (isAdminMutation(request.method, session)) {
+      return errorResponse("Forbidden", 403);
+    }
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${encodedOrg}/languages-default`,
+      ["GET", "PUT"]
+    );
+  }
+
   // /api/config/languages/{name} → GET / PUT / DELETE
   // (per-language verb-perms, admin-trump, super-admin cross-org bypass)
   const languageMatch = pathname.match(/^\/api\/config\/languages\/(.+)$/);

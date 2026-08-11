@@ -1,9 +1,29 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { faLanguage } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Eye, EyeOff, Plus, Send, SendHorizontal, Trash2 } from "lucide-react";
+import {
+  Eye,
+  EyeOff,
+  Plus,
+  Send,
+  SendHorizontal,
+  Star,
+  StarOff,
+  Trash2,
+} from "lucide-react";
 
+import {
+  defaultLanguageName,
+  describeLanguageDefault,
+  isDefaultControlAvailable,
+  type LanguageDefaultState,
+} from "@/lib/language-default-state";
+import {
+  describeLanguageDeleteError,
+  shouldOfferDefaultRecovery,
+} from "@/lib/language-error-surface";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
+import { cn } from "@/lib/utils";
 import type { Language, OrgLanguages } from "@/types/language";
 import {
   AlertDialog,
@@ -43,9 +63,12 @@ interface LanguageSelectorProps {
   showDrafts: boolean;
   onToggleShowDrafts: (showDrafts: boolean) => void;
   // #181 verb-perms capabilities, replacing the old `isAdmin` flag.
-  // Languages do NOT carry an admin trump (PR #185 enforced per-row
-  // even for super-admins), so these are pure verb-perm reads computed
-  // by the parent against the user's effective edit/publish rights:
+  // Computed by the parent against the user's EFFECTIVE edit/publish
+  // rights, which for anyone with admin powers — and for a super-admin
+  // viewing another org — are "*": #249 gave admins a trump over per-row
+  // language rights (the earlier PR #185 rule, per-row even for
+  // super-admins, is gone). So these flags are already trump-aware and
+  // this component never reasons about admin-ness itself:
   //
   //   canCreate         = user has some edit rights on this org
   //   canPublishSelected = hasRights(publishRights, selectedLanguage)
@@ -59,13 +82,20 @@ interface LanguageSelectorProps {
       before the scaffold arrives would silently save a blank document. */
   isScaffoldReady: boolean;
   scaffoldError: boolean;
-  /** ALL language names in the org — unfiltered, unlike `languagesData`
-      (which the parent pre-filters to rows the user holds a verb on).
-      #247: admins can create drafts without holding rights on existing
-      rows, so their filtered list can be empty while names are taken; a
-      collision would otherwise surface as a bare worker 403 from an
-      affordance the UI offered. */
-  takenNames: string[];
+  /** #286 — org default language, already reduced to a renderable state by
+      the page (`computeLanguageDefaultState`), loading and failure states
+      included. This component renders what the state says and never infers
+      readiness itself: `pending` renders nothing, `unsupported` renders a
+      quiet admin-only note, `error` renders a real error. */
+  defaultState: LanguageDefaultState;
+  /** Setting/clearing the org default is admin-only — it's one org-wide
+      pointer, not a per-row right (mirror of the worker's PUT gate on
+      /api/config/languages-default). */
+  canSetDefault: boolean;
+  /** Must reject on error — the set path renders the message inline and the
+      clear path keeps its confirmation dialog open (#102 pattern). */
+  onSetDefault: (name: string | null) => Promise<void>;
+  isSettingDefault: boolean;
 }
 
 function isPublished(lang: Pick<Language, "published">): boolean {
@@ -89,12 +119,14 @@ export function LanguageSelector({
   canDeleteSelected,
   isScaffoldReady,
   scaffoldError,
-  takenNames,
+  defaultState,
+  canSetDefault,
+  onSetDefault,
+  isSettingDefault,
 }: LanguageSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newLabel, setNewLabel] = useState("");
-  const [createError, setCreateError] = useState<string | null>(null);
 
   // Destructive-confirmation dialogs are controlled so we can keep them
   // open on async failure and render the error inline (#102). Closing on
@@ -103,7 +135,15 @@ export function LanguageSelector({
   const [unpublishOpen, setUnpublishOpen] = useState(false);
   const [unpublishError, setUnpublishError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // The delete failure is kept as the thrown VALUE, not as a message
+  // string: the dialog needs its class to decide both the wording (role-
+  // aware) and whether to offer the inline recovery action (#286 review
+  // rd-2 P2-1). `recoveryError` is the recovery attempt's own failure.
+  const [deleteFailure, setDeleteFailure] = useState<unknown>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  // The set path has no dialog to render into, so its failure lands in the
+  // notice row beneath the toolbar.
+  const [setDefaultError, setSetDefaultError] = useState<string | null>(null);
 
   const handleConfirmUnpublish = useCallback(() => {
     if (selectedLanguage === null) return;
@@ -115,19 +155,72 @@ export function LanguageSelector({
     );
   }, [onSetPublished, selectedLanguage]);
 
-  const handleConfirmDelete = useCallback(() => {
+  // Not `runConfirmedAction` (unlike its siblings): this dialog needs the
+  // error CLASS, not just its message — the 409 both selects role-aware
+  // copy and unlocks the inline recovery action below. Same contract
+  // otherwise: stay open on failure, close only on success (#102).
+  const handleConfirmDelete = useCallback(async () => {
     if (selectedLanguage === null) return;
-    return runConfirmedAction(
-      () => onDeleteLanguage(selectedLanguage),
-      setDeleteError,
-      () => setDeleteOpen(false),
-      "Failed to delete language."
-    );
+    setDeleteFailure(null);
+    setRecoveryError(null);
+    try {
+      await onDeleteLanguage(selectedLanguage);
+      setDeleteOpen(false);
+    } catch (err: unknown) {
+      setDeleteFailure(err);
+    }
   }, [onDeleteLanguage, selectedLanguage]);
 
-  // Memoized: handleCreate's collision check depends on this, and the
-  // `?? []` fallback would otherwise mint a fresh array identity every
-  // render (react-hooks/exhaustive-deps).
+  // Inline recovery from the 409, offered inside the delete dialog itself.
+  // Deliberately independent of `defaultState`: when the languages-default
+  // GET is failing, the state machine withholds the toolbar Set/Clear
+  // controls, yet the server still HAS a default and still 409s the
+  // delete — which left the admin reading an instruction pointing at
+  // controls that weren't on screen (#286 review rd-2 P2-1). Clearing is
+  // a write; it doesn't need a successful read to be legal.
+  const handleRecoverClearDefault = useCallback(() => {
+    setRecoveryError(null);
+    onSetDefault(null)
+      .then(() => {
+        // The block is gone — drop the stale 409 and its recovery
+        // affordance so the dialog shows a plain, retryable Delete
+        // (#286 review rd-2 P3: the dialog-local error outliving the
+        // recovery is reachable now that the recovery happens INSIDE the
+        // open dialog).
+        setDeleteFailure(null);
+        setRecoveryError(null);
+      })
+      .catch((err: unknown) => {
+        setRecoveryError(
+          err instanceof Error
+            ? err.message
+            : "Failed to clear the default language."
+        );
+      });
+  }, [onSetDefault]);
+
+  const handleSetDefault = useCallback(() => {
+    if (selectedLanguage === null) return;
+    setSetDefaultError(null);
+    onSetDefault(selectedLanguage).catch((err: unknown) => {
+      setSetDefaultError(
+        err instanceof Error
+          ? err.message
+          : "Failed to set the default language."
+      );
+    });
+  }, [onSetDefault, selectedLanguage]);
+
+  // A set-default failure describes an attempt on one row; switching rows
+  // makes it stale. (The set path has no dialog whose dismissal would
+  // otherwise clear it.)
+  useEffect(() => {
+    setSetDefaultError(null);
+  }, [selectedLanguage]);
+
+  // Memoized: the `?? []` fallback would otherwise mint a fresh array
+  // identity every render, and this page re-renders on every keystroke
+  // (the editor draft lives in the parent's state).
   const languages = useMemo(
     () => languagesData?.languages ?? [],
     [languagesData]
@@ -140,6 +233,36 @@ export function LanguageSelector({
     (l) => showDrafts || isPublished(l) || l.name === selectedLanguage
   );
 
+  // #286 org default. `defaultName` drives the per-row badge; the notice
+  // carries the three end-user-facing states (healthy / draft-warning /
+  // none) plus the drift and read-failure cases. Every "should this render
+  // at all?" decision comes from the state machine, so an unresolved read
+  // renders nothing at all rather than a claim about the org.
+  const defaultName = defaultLanguageName(defaultState);
+  const defaultNotice = describeLanguageDefault(defaultState, canSetDefault);
+  const defaultControlAvailable = isDefaultControlAvailable(defaultState);
+  const selectedIsDefault =
+    selectedLanguage !== null && selectedLanguage === defaultName;
+  // #286 — deleting the org default is a guaranteed upstream 409. For a
+  // viewer who can fix that (admins), block the click and say why; for a
+  // shepherd who holds delete rights but cannot touch the org default,
+  // leave the button live — disabling it would offer no recovery at all,
+  // and the 409 they get carries the "ask an admin" copy.
+  const deleteBlockedByDefault = selectedIsDefault && canSetDefault;
+  // Recovery is offered from the ERROR, never from `defaultState`: the
+  // state machine withholds the toolbar controls while the
+  // languages-default GET is failing, but the server still has a default
+  // and still 409s the delete.
+  const deleteErrorMessage =
+    recoveryError ??
+    (deleteFailure === null
+      ? null
+      : describeLanguageDeleteError(deleteFailure, canSetDefault));
+  const offerDefaultRecovery = shouldOfferDefaultRecovery(
+    deleteFailure,
+    canSetDefault
+  );
+
   const handleCreate = useCallback(() => {
     const slug = newName
       .trim()
@@ -148,27 +271,17 @@ export function LanguageSelector({
       .replace(/[^a-z0-9\-_]/g, "")
       .replace(/^-+|-+$/g, "");
     if (!slug) return;
-    // Collision check against the UNFILTERED org list, but only for
-    // names HIDDEN from this user: rows they hold no verb on still own
-    // their names, and the worker will 403 a PUT against them — without
-    // this, the create affordance hands an admin with an empty filtered
-    // list a bare "Forbidden". Names in the user's own (filtered) list
-    // pass through: a rights-holding shepherd re-creating their own
-    // language is the pre-existing PUT-over-existing re-scaffold flow,
-    // not a permission error (#256 rd-3). Client-side only — the
-    // worker's gate remains the enforcement.
-    if (takenNames.includes(slug) && !languages.some((l) => l.name === slug)) {
-      setCreateError(
-        `A language named "${slug}" already exists in this org, but you don't have access to it. Pick a different name, or ask a shepherd or admin for access.`
-      );
-      return;
-    }
+    // #272: no hidden-name collision check any more. It guarded the case
+    // where a name was taken by a row the user couldn't see, which #249
+    // removed — the dropdown now lists the org's whole catalog, so a taken
+    // name is always a name in `languages`, and re-creating one is the
+    // deliberate PUT-over-existing re-scaffold flow (#256 rd-3) rather
+    // than an error. The worker's gate remains the enforcement either way.
     onCreateLanguage(slug, newLabel.trim());
     setNewName("");
     setNewLabel("");
     setShowCreate(false);
-    setCreateError(null);
-  }, [newName, newLabel, onCreateLanguage, takenNames, languages]);
+  }, [newName, newLabel, onCreateLanguage]);
 
   return (
     <div className="space-y-3">
@@ -204,6 +317,15 @@ export function LanguageSelector({
                           Draft
                         </Badge>
                       )}
+                      {l.name === defaultName && (
+                        <Badge
+                          variant="secondary"
+                          className="gap-1 px-1.5 py-0 text-[10px]"
+                        >
+                          <Star className="size-2.5 fill-current" />
+                          Default
+                        </Badge>
+                      )}
                     </span>
                   </SelectItem>
                 ))
@@ -233,6 +355,19 @@ export function LanguageSelector({
           </Button>
         )}
 
+        {/* #286 — drift recovery. The dangling slug isn't in the dropdown,
+            so the per-row control below can never reach it; this is the
+            only Clear an admin can press to fix the state the notice is
+            warning about. Rendered outside the selection cluster because
+            it is deliberately independent of what's selected. */}
+        {canSetDefault && defaultState.kind === "missing" && (
+          <ClearDefaultControl
+            onSetDefault={onSetDefault}
+            isSettingDefault={isSettingDefault}
+            drift
+          />
+        )}
+
         {selectedLanguage !== null && selectedData && (
           <div className="border-border flex items-center gap-2 sm:border-l sm:pl-3">
             <Badge
@@ -241,6 +376,33 @@ export function LanguageSelector({
             >
               {selectedIsPublished ? "Published" : "Draft"}
             </Badge>
+
+            {/* #286 — set/clear the org default for the selected language.
+                Admin-only (the worker's PUT gate is admin-only too), and
+                absent entirely on a worker without the route pair. */}
+            {canSetDefault &&
+              defaultControlAvailable &&
+              (selectedIsDefault ? (
+                <ClearDefaultControl
+                  onSetDefault={onSetDefault}
+                  isSettingDefault={isSettingDefault}
+                />
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={isSettingDefault}
+                  onClick={handleSetDefault}
+                  title={
+                    defaultName === null
+                      ? "Make this the language end users get without asking"
+                      : `Replace "${defaultName}" as the org default`
+                  }
+                >
+                  <Star className="mr-1.5 size-3.5" />
+                  Set as default
+                </Button>
+              ))}
 
             {canPublishSelected &&
               (selectedIsPublished ? (
@@ -320,14 +482,22 @@ export function LanguageSelector({
                 open={deleteOpen}
                 onOpenChange={(next) => {
                   setDeleteOpen(next);
-                  if (!next) setDeleteError(null);
+                  if (!next) {
+                    setDeleteFailure(null);
+                    setRecoveryError(null);
+                  }
                 }}
               >
                 <AlertDialogTrigger asChild>
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={isDeleting}
+                    disabled={isDeleting || deleteBlockedByDefault}
+                    title={
+                      deleteBlockedByDefault
+                        ? "Clear or change the org default first"
+                        : undefined
+                    }
                     className="text-destructive hover:text-destructive"
                   >
                     <Trash2 className="mr-1.5 size-3.5" />
@@ -345,10 +515,31 @@ export function LanguageSelector({
                       ? This action cannot be undone.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
-                  {deleteError && (
-                    <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
-                      {deleteError}
-                    </p>
+                  {deleteErrorMessage && (
+                    <div className="bg-destructive/10 border-destructive space-y-2 border-l-2 px-3 py-2">
+                      <p className="text-destructive text-sm">
+                        {deleteErrorMessage}
+                      </p>
+                      {/* The recovery the copy prescribes, right where the
+                          user reads it — and reachable even when the
+                          org-default READ is failing, which is exactly
+                          when the toolbar control is withheld. Shepherds
+                          don't get it: their copy says "ask an admin"
+                          because the worker's PUT is admin-only. */}
+                      {offerDefaultRecovery && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleRecoverClearDefault}
+                          disabled={isSettingDefault}
+                        >
+                          <StarOff className="mr-1.5 size-3.5" />
+                          {isSettingDefault
+                            ? "Clearing…"
+                            : "Clear the org default"}
+                        </Button>
+                      )}
+                    </div>
                   )}
                   <AlertDialogFooter>
                     <AlertDialogCancel disabled={isDeleting}>
@@ -370,6 +561,52 @@ export function LanguageSelector({
         )}
       </div>
 
+      {/* #286 — one line that says what end users actually get. Rendered
+          for every viewer (shepherds included: whether their draft is the
+          org default changes what "publish" means for them), while the
+          set/clear control above stays admin-only.
+
+          Three renders are deliberately distinct, because they were one
+          line in the first draft and that conflated a slow network with a
+          missing feature:
+            pending     → nothing (no text, no layout shift)
+            unsupported → the quiet admin-only note below
+            error       → a real error notice, never "not available" */}
+      {defaultState.kind === "unsupported"
+        ? canSetDefault && (
+            <p className="text-muted-foreground text-xs" aria-live="polite">
+              Setting an org default language isn&rsquo;t available on this
+              org&rsquo;s worker yet.
+            </p>
+          )
+        : defaultNotice && (
+            <p
+              className={cn(
+                "flex items-center gap-1.5 text-xs",
+                defaultNotice.tone === "warning" &&
+                  "rounded-r-md border-l-2 border-amber-500 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-400",
+                defaultNotice.tone === "error" &&
+                  "bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2",
+                (defaultNotice.tone === "healthy" ||
+                  defaultNotice.tone === "info") &&
+                  "text-muted-foreground"
+              )}
+              role={defaultNotice.tone === "error" ? "alert" : undefined}
+              aria-live="polite"
+            >
+              {defaultNotice.tone === "healthy" && (
+                <Star className="size-3 shrink-0 fill-current" />
+              )}
+              {defaultNotice.message}
+            </p>
+          )}
+
+      {setDefaultError && (
+        <p className="text-destructive text-xs" role="alert">
+          {setDefaultError}
+        </p>
+      )}
+
       {showCreate && (
         <div className="bg-card animate-in fade-in slide-in-from-bottom-4 rounded-xl border p-4 shadow-sm duration-200">
           <p className="text-foreground mb-3 text-sm font-medium">
@@ -387,10 +624,7 @@ export function LanguageSelector({
               <Input
                 id="lang-name"
                 value={newName}
-                onChange={(e) => {
-                  setNewName(e.target.value);
-                  setCreateError(null);
-                }}
+                onChange={(e) => setNewName(e.target.value)}
                 placeholder="e.g. arabic"
                 className="h-8 text-sm"
               />
@@ -408,11 +642,6 @@ export function LanguageSelector({
               />
             </div>
           </div>
-          {createError && (
-            <p className="text-destructive mt-3 text-xs" role="alert">
-              {createError}
-            </p>
-          )}
           {!isScaffoldReady && (
             <p
               className={
@@ -432,10 +661,7 @@ export function LanguageSelector({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => {
-                setShowCreate(false);
-                setCreateError(null);
-              }}
+              onClick={() => setShowCreate(false)}
             >
               Cancel
             </Button>
@@ -450,5 +676,104 @@ export function LanguageSelector({
         </div>
       )}
     </div>
+  );
+}
+
+interface ClearDefaultControlProps {
+  /** Must reject on error — the dialog stays open and renders it inline. */
+  onSetDefault: (name: string | null) => Promise<void>;
+  isSettingDefault: boolean;
+  /** The org default points at a slug that isn't in the org's list. That
+      row can't be selected (it isn't in the dropdown), so this instance is
+      the ONLY way to reach Clear — without it the drift notice prescribes
+      a recovery the UI can't perform (#286 review P3-5). */
+  drift?: boolean;
+}
+
+// Extracted so the selected-row control and the drift-recovery control are
+// the same affordance with the same confirmation semantics, rather than
+// two dialogs that could drift apart. Owns its open/error state: each
+// instance is independently dismissable, and #102's rule (plain Button,
+// close only on success) holds for both.
+function ClearDefaultControl({
+  onSetDefault,
+  isSettingDefault,
+  drift = false,
+}: ClearDefaultControlProps) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleConfirm = useCallback(
+    () =>
+      runConfirmedAction(
+        () => onSetDefault(null),
+        setError,
+        () => setOpen(false),
+        "Failed to clear the default language."
+      ),
+    [onSetDefault]
+  );
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setError(null);
+      }}
+    >
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={isSettingDefault}
+          className={cn(
+            drift && "text-amber-700 hover:text-amber-700 dark:text-amber-400"
+          )}
+        >
+          <StarOff className="mr-1.5 size-3.5" />
+          Clear default
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Clear the org default language?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {drift ? (
+              <>
+                The org default points at a language that isn&rsquo;t in this
+                org&rsquo;s list, so nothing resolves it. Clearing removes the
+                dangling pointer — end users keep getting tuning only when they
+                ask for a language with{" "}
+                <span className="text-foreground font-medium">@language</span>.
+              </>
+            ) : (
+              <>
+                End users will stop receiving this language&rsquo;s tuning
+                automatically — after this, tuning only applies when they ask
+                for a language with{" "}
+                <span className="text-foreground font-medium">@language</span>.
+                The language itself is not changed.
+              </>
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && (
+          <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+            {error}
+          </p>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isSettingDefault}>
+            Cancel
+          </AlertDialogCancel>
+          {/* Plain Button — AlertDialogAction auto-closes before onError
+              can render the inline message (#102). */}
+          <Button onClick={handleConfirm} disabled={isSettingDefault}>
+            {isSettingDefault ? "Clearing…" : "Clear default"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
