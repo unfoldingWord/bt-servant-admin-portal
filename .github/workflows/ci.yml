@@ -13,16 +13,11 @@ jobs:
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-latest
-    # gitleaks-action@v2 ships `runs.using: node20` and has no v3 release.
-    # FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 transitions it onto Node 24 ahead of
-    # GitHub's Sep 16 2026 Node 20 removal. Drop this when v3 ships.
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
