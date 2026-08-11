@@ -58,9 +58,12 @@ interface LanguageSelectorProps {
   showDrafts: boolean;
   onToggleShowDrafts: (showDrafts: boolean) => void;
   // #181 verb-perms capabilities, replacing the old `isAdmin` flag.
-  // Languages do NOT carry an admin trump (PR #185 enforced per-row
-  // even for super-admins), so these are pure verb-perm reads computed
-  // by the parent against the user's effective edit/publish rights:
+  // Computed by the parent against the user's EFFECTIVE edit/publish
+  // rights, which for anyone with admin powers — and for a super-admin
+  // viewing another org — are "*": #249 gave admins a trump over per-row
+  // language rights (the earlier PR #185 rule, per-row even for
+  // super-admins, is gone). So these flags are already trump-aware and
+  // this component never reasons about admin-ness itself:
   //
   //   canCreate         = user has some edit rights on this org
   //   canPublishSelected = hasRights(publishRights, selectedLanguage)
@@ -74,13 +77,6 @@ interface LanguageSelectorProps {
       before the scaffold arrives would silently save a blank document. */
   isScaffoldReady: boolean;
   scaffoldError: boolean;
-  /** ALL language names in the org — unfiltered, unlike `languagesData`
-      (which the parent pre-filters to rows the user holds a verb on).
-      #247: admins can create drafts without holding rights on existing
-      rows, so their filtered list can be empty while names are taken; a
-      collision would otherwise surface as a bare worker 403 from an
-      affordance the UI offered. */
-  takenNames: string[];
   /** #286 — org default language, already reduced to a renderable state by
       the page (`computeLanguageDefaultState`). `kind: "unsupported"` covers
       both "the query hasn't answered" and "this worker predates
@@ -118,7 +114,6 @@ export function LanguageSelector({
   canDeleteSelected,
   isScaffoldReady,
   scaffoldError,
-  takenNames,
   defaultState,
   canSetDefault,
   onSetDefault,
@@ -127,7 +122,6 @@ export function LanguageSelector({
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newLabel, setNewLabel] = useState("");
-  const [createError, setCreateError] = useState<string | null>(null);
 
   // Destructive-confirmation dialogs are controlled so we can keep them
   // open on async failure and render the error inline (#102). Closing on
@@ -227,27 +221,17 @@ export function LanguageSelector({
       .replace(/[^a-z0-9\-_]/g, "")
       .replace(/^-+|-+$/g, "");
     if (!slug) return;
-    // Collision check against the UNFILTERED org list, but only for
-    // names HIDDEN from this user: rows they hold no verb on still own
-    // their names, and the worker will 403 a PUT against them — without
-    // this, the create affordance hands an admin with an empty filtered
-    // list a bare "Forbidden". Names in the user's own (filtered) list
-    // pass through: a rights-holding shepherd re-creating their own
-    // language is the pre-existing PUT-over-existing re-scaffold flow,
-    // not a permission error (#256 rd-3). Client-side only — the
-    // worker's gate remains the enforcement.
-    if (takenNames.includes(slug) && !languages.some((l) => l.name === slug)) {
-      setCreateError(
-        `A language named "${slug}" already exists in this org, but you don't have access to it. Pick a different name, or ask a shepherd or admin for access.`
-      );
-      return;
-    }
+    // #272: no hidden-name collision check any more. It guarded the case
+    // where a name was taken by a row the user couldn't see, which #249
+    // removed — the dropdown now lists the org's whole catalog, so a taken
+    // name is always a name in `languages`, and re-creating one is the
+    // deliberate PUT-over-existing re-scaffold flow (#256 rd-3) rather
+    // than an error. The worker's gate remains the enforcement either way.
     onCreateLanguage(slug, newLabel.trim());
     setNewName("");
     setNewLabel("");
     setShowCreate(false);
-    setCreateError(null);
-  }, [newName, newLabel, onCreateLanguage, takenNames, languages]);
+  }, [newName, newLabel, onCreateLanguage]);
 
   return (
     <div className="space-y-3">
@@ -584,10 +568,7 @@ export function LanguageSelector({
               <Input
                 id="lang-name"
                 value={newName}
-                onChange={(e) => {
-                  setNewName(e.target.value);
-                  setCreateError(null);
-                }}
+                onChange={(e) => setNewName(e.target.value)}
                 placeholder="e.g. arabic"
                 className="h-8 text-sm"
               />
@@ -605,11 +586,6 @@ export function LanguageSelector({
               />
             </div>
           </div>
-          {createError && (
-            <p className="text-destructive mt-3 text-xs" role="alert">
-              {createError}
-            </p>
-          )}
           {!isScaffoldReady && (
             <p
               className={
@@ -629,10 +605,7 @@ export function LanguageSelector({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => {
-                setShowCreate(false);
-                setCreateError(null);
-              }}
+              onClick={() => setShowCreate(false)}
             >
               Cancel
             </Button>

@@ -115,14 +115,6 @@ export function LanguagesPage() {
   const orgDefaultQuery = useOrgDefaultLanguage(contextOrg);
   const setOrgDefault = useSetOrgDefaultLanguage(contextOrg);
 
-  // Every keystroke re-renders this page (the editor draft lives in
-  // component state), so the raw-name list for the create-dialog
-  // collision check must keep a stable identity between data changes.
-  const takenNames = useMemo(
-    () => languagesQuery.data?.languages.map((l) => l.name) ?? [],
-    [languagesQuery.data]
-  );
-
   // Local document draft (auto-save target).
   //
   // We track `lastSyncedDoc` separately from React Query's cache so that:
@@ -484,7 +476,6 @@ export function LanguagesPage() {
               canDeleteSelected={canDeleteSelected}
               isScaffoldReady={scaffoldQuery.isSuccess}
               scaffoldError={scaffoldQuery.isError}
-              takenNames={takenNames}
               defaultState={defaultState}
               canSetDefault={canSetDefault}
               onSetDefault={handleSetDefault}
