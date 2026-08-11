@@ -43,6 +43,12 @@ import {
 const EXPECTATION_COPY =
   "Ranking strongly increases the likelihood that BT Servant answers from higher-ranked sources first. It is not a guarantee — a lower-ranked source can still be used when it fits the question better.";
 const SCOPE_COPY = "Priorities apply to this mode in every language.";
+// #281 — the other half of the honesty: the ranking can't bind retrieval, so
+// the prompt asks BT Servant to name it when the answer came from somewhere
+// else. Said here because it is a consequence of ranking that an admin would
+// otherwise only discover by reading the generated block in the preview.
+const DISCLOSURE_COPY =
+  "When an answer draws on a lower-ranked or unranked source, BT Servant is asked to say so in the reply.";
 
 // Same sentence the Modes header uses for the same denial (see
 // NO_EDIT_RIGHTS_REASON in app/pages/modes.tsx). The header already gates the
@@ -353,6 +359,9 @@ function PanelBody({
           </p>
           <p className="text-muted-foreground mt-1.5 text-xs leading-relaxed">
             {SCOPE_COPY}
+          </p>
+          <p className="text-muted-foreground mt-1.5 text-xs leading-relaxed">
+            {DISCLOSURE_COPY}
           </p>
         </div>
 

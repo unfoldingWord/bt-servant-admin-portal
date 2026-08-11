@@ -48,6 +48,30 @@ const STUDY_NOTES = entry(
 const ORDER = [ULT.id, STUDY_NOTES.id];
 const BLOCK = generatePriorityBlock(ORDER, byId([ULT, STUDY_NOTES]));
 
+// The exact instruction the block carries (#281). Pinned rather than imported
+// because it is product-visible prompt wording: an edit to it should have to
+// be deliberate enough to update a test.
+const DISCLOSURE_TEXT = [
+  "When your answer draws on anything other than the highest-ranked source that covers the question —",
+  "a lower-ranked source, or a resource not ranked here — say so in the same reply, and name what you",
+  "drew on instead. One short sentence is enough.",
+].join("\n");
+
+// Byte-for-byte what the portal emitted for ORDER before #281 (v1.11.0, PR
+// #282). Frozen on purpose: this is the block sitting in real mode documents
+// right now, and every parse path has to keep handling it.
+const PRE_281_BLOCK = [
+  RESOURCE_PRIORITY_BEGIN,
+  '<!-- order: ["translation-helps:en_ult","aquifer:BiblicaStudyNotes"] -->',
+  "### Resource priorities",
+  "When answering from resources, strongly prefer the sources below, in this order. Answer from the",
+  "highest-ranked source that covers the question; fall back to the next-ranked source only when the",
+  "higher one does not cover it. Use unranked resources only when none of the ranked sources apply.",
+  "1. unfoldingWord Literal Text — translation-helps (Bible Translations)",
+  "2. Biblica Study Notes — aquifer (Study Notes)",
+  RESOURCE_PRIORITY_END,
+].join("\n");
+
 function server(serverId: string, serverName: string): ResourceServerReport {
   return { serverId, serverName, status: "ok" };
 }
@@ -202,6 +226,176 @@ describe("generatePriorityBlock", () => {
 
   it("has no block for an empty order", () => {
     expect(generatePriorityBlock([], byId([ULT]))).toBe("");
+  });
+
+  it("asks for a disclosure when the answer leaves the ranking (#281)", () => {
+    expect(BLOCK).toContain(DISCLOSURE_TEXT);
+  });
+
+  it("puts the disclosure after the ranked list, so it can refer back to it", () => {
+    const lines = BLOCK.split("\n");
+    let lastRanked = -1;
+    lines.forEach((line, index) => {
+      if (/^\d+\.\s/.test(line)) lastRanked = index;
+    });
+    const disclosure = lines.indexOf(DISCLOSURE_TEXT.split("\n")[0]!);
+    expect(lastRanked).toBeGreaterThan(-1);
+    expect(disclosure).toBeGreaterThan(lastRanked);
+    // Contiguous with the list — a blank line here would fall outside the
+    // orphan-repair walk and strand this paragraph in a repaired document.
+    expect(disclosure).toBe(lastRanked + 1);
+  });
+
+  it("emits no dangling disclosure when nothing is ranked", () => {
+    // The instruction only makes sense relative to a ranking. There is no
+    // block without one, so there is no instruction either — including on the
+    // path that removes the last ranked resource from a configured document.
+    const empty = generatePriorityBlock([], byId([ULT]));
+    expect(empty).toBe("");
+    expect(empty).not.toContain("say so in the same reply");
+
+    const configured = splicePriorityBlock(MODE_DOCUMENT_SCAFFOLD, BLOCK);
+    const emptied = splicePriorityBlock(configured, empty);
+    expect(emptied).toBe(MODE_DOCUMENT_SCAFFOLD);
+    expect(emptied).not.toContain("say so in the same reply");
+  });
+
+  it("adds the disclosure to the pre-#281 block and changes nothing else", () => {
+    // The whole back-compat argument in one assertion: markers, order comment,
+    // heading, prose and numbered lines are untouched, so every pre-#281 parse
+    // path keeps working and a re-save is a paragraph insertion, not a rewrite.
+    expect(BLOCK).toBe(
+      PRE_281_BLOCK.replace(
+        `\n${RESOURCE_PRIORITY_END}`,
+        `\n${DISCLOSURE_TEXT}\n${RESOURCE_PRIORITY_END}`
+      )
+    );
+  });
+});
+
+describe("pre-#281 documents", () => {
+  const doc = splicePriorityBlock(MODE_DOCUMENT_SCAFFOLD, PRE_281_BLOCK);
+  const handWritten = [
+    "## Tool Guidance",
+    "",
+    "Always cite the passage reference before quoting.",
+    "",
+    PRE_281_BLOCK,
+    "",
+    "## Instructions",
+    "",
+    "Be brief.",
+    "",
+  ].join("\n");
+
+  it("parses the stored order, and never reads as corrupt", () => {
+    // A corrupt verdict would put the "we couldn't read the saved ordering"
+    // banner in front of every user who ranked anything before today.
+    expect(parsePriorityOrder(doc)).toEqual(ORDER);
+    expect(parsePriorityOrder(handWritten)).toEqual(ORDER);
+  });
+
+  it("still recovers each ranked id's description", () => {
+    const recovered = parsePriorityDescriptions(doc);
+    expect(recovered.size).toBe(2);
+    expect(recovered.get(ULT.id)).toBe(
+      "unfoldingWord Literal Text — translation-helps (Bible Translations)"
+    );
+    expect(recovered.get(STUDY_NOTES.id)).toBe(
+      "Biblica Study Notes — aquifer (Study Notes)"
+    );
+  });
+
+  it("upgrades in place on re-save, losing nothing around it", () => {
+    const regenerated = generatePriorityBlock(ORDER, byId([ULT, STUDY_NOTES]));
+    const out = splicePriorityBlock(handWritten, regenerated);
+
+    // Exactly one block, in the same place, with the guidance around it intact.
+    expect(out.split(RESOURCE_PRIORITY_BEGIN)).toHaveLength(2);
+    expect(out.split(RESOURCE_PRIORITY_END)).toHaveLength(2);
+    expect(out).toContain("Always cite the passage reference before quoting.");
+    expect(out).toContain("Be brief.");
+    expect(out.indexOf(RESOURCE_PRIORITY_BEGIN)).toBe(
+      handWritten.indexOf(RESOURCE_PRIORITY_BEGIN)
+    );
+
+    // The ranking survives verbatim, and the disclosure is now there once.
+    expect(parsePriorityOrder(out)).toEqual(ORDER);
+    expect(out.split(DISCLOSURE_TEXT)).toHaveLength(2);
+    expect(parsePriorityDescriptions(out).size).toBe(2);
+
+    // And it settles: the upgrade happens once, not on every open.
+    expect(splicePriorityBlock(out, regenerated)).toBe(out);
+  });
+
+  it("offers the upgrade rather than performing it silently", () => {
+    // `unchanged` on the panel is document equality. A pre-#281 document is no
+    // longer byte-identical to its regeneration, so Apply comes up enabled —
+    // deliberately: the block is only rewritten when a user applies.
+    const regenerated = generatePriorityBlock(ORDER, byId([ULT, STUDY_NOTES]));
+    expect(splicePriorityBlock(doc, regenerated)).not.toBe(doc);
+    expect(parsePriorityOrder(doc)).not.toBe("corrupt");
+  });
+
+  it("repairs a pre-#281 orphan without stranding its body", () => {
+    // An older document whose closing marker was hand-deleted: the remnant is
+    // pre-#281 vocabulary, which is why GENERATED_BODY_LINES is append-only.
+    const orphaned = [
+      "## Tool Guidance",
+      "",
+      PRE_281_BLOCK.replace(`\n${RESOURCE_PRIORITY_END}`, ""),
+      "",
+      "Always cite the passage reference before quoting.",
+      "",
+      "## Instructions",
+      "",
+      "Be brief.",
+      "",
+    ].join("\n");
+
+    expect(findPriorityBlock(orphaned)?.orphan).toBe(true);
+
+    const repaired = splicePriorityBlock(orphaned, BLOCK);
+    expect(repaired.split(RESOURCE_PRIORITY_BEGIN)).toHaveLength(2);
+    expect(repaired.split(RESOURCE_PRIORITY_END)).toHaveLength(2);
+    // One copy of every generated line, not two: the stale remnant was
+    // replaced, not left sitting above the new block.
+    expect(
+      repaired.split(
+        "When answering from resources, strongly prefer the sources below, in this order. Answer from the"
+      )
+    ).toHaveLength(2);
+    expect(repaired.split("1. unfoldingWord Literal Text")).toHaveLength(2);
+    expect(repaired).toContain(
+      "Always cite the passage reference before quoting."
+    );
+    expect(parsePriorityOrder(repaired)).toEqual(ORDER);
+    expect(splicePriorityBlock(repaired, BLOCK)).toBe(repaired);
+  });
+
+  it("absorbs the disclosure when a current-format block is orphaned", () => {
+    // Same repair, one version forward: the new paragraph has to be inside the
+    // orphan's bounds too, or every repair would leave a second copy behind.
+    const orphaned = [
+      "## Tool Guidance",
+      "",
+      BLOCK.replace(`\n${RESOURCE_PRIORITY_END}`, ""),
+      "",
+      "Always cite the passage reference before quoting.",
+      "",
+    ].join("\n");
+
+    const repaired = splicePriorityBlock(orphaned, BLOCK);
+    expect(repaired.split(DISCLOSURE_TEXT)).toHaveLength(2);
+    expect(repaired.split(RESOURCE_PRIORITY_BEGIN)).toHaveLength(2);
+    expect(repaired).toContain(
+      "Always cite the passage reference before quoting."
+    );
+    expect(splicePriorityBlock(repaired, BLOCK)).toBe(repaired);
+  });
+
+  it("removes a pre-#281 block cleanly", () => {
+    expect(splicePriorityBlock(doc, null)).toBe(MODE_DOCUMENT_SCAFFOLD);
   });
 });
 
@@ -637,6 +831,9 @@ describe("parsePriorityDescriptions", () => {
 
   it("recovers each ranked id's description line from the block", () => {
     const recovered = parsePriorityDescriptions(doc);
+    // Exactly the ranked ids: pairing is positional and count-gated, so the
+    // disclosure paragraph must not read as a list line (#281).
+    expect(recovered.size).toBe(2);
     expect(recovered.get(ULT.id)).toBe(
       "unfoldingWord Literal Text — translation-helps (Bible Translations)"
     );
