@@ -259,8 +259,18 @@ export function ModesPage() {
 
   // The live draft, readable from a callback without going through a closure
   // that a stale render could have captured. See the guard in `performSave`.
+  //
+  // Synced in an effect, NOT during render: a render can be thrown away under
+  // concurrent rendering, and a ref written by a discarded render would then
+  // describe a draft that was never committed — leaving `performSave` to
+  // silently no-op on a document that is in fact current. Committed state is
+  // the only thing this guard may compare against. Registered here, ahead of
+  // the autosave effect below, so within one commit the ref is already current
+  // by the time anything can call `performSave`.
   const draftRef = useRef(draft);
-  draftRef.current = draft;
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
 
   const performSave = useCallback(
     (doc: string) => {

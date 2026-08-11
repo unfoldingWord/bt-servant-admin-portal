@@ -13,6 +13,7 @@ import {
   buildPriorityEntries,
   findPriorityBlock,
   generatePriorityBlock,
+  isOfferedBlockRefresh,
   mergeOrderWithLive,
   parsePriorityDescriptions,
   parsePriorityOrder,
@@ -21,7 +22,10 @@ import {
   sanitizePromptText,
   splicePriorityBlock,
 } from "../src/lib/resource-priority";
-import type { PriorityEntry } from "../src/lib/resource-priority";
+import type {
+  OfferedRefreshInput,
+  PriorityEntry,
+} from "../src/lib/resource-priority";
 import type {
   AggregatedResourcesResponse,
   ResourceItem,
@@ -1154,12 +1158,81 @@ describe("orphan repair vs hand-written lists", () => {
   });
 });
 
+describe("isOfferedBlockRefresh", () => {
+  // Apply live, nothing reordered, block readable, and a block to write.
+  function refresh(overrides: Partial<OfferedRefreshInput> = {}) {
+    return isOfferedBlockRefresh({
+      applyEnabled: true,
+      hasApplyError: false,
+      userReordered: false,
+      storedOrderIsCorrupt: false,
+      blockToWrite: BLOCK,
+      ...overrides,
+    });
+  }
+
+  it("recognizes a genuine untouched refresh", () => {
+    expect(refresh()).toBe(true);
+  });
+
+  it("says nothing when Apply is blocked", () => {
+    expect(refresh({ applyEnabled: false })).toBe(false);
+  });
+
+  it("says nothing while a failed apply is still being reported", () => {
+    // That banner is the one asking for the user's attention.
+    expect(refresh({ hasApplyError: true })).toBe(false);
+  });
+
+  it("says nothing once the user has reordered", () => {
+    // Then Apply means what it usually means, and needs no explaining.
+    expect(refresh({ userReordered: true })).toBe(false);
+  });
+
+  it("says nothing over a corrupt block", () => {
+    // The unreadable order line reads as an empty order, so this apply would
+    // REMOVE the block. The panel is already showing the red "we couldn't read
+    // the saved ordering" notice; a calm "your ranking is unchanged" beside it
+    // would talk a user into clicking through and losing a ranking they would
+    // otherwise have retyped.
+    expect(refresh({ storedOrderIsCorrupt: true })).toBe(false);
+    expect(refresh({ storedOrderIsCorrupt: true, blockToWrite: "" })).toBe(
+      false
+    );
+  });
+
+  it("says nothing when the apply would write no block at all", () => {
+    // Empty block = removal, whatever led to it. Independent of the
+    // corruption check on purpose: either one alone must be disqualifying.
+    expect(refresh({ blockToWrite: "" })).toBe(false);
+  });
+
+  it("still holds when only the descriptions have drifted", () => {
+    // A post-#281 block already carries the disclosure, so the delta here is a
+    // description rewrite. It is still order-preserving, so the panel may say
+    // so — which is exactly why the copy describes the whole delta instead of
+    // naming the disclosure as the reason.
+    const drifted = generatePriorityBlock(
+      ORDER,
+      byId([
+        entry(ULT.id, "unfoldingWord Literal Text (2026 revision)", "uW"),
+        STUDY_NOTES,
+      ])
+    );
+    expect(drifted).toContain(DISCLOSURE_TEXT);
+    expect(drifted).not.toBe(BLOCK);
+    expect(refresh({ blockToWrite: drifted })).toBe(true);
+  });
+});
+
 describe("priorityLengthVerdict", () => {
   const under = "x".repeat(MAX_MODE_DOCUMENT_LENGTH);
   const over = "x".repeat(MAX_MODE_DOCUMENT_LENGTH + 1);
 
   it("passes a document that fits, edited or not", () => {
-    // The limit itself fits — the worker rejects above it, not at it.
+    // The limit itself fits — upstream rejects above it, not at it. (Nothing
+    // in this repo enforces it; the constant is a preflight mirror of the
+    // engine's limit, so the panel can refuse before a save comes back 400.)
     expect(under).toHaveLength(MAX_MODE_DOCUMENT_LENGTH);
     expect(priorityLengthVerdict(under, true)).toBe("ok");
     expect(priorityLengthVerdict(under, false)).toBe("ok");

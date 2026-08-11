@@ -14,6 +14,7 @@ import {
   RESOURCE_PRIORITY_DISCLOSURE_SUMMARY,
   buildPriorityEntries,
   generatePriorityBlock,
+  isOfferedBlockRefresh,
   mergeOrderWithLive,
   parsePriorityDescriptions,
   parsePriorityOrder,
@@ -45,12 +46,14 @@ const EXPECTATION_COPY =
   "Ranking strongly increases the likelihood that BT Servant answers from higher-ranked sources first. It is not a guarantee — a lower-ranked source can still be used when it fits the question better.";
 const SCOPE_COPY = "Priorities apply to this mode in every language.";
 // Shown when Apply is enabled on a panel nobody has touched — see
-// `isOfferedRefresh`. Same trigger vocabulary as the block's own instruction,
-// and honest about scope: the refresh rewrites the whole generated block, so
-// descriptions that have drifted since it was written move too. The ranking is
-// the part that is guaranteed not to.
+// `isOfferedBlockRefresh`, which is what decides that this sentence is true.
+// It describes the WHOLE delta rather than naming the disclosure as the
+// reason: on a block written before #281 the disclosure is the visible change,
+// but on a later one it is already there and the delta is the descriptions. A
+// sentence that named only the disclosure would be steering with the wrong
+// story half the time. What is guaranteed either way is the order.
 const OFFERED_REFRESH_COPY =
-  "The ranking is unchanged. Applying refreshes this mode's saved block, so it asks BT Servant to say so when an answer draws on a lower-ranked source, or a resource not ranked here.";
+  "Nothing here has been reordered. Applying keeps the saved order exactly as it is and rewrites the rest of the generated block — the resource descriptions and the disclosure line — from the catalog loaded above.";
 
 // Same sentence the Modes header uses for the same denial (see
 // NO_EDIT_RIGHTS_REASON in app/pages/modes.tsx). The header already gates the
@@ -233,14 +236,20 @@ function PanelBody({
             ? "The order already matches what's saved."
             : null;
 
-  // Apply is live and the user hasn't touched anything: by elimination, the
-  // only reason it is live is that this mode's stored block differs from the
-  // one we'd write — an OFFERED refresh, not a ranking change. Without saying
-  // so, an enabled Apply on an untouched panel reads as a change the user
-  // can't account for, and the safest-looking move (close the sheet) is the
-  // one that leaves the block stale.
-  const isOfferedRefresh =
-    applyBlockedReason === null && applyError === null && order === null;
+  // Apply is live, the user hasn't reordered anything, the stored block is
+  // readable, and this apply would WRITE a block rather than remove one: an
+  // offered refresh, and the only state in which the panel may describe it as
+  // one. Without the explanation an enabled Apply on an untouched panel reads
+  // as a change the user can't account for, and the safest-looking move
+  // (closing the sheet) is the one that leaves the block stale — but the
+  // reassurance is worse than silence anywhere it isn't literally true.
+  const isOfferedRefresh = isOfferedBlockRefresh({
+    applyEnabled: applyBlockedReason === null,
+    hasApplyError: applyError !== null,
+    userReordered: order !== null,
+    storedOrderIsCorrupt: isCorrupt,
+    blockToWrite: block,
+  });
 
   const submitLanguage = (e: React.FormEvent) => {
     e.preventDefault();

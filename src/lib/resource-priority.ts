@@ -25,7 +25,18 @@ export const RESOURCE_PRIORITY_BEGIN = "<!-- bt:resource-priorities -->";
 /** Closing marker of the generated block. */
 export const RESOURCE_PRIORITY_END = "<!-- /bt:resource-priorities -->";
 
-/** Worker `MAX_MODE_DOCUMENT_LENGTH` — the whole document, block included. */
+/**
+ * The upstream document-length limit, measured over the whole document with
+ * the block included.
+ *
+ * Nothing in this repo enforces it: the portal's own `worker/` BFF proxies the
+ * body through untouched, and the 400 comes from the engine beyond it. So this
+ * is a PREFLIGHT MIRROR, not the rule — its only job is to fail an apply in
+ * the panel, where the user can still act on it, instead of at a save that
+ * comes back rejected. Being a mirror, it can go stale: if the upstream limit
+ * moves, nothing here notices, and the failure mode is a save the portal
+ * thought would work (or refuses when it would have).
+ */
 export const MAX_MODE_DOCUMENT_LENGTH = 64000;
 
 /** Whether a prospective document fits — and if not, whose doing it is. */
@@ -48,6 +59,53 @@ export function priorityLengthVerdict(
 ): PriorityLengthVerdict {
   if (nextDocument.length <= MAX_MODE_DOCUMENT_LENGTH) return "ok";
   return edited ? "over-from-edit" : "over-untouched";
+}
+
+/** What the panel needs to know to claim an apply is a harmless refresh. */
+export interface OfferedRefreshInput {
+  /** Nothing is blocking Apply — it is live and clickable. */
+  applyEnabled: boolean;
+  /** A previous apply failed and is still being reported. */
+  hasApplyError: boolean;
+  /** The user has reordered something in this session. */
+  userReordered: boolean;
+  /** The stored block is present but its order line could not be read. */
+  storedOrderIsCorrupt: boolean;
+  /** The block this apply would write. `""` means the apply REMOVES it. */
+  blockToWrite: string;
+}
+
+/**
+ * Whether an enabled Apply on an untouched panel is a ranking-preserving
+ * REFRESH of the generated block — the only state in which the panel may say
+ * so.
+ *
+ * "Apply is enabled and the user hasn't reordered" is not enough on its own,
+ * and the two states it wrongly swept in are the two where the reassurance is
+ * most harmful:
+ *
+ *   - A CORRUPT block. The order line is unreadable, so the stored order reads
+ *     as empty, so the block to write is empty, so the apply REMOVES the block
+ *     rather than refreshing it. The panel is already showing a red notice
+ *     saying exactly that; a calm "your ranking is unchanged" next to it
+ *     invites the user to click through and lose a ranking they would
+ *     otherwise have retyped. Hence both the corruption check and the
+ *     empty-block check — the latter also covers any other path where the
+ *     apply's real effect is removal.
+ *   - A healthy block whose DESCRIPTIONS have drifted. The delta is a
+ *     description rewrite; the disclosure is already present. Still a
+ *     ranking-preserving refresh, so this returns true — but it is why the
+ *     copy must describe the whole delta rather than name the disclosure as
+ *     the reason.
+ */
+export function isOfferedBlockRefresh(input: OfferedRefreshInput): boolean {
+  if (!input.applyEnabled) return false;
+  if (input.hasApplyError) return false;
+  if (input.userReordered) return false;
+  if (input.storedOrderIsCorrupt) return false;
+  // An apply that writes nothing is a removal, not a refresh.
+  if (input.blockToWrite.length === 0) return false;
+  return true;
 }
 
 const PRIORITY_BLOCK_HEADING = "### Resource priorities";
