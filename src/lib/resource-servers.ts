@@ -27,12 +27,19 @@ import type { ResourceServerReport } from "@/types/resources";
 /** serverId → human-readable serverName, blank and unusable names omitted. */
 export type ServerNameMap = ReadonlyMap<string, string>;
 
-// Untrusted text arrives as a single display line: newlines, tabs and other
-// control characters collapse to spaces so a name can never span rows or smuggle
-// invisible structure into a chip. `\p{Cc}` catches C0/C1 controls and
-// `\p{Cf}` the invisible formatting characters (zero-width joiners, bidi
-// overrides) that render as nothing while still consuming the budget.
-function collapseWhitespace(text: string): string {
+/**
+ * Flatten untrusted server text to a single display line.
+ *
+ * Newlines, tabs and other control characters collapse to spaces so a value can
+ * never span rows or smuggle invisible structure into a chip. `\p{Cc}` catches
+ * C0/C1 controls and `\p{Cf}` the invisible formatting characters (zero-width
+ * joiners, bidi overrides) that render as nothing while still consuming width.
+ *
+ * Exported because `serverName` is not the only untrusted string the response
+ * carries — `error` is read straight into the map's screen-reader tree and node
+ * tooltips, and wants exactly the same treatment.
+ */
+export function collapseDisplayText(text: string): string {
   return text.replace(/[\s\p{Cc}\p{Cf}]+/gu, " ").trim();
 }
 
@@ -48,7 +55,7 @@ export function buildServerNameMap(
 ): ServerNameMap {
   const names = new Map<string, string>();
   for (const server of servers) {
-    const name = collapseWhitespace(server.serverName ?? "");
+    const name = collapseDisplayText(server.serverName ?? "");
     if (name.length > 0) names.set(server.serverId, name);
   }
   return names;
@@ -66,22 +73,27 @@ export function resolveServerName(
   serverId: string,
   names: ServerNameMap
 ): string {
-  return names.get(serverId) ?? collapseWhitespace(serverId);
+  return names.get(serverId) ?? collapseDisplayText(serverId);
 }
 
 /** A server attribution ready to render in a DOM chip. */
 export interface ServerLabel {
   /**
-   * The full resolved name — the text node. Rendering it whole is what keeps a
-   * screen reader's announcement complete when CSS visually truncates it.
+   * The full resolved name — the visible text node. Rendering it whole is what
+   * keeps a screen reader's announcement complete when CSS visually truncates
+   * it.
    */
   full: string;
   /**
-   * Tooltip and accessible name. Always the full name, and additionally the
-   * machine id when the two differ — the id was what these badges showed
-   * before names landed, and it stays discoverable rather than being replaced
-   * outright.
+   * The machine id, when it differs from `full`; otherwise `null`. Callers put
+   * it in an sr-only span INSIDE the labelled element rather than in an
+   * `aria-label`: per HTML-AAM, `aria-label` on a generic element (a bare
+   * `span`, or a `Badge` that renders one) is not reliably mapped to an
+   * accessible name, whereas text content always is. The id was what these
+   * badges showed before names landed, so it stays discoverable.
    */
+  machineId: string | null;
+  /** Mouse tooltip: the full name, plus the id when the two differ. */
   title: string;
 }
 
@@ -89,14 +101,19 @@ export interface ServerLabel {
  * Resolve `serverId` to a renderable display label.
  *
  * Nothing is cut: callers pair `full` with a CSS `truncate` for the visual
- * bound and pass `title` to both `title` and `aria-label`, so sighted users get
- * a bounded chip and assistive tech gets the whole name plus the id.
+ * bound, so sighted users get a bounded chip while the DOM — and therefore the
+ * accessible name — keeps the whole string.
  */
 export function resolveServerLabel(
   serverId: string,
   names: ServerNameMap
 ): ServerLabel {
   const full = resolveServerName(serverId, names);
-  const id = collapseWhitespace(serverId);
-  return { full, title: full === id ? full : `${full} (${id})` };
+  const id = collapseDisplayText(serverId);
+  const differs = full !== id;
+  return {
+    full,
+    machineId: differs ? id : null,
+    title: differs ? `${full} (${id})` : full,
+  };
 }

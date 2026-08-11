@@ -67,14 +67,17 @@ function ServerChip({
       />
       {/* Full name as the text node, bounded visually by CSS: a
           character-truncated string would become the accessible name too, so
-          assistive tech would hear the cut version. aria-label carries the
-          machine id, which is otherwise tooltip-only. */}
+          assistive tech would hear the cut version. The id rides in an sr-only
+          span rather than an aria-label — per HTML-AAM a generic element's
+          aria-label is not reliably exposed, but its text content always is. */}
       <span
         className="text-foreground/80 max-w-[16rem] min-w-0 truncate font-medium"
         title={label.title}
-        aria-label={label.title}
       >
         {label.full}
+        {label.machineId && (
+          <span className="sr-only"> ({label.machineId})</span>
+        )}
       </span>
       {server.status === "unsupported" && <span>no resource listing</span>}
       {server.status === "error" && (
@@ -115,12 +118,12 @@ function ServerBadge({
       variant="outline"
       className="max-w-[14rem] px-1.5 py-0 text-[10px]"
       title={label.title}
-      aria-label={label.title}
     >
       {/* `truncate` has to sit on a child, not on the Badge: the Badge is an
           inline-flex container, where overflow clips the flex item hard
           instead of ellipsising it. */}
       <span className="min-w-0 truncate">{label.full}</span>
+      {label.machineId && <span className="sr-only"> ({label.machineId})</span>}
     </Badge>
   );
 }

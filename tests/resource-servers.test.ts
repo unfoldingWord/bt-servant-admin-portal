@@ -90,16 +90,23 @@ describe("resolveServerLabel", () => {
     server("th", "Translation Helps"),
   ]);
 
-  it("renders the name and keeps the machine id in the tooltip", () => {
+  it("renders the name and exposes the machine id separately", () => {
     const label = resolveServerLabel("th", names);
 
     expect(label.full).toBe("Translation Helps");
+    // Surfaced as its own field so callers can put it in an sr-only span:
+    // aria-label on a generic element is not reliably exposed (HTML-AAM).
+    expect(label.machineId).toBe("th");
     expect(label.title).toBe("Translation Helps (th)");
   });
 
-  it("does not repeat the id in the tooltip when it equals the name", () => {
+  it("reports no machine id when it would merely repeat the name", () => {
     const idOnly = buildServerNameMap([]);
-    expect(resolveServerLabel("aquifer", idOnly).title).toBe("aquifer");
+    const label = resolveServerLabel("aquifer", idOnly);
+
+    expect(label.full).toBe("aquifer");
+    expect(label.machineId).toBeNull();
+    expect(label.title).toBe("aquifer");
   });
 
   it("never truncates — DOM callers bound the width with CSS", () => {

@@ -21,7 +21,12 @@ import {
   type MergedEntry,
   type PriorityEntry,
 } from "@/lib/resource-priority";
-import { buildServerNameMap, resolveServerLabel } from "@/lib/resource-servers";
+import {
+  buildServerNameMap,
+  resolveServerLabel,
+  resolveServerName,
+  type ServerNameMap,
+} from "@/lib/resource-servers";
 import { useUiStore } from "@/lib/ui-store";
 import { cn } from "@/lib/utils";
 import { useResources } from "@/hooks/use-resources";
@@ -450,15 +455,17 @@ function PanelBody({
                     )}
                   />
                   {/* One truncation strategy for the panel: full name in the
-                      DOM, CSS does the visual cut, aria-label carries the id.
-                      Character-truncating here would shorten the accessible
+                      DOM, CSS does the visual cut, an sr-only span carries the
+                      id. Character-truncating here would shorten the accessible
                       name of the notice that identifies a failed server. */}
                   <span
                     className="max-w-[14rem] min-w-0 truncate font-medium"
                     title={label.title}
-                    aria-label={label.title}
                   >
                     {label.full}
+                    {label.machineId && (
+                      <span className="sr-only"> ({label.machineId})</span>
+                    )}
                   </span>
                   <span>
                     {server.status === "error"
@@ -525,7 +532,7 @@ function PanelBody({
                       <span className="text-muted-foreground w-5 shrink-0 text-right text-xs tabular-nums">
                         {index + 1}
                       </span>
-                      <RowIdentity row={row} />
+                      <RowIdentity row={row} serverNames={serverNames} />
                       <div className="flex shrink-0 items-center gap-0.5">
                         <div className="flex flex-col">
                           {/* The rank lives in a sibling span the button never
@@ -605,7 +612,7 @@ function PanelBody({
                     className="hover:bg-card flex items-center gap-3 rounded-lg border border-transparent px-2.5 py-2 transition-colors"
                   >
                     <span aria-hidden className="w-5 shrink-0" />
-                    <RowIdentity row={row} muted />
+                    <RowIdentity row={row} serverNames={serverNames} muted />
                     <Button
                       ref={(el) => {
                         buttons.current.set(`${row.id}:rank`, el);
@@ -714,11 +721,20 @@ function PanelBody({
 /** Label, badge and attribution — identical in both lists. */
 function RowIdentity({
   row,
+  serverNames,
   muted = false,
 }: {
   row: MergedEntry;
+  serverNames: ServerNameMap;
   muted?: boolean;
 }) {
+  // `row.serverName` is the RAW status-block value, kept raw because it feeds
+  // the emitted document. For display it goes through the same join the rest of
+  // the app uses, so a tabbed or blank name reads here exactly as it does on
+  // the Resources page and the map — without disturbing a single emitted byte.
+  const serverText = row.missing
+    ? ""
+    : resolveServerName(row.serverId, serverNames);
   return (
     <div className="min-w-0 flex-1">
       <div className="flex items-baseline gap-2">
@@ -747,7 +763,7 @@ function RowIdentity({
       <p className="text-muted-foreground truncate text-[11px]">
         {row.missing
           ? "Kept from the saved order — no server listed it for this language"
-          : [row.serverName, row.subjectLabelText].filter(Boolean).join(" · ")}
+          : [serverText, row.subjectLabelText].filter(Boolean).join(" · ")}
       </p>
     </div>
   );

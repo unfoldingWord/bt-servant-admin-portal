@@ -401,6 +401,28 @@ describe("buildResourceMapLayout server attribution", () => {
     expect(layout.servers[0]!.displayName).toBe("Aquifer");
   });
 
+  it("collapses an untrusted error string, which lands in the sr-only tree raw", () => {
+    // `error` is the same untrusted class as serverName and is read straight
+    // into the screen-reader list and the node <title>.
+    const layout = buildResourceMapLayout(
+      response([
+        {
+          serverId: "aquifer",
+          serverName: "Aquifer",
+          status: "error",
+          error: "upstream 502\n\n  at handler\ttimeout",
+        },
+      ])
+    );
+
+    expect(layout.servers[0]!.error).toBe("upstream 502 at handler timeout");
+  });
+
+  it("leaves a missing error undefined rather than turning it into an empty string", () => {
+    const layout = buildResourceMapLayout(response([named("a", "A")]));
+    expect(layout.servers[0]!.error).toBeUndefined();
+  });
+
   it("truncates a wide server name a code-point budget would have passed", () => {
     // The reported symptom: 20 emoji is 20 code points, under the 24 budget,
     // but ~40 columns of ink — it would have overflowed the fixed-width node.

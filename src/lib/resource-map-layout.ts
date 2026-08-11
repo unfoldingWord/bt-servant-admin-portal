@@ -5,7 +5,11 @@
 // output. No diagram library — the topology is small and fixed-shape
 // (org → servers → subject leaves), so hand-rolled elbows beat a dependency.
 
-import { buildServerNameMap, resolveServerName } from "@/lib/resource-servers";
+import {
+  buildServerNameMap,
+  collapseDisplayText,
+  resolveServerName,
+} from "@/lib/resource-servers";
 import { subjectLabel } from "@/lib/resource-subjects";
 import { displayColumns, truncateLabel } from "@/lib/truncate";
 import type {
@@ -242,7 +246,12 @@ export function buildResourceMapLayout(
       serverName: resolvedName,
       displayName: truncateLabel(resolvedName, SERVER_NAME_MAX_CHARS),
       status: server.status,
-      error: server.error,
+      // Same untrusted class as serverName, and it lands in the sr-only tree
+      // and a node <title> verbatim — so it gets the same single-line collapse.
+      error:
+        server.error === undefined
+          ? undefined
+          : collapseDisplayText(server.error),
       top,
       height,
       centerY: top + height / 2,

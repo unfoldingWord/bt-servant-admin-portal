@@ -56,6 +56,13 @@ export interface PriorityEntry {
   id: string;
   /** `label ?? name` — what a human recognizes the resource by. */
   label: string;
+  /**
+   * Attribution id, carried so the panel can run its own DISPLAY-side join
+   * (lib/resource-servers) without re-deriving it from the `serverId:name`
+   * composite — which would misparse any resource name containing a colon.
+   */
+  serverId: string;
+  /** RAW name from the status block — emission input. See the note below. */
   serverName: string;
   /** Display form of the (open-set) subject slug. */
   subjectLabelText: string;
@@ -166,6 +173,7 @@ export function buildPriorityEntries(
       entries.push({
         id,
         label: item.label ?? item.name,
+        serverId: item.serverId,
         serverName: serverNames.get(item.serverId) ?? item.serverId,
         subjectLabelText: subjectLabel(slug),
       });
@@ -236,6 +244,10 @@ export function mergeOrderWithLive(
             // carried in the document; only an id the document never
             // described renders raw.
             label: recoveredDescriptions?.get(id) ?? id,
+            // No live report to attribute to. The row renders its own
+            // "kept from the saved order" line instead of an attribution, so
+            // there is nothing to resolve and nothing to guess at.
+            serverId: "",
             serverName: "",
             subjectLabelText: "",
             missing: true,
