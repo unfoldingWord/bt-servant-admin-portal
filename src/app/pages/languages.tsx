@@ -8,9 +8,10 @@ import { useAuthStore } from "@/lib/auth-store";
 import { decideContextChange } from "@/lib/context-org-guard";
 import { computeLanguageDefaultState } from "@/lib/language-default-state";
 import {
-  LanguageForbiddenError,
-  LanguageIsDefaultError,
-} from "@/lib/languages-api";
+  isDefaultBlockedDeleteError,
+  selectLanguageMutationBanner,
+} from "@/lib/language-error-surface";
+import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
   effectiveLanguageEditRights,
   effectiveLanguagePublishRights,
@@ -105,7 +106,7 @@ export function LanguagesPage() {
   const languagesQuery = useLanguages(contextOrg);
   const languageQuery = useLanguage(selectedLanguage, contextOrg);
   const saveLanguage = useSaveLanguage(contextOrg);
-  const deleteLanguage = useDeleteLanguage(contextOrg);
+  const deleteLanguage = useDeleteLanguage();
   const scaffoldQuery = useLanguageScaffold(contextOrg);
   // #286 — org default. Its own query rather than the list's
   // `defaultLanguage` echo, because only the dedicated endpoint can tell
@@ -113,7 +114,7 @@ export function LanguagesPage() {
   // query resolves (never rejects) on that 404, so a portal running ahead
   // of the worker shows no control instead of an error on page load.
   const orgDefaultQuery = useOrgDefaultLanguage(contextOrg);
-  const setOrgDefault = useSetOrgDefaultLanguage(contextOrg);
+  const setOrgDefault = useSetOrgDefaultLanguage();
 
   // Local document draft (auto-save target).
   //
@@ -288,7 +289,16 @@ export function LanguagesPage() {
 
   const handleRequestContextChange = useCallback(
     (next: string | null) => {
-      const outcome = decideContextChange(contextOrg, next, isDirty, isSaving);
+      // In-flight org-scoped writes count as "saving": switching context
+      // under one would strand the write's result in another org's view
+      // (#286 review P2-3). The hooks pin their target org too, so this
+      // guard is the user-visible half of a two-layer fix.
+      const outcome = decideContextChange(
+        contextOrg,
+        next,
+        isDirty,
+        isSaving || setOrgDefault.isPending || deleteLanguage.isPending
+      );
       if (outcome === "no-op") return;
       if (outcome === "confirm") {
         setPendingContextOrg({ value: next });
@@ -296,7 +306,14 @@ export function LanguagesPage() {
       }
       setContextOrg(next);
     },
-    [contextOrg, isDirty, isSaving, setContextOrg]
+    [
+      contextOrg,
+      deleteLanguage.isPending,
+      isDirty,
+      isSaving,
+      setContextOrg,
+      setOrgDefault.isPending,
+    ]
   );
 
   const confirmContextSwitch = useCallback(() => {
@@ -372,9 +389,20 @@ export function LanguagesPage() {
   // message without a page-level banner.
   const handleSetDefault = useCallback(
     async (name: string | null) => {
-      await setOrgDefault.mutateAsync(name);
+      // `org` is pinned HERE, at click time, and travels with the request:
+      // the hook must not read an ambient key when the mutation settles,
+      // or an org-context switch mid-flight lands org A's result in org
+      // B's cache (#286 review P2-3).
+      await setOrgDefault.mutateAsync({ name, org: contextOrg });
+      // The delete dialog's 409 ("may be the org default") is exactly the
+      // failure this action fixes. Leaving the mutation error in place
+      // would keep asserting the block after the block is gone — the
+      // sticky-banner path the review found.
+      if (isDefaultBlockedDeleteError(deleteLanguage.error)) {
+        deleteLanguage.reset();
+      }
     },
-    [setOrgDefault]
+    [contextOrg, deleteLanguage, setOrgDefault]
   );
 
   // Both queries feed the state machine, loading flags included: "no
@@ -401,10 +429,11 @@ export function LanguagesPage() {
 
   const handleDeleteLanguage = useCallback(
     async (name: string) => {
-      await deleteLanguage.mutateAsync(name);
+      // Org pinned at click time — same reason as handleSetDefault.
+      await deleteLanguage.mutateAsync({ name, org: contextOrg });
       if (name === selectedLanguage) setSelectedLanguage(null);
     },
-    [deleteLanguage, selectedLanguage, setSelectedLanguage]
+    [contextOrg, deleteLanguage, selectedLanguage, setSelectedLanguage]
   );
 
   const handleJumpToLine = useCallback((line: number) => {
@@ -432,15 +461,14 @@ export function LanguagesPage() {
   // Surface non-forbidden save / delete failures so the user can see *why* a
   // save didn't stick — previously these were silently swallowed, leaving the
   // "Unsaved changes" chip stuck without any explanation.
-  const genericMutationError = useMemo<Error | null>(() => {
-    if (saveError && !(saveError instanceof LanguageForbiddenError)) {
-      return saveError;
-    }
-    if (deleteError && !(deleteError instanceof LanguageForbiddenError)) {
-      return deleteError;
-    }
-    return null;
-  }, [saveError, deleteError]);
+  // One surface per failure. The org-default 409 is deliberately NOT
+  // folded in here: the delete dialog renders it inline and stays open to
+  // do so, and a page banner would both duplicate it and outlive it — see
+  // src/lib/language-error-surface.ts for the rule and its tests.
+  const genericMutationError = useMemo<Error | null>(
+    () => selectLanguageMutationBanner(saveError, deleteError),
+    [saveError, deleteError]
+  );
 
   // #249 — with the dropdown listing every draft in the org, opening a
   // row you can't edit is an ordinary state rather than an error, so
@@ -537,13 +565,7 @@ export function LanguagesPage() {
           role="alert"
           aria-live="polite"
         >
-          {/* #286 — the org-default 409 already reads as an instruction
-              ("set a different default first"); prefixing it with "Save
-              failed" would misdescribe a delete that was refused for a
-              reason the user can act on. */}
-          {genericMutationError instanceof LanguageIsDefaultError
-            ? genericMutationError.message
-            : `Save failed: ${genericMutationError.message}`}
+          Save failed: {genericMutationError.message}
         </div>
       )}
 

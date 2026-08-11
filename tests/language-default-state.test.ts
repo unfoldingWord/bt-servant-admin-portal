@@ -144,52 +144,97 @@ describe("computeLanguageDefaultState — unresolved reads never make claims", (
 
 describe("describeLanguageDefault", () => {
   it("healthy reads as a subtle confirmation, not a warning", () => {
-    const notice = describeLanguageDefault({
-      kind: "healthy",
-      name: "hindi",
-      label: "Hindi",
-    })!;
+    const notice = describeLanguageDefault(
+      { kind: "healthy", name: "hindi", label: "Hindi" },
+      true
+    )!;
     expect(notice.tone).toBe("healthy");
     expect(notice.message).toContain("Hindi");
     expect(notice.message).toContain("org default");
   });
 
   it("unpublished warns that end users get no tuning until it's published", () => {
-    const notice = describeLanguageDefault({
-      kind: "unpublished",
-      name: "hindi",
-    })!;
+    const notice = describeLanguageDefault(
+      { kind: "unpublished", name: "hindi" },
+      true
+    )!;
     expect(notice.tone).toBe("warning");
     expect(notice.message).toContain("no tuning until it's published");
   });
 
   it("none explains that tuning only arrives via @language", () => {
-    const notice = describeLanguageDefault({ kind: "none" })!;
+    const notice = describeLanguageDefault({ kind: "none" }, true)!;
     expect(notice.tone).toBe("info");
     expect(notice.message).toContain("@language");
   });
 
   it("missing warns about the dangling reference by slug", () => {
-    const notice = describeLanguageDefault({ kind: "missing", name: "gone" })!;
+    const notice = describeLanguageDefault(
+      { kind: "missing", name: "gone" },
+      true
+    )!;
     expect(notice.tone).toBe("warning");
     expect(notice.message).toContain("gone");
   });
 
   it("error says the READ failed and that the default is untouched", () => {
-    const notice = describeLanguageDefault({ kind: "error" })!;
+    const notice = describeLanguageDefault({ kind: "error" }, true)!;
     expect(notice.tone).toBe("error");
     expect(notice.message).toMatch(/Couldn't load/);
     expect(notice.message).toContain("unchanged");
   });
 
   it("pending and unsupported render no notice at all", () => {
-    expect(describeLanguageDefault({ kind: "pending" })).toBeNull();
-    expect(describeLanguageDefault({ kind: "unsupported" })).toBeNull();
+    expect(describeLanguageDefault({ kind: "pending" }, true)).toBeNull();
+    expect(describeLanguageDefault({ kind: "unsupported" }, true)).toBeNull();
   });
 
   it("falls back to the slug when the entry has no label", () => {
-    const notice = describeLanguageDefault({ kind: "healthy", name: "hindi" })!;
+    const notice = describeLanguageDefault(
+      { kind: "healthy", name: "hindi" },
+      true
+    )!;
     expect(notice.message).toContain('"hindi"');
+  });
+});
+
+// A shepherd holding edit+publish on the org-default language CAN delete
+// it (per-row rights) but CANNOT set or clear the org default (admin gate
+// on the BFF PUT). Any copy that prescribes an action has to know which
+// audience it is talking to, or it sends half the users at a button they
+// will never be shown.
+
+describe("describeLanguageDefault — role-aware prescriptions", () => {
+  it("tells an admin to pick a new default when the pointer is dangling", () => {
+    const notice = describeLanguageDefault(
+      { kind: "missing", name: "gone" },
+      true
+    )!;
+    expect(notice.message).toContain("Pick a new default");
+    expect(notice.message).not.toContain("Ask an admin");
+  });
+
+  it("tells a non-admin to ask an admin instead", () => {
+    const notice = describeLanguageDefault(
+      { kind: "missing", name: "gone" },
+      false
+    )!;
+    expect(notice.message).toContain("Ask an admin to pick a new default");
+    expect(notice.message).not.toMatch(/^.*\bPick a new default\b/);
+  });
+
+  it("leaves purely descriptive copy identical for both audiences", () => {
+    // `none`, `healthy` and `unpublished` state facts about what end users
+    // get; only `missing` prescribes an admin-only action.
+    for (const state of [
+      { kind: "none" } as const,
+      { kind: "healthy", name: "hindi" } as const,
+      { kind: "unpublished", name: "hindi" } as const,
+    ]) {
+      expect(describeLanguageDefault(state, true)).toEqual(
+        describeLanguageDefault(state, false)
+      );
+    }
   });
 });
 

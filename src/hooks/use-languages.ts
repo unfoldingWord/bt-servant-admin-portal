@@ -69,14 +69,34 @@ export function useSaveLanguage(org?: string | null) {
 // either (a) loosening the engine PUT contract to make `document` optional
 // or (b) introducing optimistic concurrency via etag/version.
 
-export function useDeleteLanguage(org?: string | null) {
-  const qc = useQueryClient();
-  const key = normalize(org);
-  return useMutation({
-    mutationFn: (name: string) =>
-      languagesApi.deleteLanguage(name, undefined, key),
-    onSuccess: () => applyLanguageDeletionToCache(qc, key),
-  });
+// The org travels in the mutation VARIABLES, not in a closure over the
+// hook's argument (#286 review): TanStack updates a live mutation's
+// options on every re-render, so an org-context switch made while a write
+// is in flight would hand the settled callback the NEW org's cache key —
+// applying one org's outcome to another org's data. Pinning the target at
+// mutate time makes that structurally impossible; the page's dirty-guard
+// (which now also gates on these mutations being pending) is the first
+// line of defense, this is the second.
+export interface LanguageMutationTarget {
+  name: string;
+  org: string | null;
+}
+
+// Built as a standalone options object (and exported) so a test can drive
+// the exact wiring the hook uses — proving the request target and the
+// cache write both come from the VARIABLES, with no ambient key anywhere
+// in the path.
+export function languageDeleteMutationOptions(qc: QueryClient) {
+  return {
+    mutationFn: ({ name, org }: LanguageMutationTarget) =>
+      languagesApi.deleteLanguage(name, undefined, org),
+    onSuccess: (_data: void, { org }: LanguageMutationTarget) =>
+      applyLanguageDeletionToCache(qc, org),
+  };
+}
+
+export function useDeleteLanguage() {
+  return useMutation(languageDeleteMutationOptions(useQueryClient()));
 }
 
 // Org default language (#286). Read through its own endpoint rather than
@@ -104,14 +124,27 @@ export function useOrgDefaultLanguage(org?: string | null) {
 // against the server rather than trusted indefinitely. Order matters:
 // setQueryData first (instant paint), invalidate second (the correction,
 // including for the echo-shape guess in `setOrgDefaultLanguage`).
-export function useSetOrgDefaultLanguage(org?: string | null) {
-  const qc = useQueryClient();
-  const key = normalize(org);
-  return useMutation({
-    mutationFn: (name: string | null) =>
-      languagesApi.setOrgDefaultLanguage(name, undefined, key),
-    onSuccess: (data) => applyOrgDefaultToCache(qc, key, data),
-  });
+// Same mutate-time pinning as useDeleteLanguage, and for a sharper
+// reason: this mutation WRITES to the cache. A super admin who hits "Set
+// as default" on org A and switches context to org B before the PUT
+// resolves would otherwise see A's result painted into B's cache — B
+// showing a default it doesn't have, A never showing the write it made.
+export interface OrgDefaultMutationTarget {
+  name: string | null;
+  org: string | null;
+}
+
+export function orgDefaultMutationOptions(qc: QueryClient) {
+  return {
+    mutationFn: ({ name, org }: OrgDefaultMutationTarget) =>
+      languagesApi.setOrgDefaultLanguage(name, undefined, org),
+    onSuccess: (data: OrgDefaultLanguage, { org }: OrgDefaultMutationTarget) =>
+      applyOrgDefaultToCache(qc, org, data),
+  };
+}
+
+export function useSetOrgDefaultLanguage() {
+  return useMutation(orgDefaultMutationOptions(useQueryClient()));
 }
 
 // Cache effects of the two mutations that can move the org default, split

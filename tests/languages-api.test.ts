@@ -230,11 +230,10 @@ describe("deleteLanguage", () => {
     );
   });
 
-  it("throws LanguageIsDefaultError on 409 with an actionable message (#286)", async () => {
-    // Upstream refuses to delete the language the org default points at.
-    // The dialog renders `error.message` verbatim, so the recovery step
-    // ("set a different default, or clear it") has to live in the message
-    // rather than in the raw upstream body.
+  it("throws LanguageIsDefaultError on 409, carrying the slug (#286)", async () => {
+    // The class is the discriminator the render layer keys on to compose
+    // role-aware copy (describeLanguageDeleteError) — so what this layer
+    // owes is the type and the slug, not the wording.
     mockFetchOnce(409, "unset or reassign the default first");
     try {
       await deleteLanguage("hindi");
@@ -244,8 +243,18 @@ describe("deleteLanguage", () => {
       const err = e as LanguageIsDefaultError;
       expect(err.languageName).toBe("hindi");
       expect(err.message).toContain("default");
-      expect(err.message).toMatch(/clear it|different default/);
     }
+  });
+
+  it("keeps the API-layer message ROLE-NEUTRAL (no admin-only instruction)", async () => {
+    // Deleting needs per-row edit+publish; changing the org default is
+    // admin-only. This layer can't know which the reader holds, so it must
+    // not prescribe — the render layer composes that.
+    mockFetchOnce(409, "");
+    const err = (await deleteLanguage("hindi").catch(
+      (e: unknown) => e
+    )) as Error;
+    expect(err.message).not.toMatch(/Set a different default|Ask an admin/);
   });
 
   it("hedges the 409 copy — worker#236 pins no error body to discriminate on", async () => {

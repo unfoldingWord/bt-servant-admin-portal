@@ -18,6 +18,7 @@ import {
   isDefaultControlAvailable,
   type LanguageDefaultState,
 } from "@/lib/language-default-state";
+import { describeLanguageDeleteError } from "@/lib/language-error-surface";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import { cn } from "@/lib/utils";
 import type { Language, OrgLanguages } from "@/types/language";
@@ -132,10 +133,6 @@ export function LanguageSelector({
   const [unpublishError, setUnpublishError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [clearDefaultOpen, setClearDefaultOpen] = useState(false);
-  const [clearDefaultError, setClearDefaultError] = useState<string | null>(
-    null
-  );
   // The set path has no dialog to render into, so its failure lands in the
   // notice row beneath the toolbar.
   const [setDefaultError, setSetDefaultError] = useState<string | null>(null);
@@ -153,23 +150,19 @@ export function LanguageSelector({
   const handleConfirmDelete = useCallback(() => {
     if (selectedLanguage === null) return;
     return runConfirmedAction(
-      () => onDeleteLanguage(selectedLanguage),
+      // The 409 "this is the org default" copy is composed HERE rather
+      // than in the API layer, because the recovery step depends on the
+      // viewer: deleting needs per-row edit+publish, changing the org
+      // default needs admin powers (#286 review P2-2).
+      () =>
+        onDeleteLanguage(selectedLanguage).catch((err: unknown) => {
+          throw new Error(describeLanguageDeleteError(err, canSetDefault));
+        }),
       setDeleteError,
       () => setDeleteOpen(false),
       "Failed to delete language."
     );
-  }, [onDeleteLanguage, selectedLanguage]);
-
-  const handleConfirmClearDefault = useCallback(
-    () =>
-      runConfirmedAction(
-        () => onSetDefault(null),
-        setClearDefaultError,
-        () => setClearDefaultOpen(false),
-        "Failed to clear the default language."
-      ),
-    [onSetDefault]
-  );
+  }, [canSetDefault, onDeleteLanguage, selectedLanguage]);
 
   const handleSetDefault = useCallback(() => {
     if (selectedLanguage === null) return;
@@ -211,10 +204,16 @@ export function LanguageSelector({
   // at all?" decision comes from the state machine, so an unresolved read
   // renders nothing at all rather than a claim about the org.
   const defaultName = defaultLanguageName(defaultState);
-  const defaultNotice = describeLanguageDefault(defaultState);
+  const defaultNotice = describeLanguageDefault(defaultState, canSetDefault);
   const defaultControlAvailable = isDefaultControlAvailable(defaultState);
   const selectedIsDefault =
     selectedLanguage !== null && selectedLanguage === defaultName;
+  // #286 — deleting the org default is a guaranteed upstream 409. For a
+  // viewer who can fix that (admins), block the click and say why; for a
+  // shepherd who holds delete rights but cannot touch the org default,
+  // leave the button live — disabling it would offer no recovery at all,
+  // and the 409 they get carries the "ask an admin" copy.
+  const deleteBlockedByDefault = selectedIsDefault && canSetDefault;
 
   const handleCreate = useCallback(() => {
     const slug = newName
@@ -308,6 +307,19 @@ export function LanguageSelector({
           </Button>
         )}
 
+        {/* #286 — drift recovery. The dangling slug isn't in the dropdown,
+            so the per-row control below can never reach it; this is the
+            only Clear an admin can press to fix the state the notice is
+            warning about. Rendered outside the selection cluster because
+            it is deliberately independent of what's selected. */}
+        {canSetDefault && defaultState.kind === "missing" && (
+          <ClearDefaultControl
+            onSetDefault={onSetDefault}
+            isSettingDefault={isSettingDefault}
+            drift
+          />
+        )}
+
         {selectedLanguage !== null && selectedData && (
           <div className="border-border flex items-center gap-2 sm:border-l sm:pl-3">
             <Badge
@@ -323,57 +335,10 @@ export function LanguageSelector({
             {canSetDefault &&
               defaultControlAvailable &&
               (selectedIsDefault ? (
-                <AlertDialog
-                  open={clearDefaultOpen}
-                  onOpenChange={(next) => {
-                    setClearDefaultOpen(next);
-                    if (!next) setClearDefaultError(null);
-                  }}
-                >
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={isSettingDefault}
-                    >
-                      <StarOff className="mr-1.5 size-3.5" />
-                      Clear default
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>
-                        Clear the org default language?
-                      </AlertDialogTitle>
-                      <AlertDialogDescription>
-                        End users will stop receiving this language&rsquo;s
-                        tuning automatically — after this, tuning only applies
-                        when they ask for a language with{" "}
-                        <span className="text-foreground font-medium">
-                          @language
-                        </span>
-                        . The language itself is not changed.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    {clearDefaultError && (
-                      <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
-                        {clearDefaultError}
-                      </p>
-                    )}
-                    <AlertDialogFooter>
-                      <AlertDialogCancel disabled={isSettingDefault}>
-                        Cancel
-                      </AlertDialogCancel>
-                      {/* Plain Button — see comment in Unpublish dialog. */}
-                      <Button
-                        onClick={handleConfirmClearDefault}
-                        disabled={isSettingDefault}
-                      >
-                        {isSettingDefault ? "Clearing…" : "Clear default"}
-                      </Button>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                <ClearDefaultControl
+                  onSetDefault={onSetDefault}
+                  isSettingDefault={isSettingDefault}
+                />
               ) : (
                 <Button
                   variant="ghost"
@@ -476,7 +441,12 @@ export function LanguageSelector({
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={isDeleting}
+                    disabled={isDeleting || deleteBlockedByDefault}
+                    title={
+                      deleteBlockedByDefault
+                        ? "Clear or change the org default first"
+                        : undefined
+                    }
                     className="text-destructive hover:text-destructive"
                   >
                     <Trash2 className="mr-1.5 size-3.5" />
@@ -634,5 +604,104 @@ export function LanguageSelector({
         </div>
       )}
     </div>
+  );
+}
+
+interface ClearDefaultControlProps {
+  /** Must reject on error — the dialog stays open and renders it inline. */
+  onSetDefault: (name: string | null) => Promise<void>;
+  isSettingDefault: boolean;
+  /** The org default points at a slug that isn't in the org's list. That
+      row can't be selected (it isn't in the dropdown), so this instance is
+      the ONLY way to reach Clear — without it the drift notice prescribes
+      a recovery the UI can't perform (#286 review P3-5). */
+  drift?: boolean;
+}
+
+// Extracted so the selected-row control and the drift-recovery control are
+// the same affordance with the same confirmation semantics, rather than
+// two dialogs that could drift apart. Owns its open/error state: each
+// instance is independently dismissable, and #102's rule (plain Button,
+// close only on success) holds for both.
+function ClearDefaultControl({
+  onSetDefault,
+  isSettingDefault,
+  drift = false,
+}: ClearDefaultControlProps) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleConfirm = useCallback(
+    () =>
+      runConfirmedAction(
+        () => onSetDefault(null),
+        setError,
+        () => setOpen(false),
+        "Failed to clear the default language."
+      ),
+    [onSetDefault]
+  );
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setError(null);
+      }}
+    >
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={isSettingDefault}
+          className={cn(
+            drift && "text-amber-700 hover:text-amber-700 dark:text-amber-400"
+          )}
+        >
+          <StarOff className="mr-1.5 size-3.5" />
+          Clear default
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Clear the org default language?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {drift ? (
+              <>
+                The org default points at a language that isn&rsquo;t in this
+                org&rsquo;s list, so nothing resolves it. Clearing removes the
+                dangling pointer — end users keep getting tuning only when they
+                ask for a language with{" "}
+                <span className="text-foreground font-medium">@language</span>.
+              </>
+            ) : (
+              <>
+                End users will stop receiving this language&rsquo;s tuning
+                automatically — after this, tuning only applies when they ask
+                for a language with{" "}
+                <span className="text-foreground font-medium">@language</span>.
+                The language itself is not changed.
+              </>
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && (
+          <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+            {error}
+          </p>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isSettingDefault}>
+            Cancel
+          </AlertDialogCancel>
+          {/* Plain Button — AlertDialogAction auto-closes before onError
+              can render the inline message (#102). */}
+          <Button onClick={handleConfirm} disabled={isSettingDefault}>
+            {isSettingDefault ? "Clearing…" : "Clear default"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

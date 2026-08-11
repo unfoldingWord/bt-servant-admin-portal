@@ -30,10 +30,17 @@ export class LanguageForbiddenError extends Error {
 // delete was refused) and offers the known cause as the likely one:
 // confidently wrong copy is worse than hedged copy the user can act on.
 // Tighten this to an exact claim once the upstream body shape is known.
+//
+// The message here is deliberately ROLE-NEUTRAL: it states the situation
+// and stops. Whether the reader can perform the recovery (changing the org
+// default is admin-only, while deleting a language only needs per-row
+// edit+publish) is not knowable in this layer, so the render layer
+// composes the actionable sentence — see `describeLanguageDeleteError` in
+// src/lib/language-default-state.ts.
 export class LanguageIsDefaultError extends Error {
   constructor(public readonly languageName: string) {
     super(
-      `"${languageName}" can't be deleted right now — it may be this org's default language. Set a different default, or clear it, then try again.`
+      `"${languageName}" can't be deleted right now — it may be this org's default language, which has to be changed or cleared first.`
     );
     this.name = "LanguageIsDefaultError";
   }

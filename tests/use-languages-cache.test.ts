@@ -1,12 +1,18 @@
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   applyLanguageDeletionToCache,
   applyOrgDefaultToCache,
+  languageDeleteMutationOptions,
   languageQueryKeys,
+  orgDefaultMutationOptions,
 } from "../src/hooks/use-languages";
 import type { OrgDefaultLanguage, OrgLanguages } from "../src/types/language";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 // #286 — the cache effects of the two mutations that can move the org
 // default. Both were originally invalidating only the languages
@@ -110,6 +116,86 @@ describe("applyOrgDefaultToCache", () => {
       supported: true,
       name: null,
     });
+  });
+});
+
+// The org-context switch race: a super admin hits Set on org A and picks
+// org B from the context selector before the PUT resolves. TanStack hands
+// a settled mutation the LATEST options closure, so a hook that read an
+// ambient org key would apply A's outcome to B. These tests drive the
+// exact options objects the hooks use and assert both the request target
+// and the cache write follow the mutate-time variables instead.
+
+describe("orgDefaultMutationOptions — org travels in the variables", () => {
+  it("sends the PUT to the org named at mutate time", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: "hindi" })));
+    const opts = orgDefaultMutationOptions(makeClient());
+    await opts.mutationFn({ name: "hindi", org: "alpha" });
+    expect(String(spy.mock.calls[0]![0])).toBe(
+      "/api/config/languages-default?org=alpha"
+    );
+  });
+
+  it("writes the result to the mutate-time org, even after the view moved on", async () => {
+    const qc = makeClient();
+    seed(qc, "alpha");
+    seed(qc, "beta");
+    const opts = orgDefaultMutationOptions(qc);
+    // The user is now looking at beta; this settled request was made
+    // against alpha.
+    opts.onSuccess(
+      { supported: true, name: "swahili" },
+      {
+        name: "swahili",
+        org: "alpha",
+      }
+    );
+    expect(qc.getQueryData(languageQueryKeys.orgDefault("alpha"))).toEqual({
+      supported: true,
+      name: "swahili",
+    });
+    expect(qc.getQueryData(languageQueryKeys.orgDefault("beta"))).toEqual({
+      supported: true,
+      name: "hindi",
+    });
+  });
+
+  it("same-org (null key) writes are unaffected by the pinning", async () => {
+    const qc = makeClient();
+    seed(qc, null);
+    const opts = orgDefaultMutationOptions(qc);
+    opts.onSuccess({ supported: true, name: null }, { name: null, org: null });
+    expect(qc.getQueryData(languageQueryKeys.orgDefault(null))).toEqual({
+      supported: true,
+      name: null,
+    });
+  });
+});
+
+describe("languageDeleteMutationOptions — org travels in the variables", () => {
+  it("sends the DELETE to the org named at mutate time", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    const opts = languageDeleteMutationOptions(makeClient());
+    await opts.mutationFn({ name: "hindi", org: "alpha" });
+    expect(String(spy.mock.calls[0]![0])).toBe(
+      "/api/config/languages/hindi?org=alpha"
+    );
+  });
+
+  it("invalidates the mutate-time org, not whichever org is on screen", () => {
+    const qc = makeClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    languageDeleteMutationOptions(qc).onSuccess(undefined, {
+      name: "hindi",
+      org: "alpha",
+    });
+    for (const key of invalidatedKeys(spy)) {
+      expect(key).toContain("alpha");
+    }
   });
 });
 

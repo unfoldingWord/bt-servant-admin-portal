@@ -106,8 +106,16 @@ export function computeLanguageDefaultState(
 
 // Human-readable rendering of a state. `null` means "render no notice" —
 // the states with nothing truthful to say yet.
+//
+// `canSetDefault` (admin powers — the worker's PUT gate on
+// /api/config/languages-default) only ever changes copy that PRESCRIBES an
+// action. A shepherd holding edit+publish on the default language can see
+// every one of these states, but cannot act on the ones that require
+// writing the org default, so telling them to "pick a new default" sends
+// them at a button they will never be shown.
 export function describeLanguageDefault(
-  state: LanguageDefaultState
+  state: LanguageDefaultState,
+  canSetDefault: boolean
 ): LanguageDefaultNotice | null {
   switch (state.kind) {
     case "pending":
@@ -138,7 +146,11 @@ export function describeLanguageDefault(
     case "missing":
       return {
         tone: "warning",
-        message: `The org default points at "${state.name}", which isn't in this org's language list. Pick a new default.`,
+        message: `The org default points at "${state.name}", which isn't in this org's language list. ${
+          canSetDefault
+            ? "Pick a new default, or clear it."
+            : "Ask an admin to pick a new default."
+        }`,
       };
   }
 }
