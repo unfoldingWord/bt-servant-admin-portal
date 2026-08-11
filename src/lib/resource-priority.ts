@@ -12,7 +12,6 @@
 // Everything here is pure and DOM-free: it runs (and is tested) under the
 // workers-pool tsconfig, and the panel component is a thin projection of it.
 
-import { buildServerNameMap, resolveServerName } from "@/lib/resource-servers";
 import { subjectLabel } from "@/lib/resource-subjects";
 import type { PromptSlot } from "@/types/prompt-override";
 import { PROMPT_SLOTS, SLOT_LABELS } from "@/types/prompt-override";
@@ -136,22 +135,26 @@ export function sanitizePromptText(text: string): string {
 export function buildPriorityEntries(
   response: AggregatedResourcesResponse
 ): PriorityEntry[] {
-  // Shared with the Resources page and the topology map so all three surfaces
-  // name a server identically. The name is taken FULL and untruncated: it
-  // reaches the mode document via `describeEntry`, and the display budget is a
-  // property of a badge, not of the prompt.
+  // A RAW join, deliberately not the display resolution in lib/resource-servers
+  // — including its `?? ` (not `||`) fallback, which leaves a blank serverName
+  // as the empty string rather than substituting the id.
   //
-  // This DOES change emitted bytes for some pre-existing documents. Collapsing
-  // rewrites any name carrying a tab, a run of spaces, an NBSP, a zero-width
-  // character or a soft hyphen, and a blank name now resolves to the server id
-  // instead of an empty string. For an affected document the regenerated block
-  // no longer matches the stored one, so the panel opens with Apply enabled
-  // once even though the user changed nothing — a cosmetic false positive, not
-  // a data risk: applying rewrites the block to the collapsed form, and every
-  // regeneration after that is byte-identical again. The round-trip test in
-  // tests/resource-priority.test.ts pins that steady state, so the invariant is
-  // machine-checked rather than asserted here in prose.
-  const serverNames = buildServerNameMap(response.servers);
+  // This value reaches the mode document through `describeEntry`, and Apply
+  // PUTs the WHOLE document (see handleApplyResourcePriorities in
+  // app/pages/modes.tsx). So any change to these bytes would make the
+  // regenerated block differ from the stored one for existing documents,
+  // enabling Apply with no ranking intent behind it: a user opening the panel
+  // to look would be offered a save that silently rewrites names — and carries
+  // any unrelated unsaved draft edits along with it — while the blocked-state
+  // copy still talks only about the ORDER. Emission is therefore frozen, and
+  // display hardening is kept strictly on the display side. The round-trip test
+  // in tests/resource-priority.test.ts holds this without an intervening apply.
+  //
+  // Emission-side safety is `sanitizePromptText` in `describeEntry`, which is
+  // what neutralizes newlines and the worker's rewrite markers.
+  const serverNames = new Map(
+    response.servers.map((server) => [server.serverId, server.serverName])
+  );
   const entries: PriorityEntry[] = [];
   const seen = new Set<string>();
 
@@ -163,7 +166,7 @@ export function buildPriorityEntries(
       entries.push({
         id,
         label: item.label ?? item.name,
-        serverName: resolveServerName(item.serverId, serverNames),
+        serverName: serverNames.get(item.serverId) ?? item.serverId,
         subjectLabelText: subjectLabel(slug),
       });
     }

@@ -7,7 +7,7 @@ import {
   buildResourceMapLayout,
   serverCaption,
 } from "../src/lib/resource-map-layout";
-import { truncateLabel } from "../src/lib/truncate";
+import { codePointLength, truncateLabel } from "../src/lib/truncate";
 import type {
   AggregatedResourcesResponse,
   ResourceItem,
@@ -308,6 +308,20 @@ describe("org node label", () => {
     expect(layout.orgName).toBe(org);
     expect(layout.orgDisplayName).toHaveLength(ORG_NAME_MAX_CHARS);
     expect(layout.orgDisplayName.endsWith("…")).toBe(true);
+  });
+});
+
+describe("codePointLength", () => {
+  it("counts astral characters once, unlike String.length", () => {
+    expect(codePointLength("🌍🌍🌍")).toBe(3);
+    expect("🌍🌍🌍".length).toBe(6);
+  });
+
+  it("matches String.length for plain BMP text", () => {
+    expect(codePointLength("Bible Translations")).toBe(
+      "Bible Translations".length
+    );
+    expect(codePointLength("")).toBe(0);
   });
 });
 

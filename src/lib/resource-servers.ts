@@ -8,20 +8,21 @@
 //
 // `serverName` is third-party MCP-server output relayed by the worker, i.e.
 // untrusted display text. React escapes it, so the hazard here is layout and
-// legibility rather than injection: an unbounded name blows out a badge row,
-// and embedded newlines/control characters break a single-line chip. Both are
-// neutralized on the way in (collapse) and on the way out (truncate).
+// legibility rather than injection: embedded newlines and control characters
+// break a single-line chip, so they are collapsed on the way in.
+//
+// This resolution is DISPLAY-ONLY. It deliberately has no consumer on the
+// path that emits text into a mode document (lib/resource-priority), which
+// keeps its own raw join so that generated prompt bytes stay stable — see the
+// note above `buildPriorityEntries`. Hardening a rendered badge must never be
+// able to author a document revision.
+//
+// Length is NOT bounded here. DOM surfaces render the full name and let CSS
+// (`truncate`) do the visual cut, so the accessible name stays complete; only
+// the SVG map, where CSS cannot reach, cuts the string itself via
+// lib/truncate.
 
-import { truncateLabel } from "@/lib/truncate";
 import type { ResourceServerReport } from "@/types/resources";
-
-/**
- * Character budget for an inline server badge. Chosen to match the topology
- * map's in-node budget (`SERVER_NAME_MAX_CHARS`, 24) plus a little slack — the
- * badge is laid out by CSS rather than fitted into fixed SVG geometry, so it
- * can afford a few more characters without wrapping its row.
- */
-export const RESOURCE_SERVER_LABEL_MAX_CHARS = 28;
 
 /** serverId → human-readable serverName, blank and unusable names omitted. */
 export type ServerNameMap = ReadonlyMap<string, string>;
@@ -68,38 +69,34 @@ export function resolveServerName(
   return names.get(serverId) ?? collapseWhitespace(serverId);
 }
 
-/** A server attribution ready to render in a fixed-width chip. */
+/** A server attribution ready to render in a DOM chip. */
 export interface ServerLabel {
-  /** Full resolved name — never truncated. */
-  full: string;
-  /** `full` bounded to the character budget; what the chip renders. */
-  display: string;
   /**
-   * Tooltip text. Always the full name, and additionally the machine id when
-   * the two differ — the id was what this badge showed before names landed, and
-   * it stays discoverable rather than being replaced outright.
+   * The full resolved name — the text node. Rendering it whole is what keeps a
+   * screen reader's announcement complete when CSS visually truncates it.
+   */
+  full: string;
+  /**
+   * Tooltip and accessible name. Always the full name, and additionally the
+   * machine id when the two differ — the id was what these badges showed
+   * before names landed, and it stays discoverable rather than being replaced
+   * outright.
    */
   title: string;
 }
 
 /**
- * Resolve `serverId` to a bounded, tooltip-annotated display label.
+ * Resolve `serverId` to a renderable display label.
  *
- * Truncation is by character count (the same mechanism the topology map uses)
- * rather than CSS: it bounds the string itself, so it holds in a tooltip, an
- * accessible name, and any container the badge is dropped into.
+ * Nothing is cut: callers pair `full` with a CSS `truncate` for the visual
+ * bound and pass `title` to both `title` and `aria-label`, so sighted users get
+ * a bounded chip and assistive tech gets the whole name plus the id.
  */
 export function resolveServerLabel(
   serverId: string,
-  names: ServerNameMap,
-  max: number = RESOURCE_SERVER_LABEL_MAX_CHARS
+  names: ServerNameMap
 ): ServerLabel {
   const full = resolveServerName(serverId, names);
-  const display = truncateLabel(full, max);
   const id = collapseWhitespace(serverId);
-  return {
-    full,
-    display,
-    title: full === id ? full : `${full} (${id})`,
-  };
+  return { full, title: full === id ? full : `${full} (${id})` };
 }

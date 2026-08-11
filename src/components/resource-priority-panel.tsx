@@ -449,11 +449,16 @@ function PanelBody({
                         : "bg-muted-foreground/40"
                     )}
                   />
+                  {/* One truncation strategy for the panel: full name in the
+                      DOM, CSS does the visual cut, aria-label carries the id.
+                      Character-truncating here would shorten the accessible
+                      name of the notice that identifies a failed server. */}
                   <span
                     className="max-w-[14rem] min-w-0 truncate font-medium"
                     title={label.title}
+                    aria-label={label.title}
                   >
-                    {label.display}
+                    {label.full}
                   </span>
                   <span>
                     {server.status === "error"

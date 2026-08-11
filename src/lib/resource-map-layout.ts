@@ -7,7 +7,7 @@
 
 import { buildServerNameMap, resolveServerName } from "@/lib/resource-servers";
 import { subjectLabel } from "@/lib/resource-subjects";
-import { truncateLabel } from "@/lib/truncate";
+import { codePointLength, truncateLabel } from "@/lib/truncate";
 import type {
   AggregatedResourcesResponse,
   ResourceServerStatus,
@@ -166,10 +166,13 @@ export function serverCaption(
   return bounded(counted);
 }
 
+// Counted in code points, matching truncateLabel: budgeting an astral label by
+// UTF-16 units would double-count every emoji and overestimate its ink, cutting
+// the node wider than the glyphs need.
 function leafWidth(label: string, count: number): number {
   const raw =
     LEAF_PAD_X * 2 +
-    label.length * LEAF_CHAR_W +
+    codePointLength(label) * LEAF_CHAR_W +
     LEAF_COUNT_GAP +
     String(count).length * COUNT_CHAR_W;
   return Math.min(Math.ceil(raw), MAX_LEAF_WIDTH);

@@ -65,11 +65,16 @@ function ServerChip({
           server.status === "error" && "bg-destructive"
         )}
       />
+      {/* Full name as the text node, bounded visually by CSS: a
+          character-truncated string would become the accessible name too, so
+          assistive tech would hear the cut version. aria-label carries the
+          machine id, which is otherwise tooltip-only. */}
       <span
         className="text-foreground/80 max-w-[16rem] min-w-0 truncate font-medium"
         title={label.title}
+        aria-label={label.title}
       >
-        {label.display}
+        {label.full}
       </span>
       {server.status === "unsupported" && <span>no resource listing</span>}
       {server.status === "error" && (
@@ -93,10 +98,10 @@ function ServerChip({
 // Source attribution, resolved from `servers[]` (#230 "indicate the source MCP
 // server for each resource"). Renders the human-readable serverName rather than
 // the machine id — the same attribution the topology map and the priority panel
-// already show — with the id retained in the tooltip. serverName is untrusted
-// third-party text, so it arrives collapsed and character-bounded from
-// lib/resource-servers; the extra `max-w` is a CSS backstop for a name that is
-// short in characters but wide in glyphs.
+// already show — with the id retained in the tooltip and the accessible name.
+// serverName is untrusted third-party text: it arrives collapsed to one line
+// from lib/resource-servers, and the width bound is CSS so the full name stays
+// in the DOM for assistive tech.
 function ServerBadge({
   serverId,
   serverNames,
@@ -110,11 +115,12 @@ function ServerBadge({
       variant="outline"
       className="max-w-[14rem] px-1.5 py-0 text-[10px]"
       title={label.title}
+      aria-label={label.title}
     >
       {/* `truncate` has to sit on a child, not on the Badge: the Badge is an
           inline-flex container, where overflow clips the flex item hard
           instead of ellipsising it. */}
-      <span className="min-w-0 truncate">{label.display}</span>
+      <span className="min-w-0 truncate">{label.full}</span>
     </Badge>
   );
 }

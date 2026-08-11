@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  RESOURCE_SERVER_LABEL_MAX_CHARS,
   buildServerNameMap,
   resolveServerLabel,
   resolveServerName,
@@ -94,7 +93,6 @@ describe("resolveServerLabel", () => {
   it("renders the name and keeps the machine id in the tooltip", () => {
     const label = resolveServerLabel("th", names);
 
-    expect(label.display).toBe("Translation Helps");
     expect(label.full).toBe("Translation Helps");
     expect(label.title).toBe("Translation Helps (th)");
   });
@@ -104,40 +102,22 @@ describe("resolveServerLabel", () => {
     expect(resolveServerLabel("aquifer", idOnly).title).toBe("aquifer");
   });
 
-  it("bounds an unbounded untrusted name to the character budget", () => {
+  it("never truncates — DOM callers bound the width with CSS", () => {
+    // Cutting the string would cut the accessible name with it, since the text
+    // node IS the accessible name. Only the SVG map, where CSS cannot reach,
+    // truncates (see lib/truncate).
     const long = "A".repeat(400);
     const label = resolveServerLabel(
       "bloated",
       buildServerNameMap([server("bloated", long)])
     );
 
-    expect(label.display.length).toBeLessThanOrEqual(
-      RESOURCE_SERVER_LABEL_MAX_CHARS
-    );
-    expect(label.display.endsWith("…")).toBe(true);
-    // The full name still reaches the tooltip — truncation is display-only.
     expect(label.full).toBe(long);
+    expect(label.full).not.toContain("…");
     expect(label.title).toContain(long);
   });
 
-  it("honors an explicit budget", () => {
-    const label = resolveServerLabel("th", names, 8);
-
-    expect(label.display).toBe("Transla…");
-    expect(label.display.length).toBe(8);
-  });
-
-  it("leaves a name exactly at the budget untruncated", () => {
-    const exact = "B".repeat(RESOURCE_SERVER_LABEL_MAX_CHARS);
-    const label = resolveServerLabel(
-      "exact",
-      buildServerNameMap([server("exact", exact)])
-    );
-
-    expect(label.display).toBe(exact);
-  });
-
-  it("bounds a name that is only long because of collapsed whitespace", () => {
+  it("still collapses a name that is long only because of whitespace", () => {
     const label = resolveServerLabel(
       "spacey",
       buildServerNameMap([server("spacey", `Aquifer${" ".repeat(200)}MCP`)])
