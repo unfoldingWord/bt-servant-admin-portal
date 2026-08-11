@@ -385,14 +385,17 @@ describe("setOrgDefaultLanguage", () => {
     ["an ack envelope", { ok: true }],
     ["a differently-named key", { defaultLanguage: "hindi" }],
     ["a wrapped envelope", { org: "acme", message: "saved" }],
+    ["a name of the wrong type", { name: 42 }],
   ])(
-    "a successful set with %s still reports the slug we set, not 'no default'",
+    "a successful set with %s (no readable name) still reports the slug we set",
     async (_label, body) => {
       // worker#236 fixes the REQUEST shape only. Reading an unrecognized
       // 2xx body as `name: null` would make a successful set immediately
       // render "No default language is set" — a lie with no self-
       // correction until the next page load. The mutation's invalidation
-      // is what reconciles this optimistic guess.
+      // is what reconciles this optimistic guess. A `name` of the wrong
+      // TYPE belongs here too: garbage is evidence the envelope isn't what
+      // we think it is, not a statement that the default is unset.
       mockFetchOnce(200, body);
       expect(await setOrgDefaultLanguage("hindi")).toEqual({
         supported: true,
@@ -408,6 +411,27 @@ describe("setOrgDefaultLanguage", () => {
     expect(await setOrgDefaultLanguage("hindi")).toEqual({
       supported: true,
       name: "swahili",
+    });
+  });
+
+  it("an explicit { name: null } echo wins over the slug we requested", async () => {
+    // The server accepted the request but reports the default as UNSET —
+    // upstream declined to store the slug (a race with another admin's
+    // clear, say). Falling back to the requested name here would have the
+    // cache assert a default the server just said doesn't exist. Absent is
+    // not the same answer as null (#286 review rd-3).
+    mockFetchOnce(200, { name: null });
+    expect(await setOrgDefaultLanguage("hindi")).toEqual({
+      supported: true,
+      name: null,
+    });
+  });
+
+  it("a blank-string echo is a name-shaped nothing, not a slug", async () => {
+    mockFetchOnce(200, { name: "   " });
+    expect(await setOrgDefaultLanguage("hindi")).toEqual({
+      supported: true,
+      name: null,
     });
   });
 

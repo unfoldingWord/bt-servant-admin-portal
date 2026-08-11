@@ -179,16 +179,34 @@ export async function deleteLanguage(
 // form would collide with a real language named "default".
 const DEFAULT_LANGUAGE_PATH = "/api/config/languages-default";
 
-// Upstream answers `{ name: string | null }`. Anything else (a stray
-// object, an empty string) normalizes to "no default" rather than being
-// trusted as a slug — a bogus reference would render a warning about a
-// language that doesn't exist.
-function readDefaultName(data: unknown): string | null {
-  if (data === null || typeof data !== "object") return null;
+// Upstream answers `{ name: string | null }`.
+//
+// The read is DISCRIMINATED — "the body didn't tell us" is a different
+// answer from "the body said there is no default" (#286 review rd-3).
+// Collapsing both to `null` was fine for GET, where either way there's
+// nothing to show, but wrong for PUT: the caller falls back to the
+// requested slug when the envelope is unreadable, and a valid
+// `{"name": null}` echo (the server saying "it is now unset") would get
+// overwritten by the very slug the server declined to store.
+//
+// A `name` present but neither string nor null (`42`, an object) counts as
+// UNRECOGNIZED, not as an explicit unset: a garbage value is evidence the
+// envelope isn't what we think it is, not a statement about the default.
+type DefaultNameRead =
+  | { present: false }
+  | { present: true; name: string | null };
+
+function readDefaultName(data: unknown): DefaultNameRead {
+  if (data === null || typeof data !== "object") return { present: false };
+  if (!("name" in data)) return { present: false };
   const name = (data as { name?: unknown }).name;
-  if (typeof name !== "string") return null;
+  if (name === null) return { present: true, name: null };
+  if (typeof name !== "string") return { present: false };
+  // An empty/whitespace slug is a name-shaped nothing — normalize it to
+  // "no default" rather than letting it through as a reference that would
+  // render a warning about a language nobody can find.
   const trimmed = name.trim();
-  return trimmed === "" ? null : trimmed;
+  return { present: true, name: trimmed === "" ? null : trimmed };
 }
 
 export async function getOrgDefaultLanguage(
@@ -212,7 +230,10 @@ export async function getOrgDefaultLanguage(
     throw new Error(`Failed to load default language (${res.status}): ${body}`);
   }
 
-  return { supported: true, name: readDefaultName(await res.json()) };
+  // On the READ path both "no name field" and "name: null" mean the same
+  // thing to the caller: this org has no default.
+  const echo = readDefaultName(await res.json());
+  return { supported: true, name: echo.present ? echo.name : null };
 }
 
 // `name: null` clears the default; a slug sets it. Rejects with a
@@ -248,14 +269,19 @@ export async function setOrgDefaultLanguage(
     );
   }
 
-  // Trust the server's echo only when we can actually read a slug out of
-  // it; otherwise fall back to what we asked for. worker#236 fixes the
-  // request shape but not the response envelope, so a 2xx body we don't
-  // recognize (`{}`, `{"ok":true}`, `{"defaultLanguage":"hindi"}`, a
-  // bodyless 204) must not be read as "the default is now unset" — that
-  // would make a SUCCESSFUL set render "No default language is set" with
-  // nothing to correct it until the next page load. The mutation's cache
-  // invalidation is the backstop that reconciles a wrong guess here.
+  // Server echo wins whenever the body actually carries one — INCLUDING an
+  // explicit `{"name": null}`. The server saying "it is now unset" is a
+  // fact about the org, and overwriting it with the slug we asked for
+  // would report a default that upstream just declined to store.
+  //
+  // The fallback exists only for the case where the body tells us nothing:
+  // worker#236 fixes the request shape but not the response envelope, so a
+  // 2xx we don't recognize (`{}`, `{"ok":true}`,
+  // `{"defaultLanguage":"hindi"}`, a bodyless 204) must not read as "the
+  // default is now unset" — that would make a SUCCESSFUL set render "No
+  // default language is set". The mutation's cache invalidation is the
+  // backstop that reconciles that guess.
   const data: unknown = await res.json().catch(() => null);
-  return { supported: true, name: readDefaultName(data) ?? name };
+  const echo = readDefaultName(data);
+  return { supported: true, name: echo.present ? echo.name : name };
 }
