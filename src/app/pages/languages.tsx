@@ -356,8 +356,18 @@ export function LanguagesPage() {
       // (Frank P2 on PR #106).
       const scaffold = scaffoldQuery.data;
       if (!scaffold) return;
-      saveLanguage.mutate(
-        {
+      // #293 grok F1: whether this is a fresh create or a re-scaffold of an
+      // existing language, the write lands a blank, unpublished document. If
+      // we're overwriting a DIFFERENT language while the current editor is
+      // dirty or mid-save, yanking the selection would leave the autosave
+      // effect about to PUT this row's draft into the new one — so hold the
+      // selection where it is in that case.
+      const stealsFocusFromDirty =
+        name !== selectedLanguage && (isDirty || isSaving);
+      // Returned so the selector's overwrite confirmation can await the write
+      // and render failures inline (grok F2 / #102).
+      return saveLanguage
+        .mutateAsync({
           name,
           org: contextOrg,
           body: {
@@ -365,18 +375,36 @@ export function LanguagesPage() {
             document: scaffold.document,
             published: false,
           },
-        },
-        {
-          onSuccess: () => {
-            // #249 — no creator auto-grant to mirror any more: creation
-            // is an ordinary admin write under the worker's admin trump,
-            // and admins read every row through the "*" short-circuit.
+        })
+        .then(() => {
+          if (name === selectedLanguage) {
+            // Replacing the language being VIEWED: the selection doesn't
+            // change, so the sync effect won't re-pull. Reset the editor to
+            // the blank scaffold the server now holds — otherwise the next
+            // keystroke autosaves the OLD document back and republishes it,
+            // undoing the replace (grok F1, Failure A). Leave syncedNameRef
+            // alone so a refetch of stale cache can't reload the old doc.
+            setDraft(scaffold.document);
+            setLastSyncedDoc(scaffold.document);
+            setLastSyncedPublished(false);
+            setLastFailedDoc(null);
+          } else if (!stealsFocusFromDirty) {
+            // #249 — no creator auto-grant to mirror any more: creation is an
+            // ordinary admin write under the worker's admin trump, and admins
+            // read every row through the "*" short-circuit.
             setSelectedLanguage(name);
-          },
-        }
-      );
+          }
+        });
     },
-    [contextOrg, saveLanguage, scaffoldQuery.data, setSelectedLanguage]
+    [
+      contextOrg,
+      isDirty,
+      isSaving,
+      saveLanguage,
+      scaffoldQuery.data,
+      selectedLanguage,
+      setSelectedLanguage,
+    ]
   );
 
   const handleSetPublished = useCallback(
@@ -534,6 +562,7 @@ export function LanguagesPage() {
               onSelectLanguage={handleSelectLanguage}
               onCreateLanguage={handleCreateLanguage}
               editRights={editRights}
+              publishRights={publishRights}
               onDeleteLanguage={handleDeleteLanguage}
               onSetPublished={handleSetPublished}
               isCreating={saveLanguage.isPending}

@@ -53,7 +53,10 @@ interface LanguageSelectorProps {
   languagesData: OrgLanguages | undefined;
   selectedLanguage: string | null;
   onSelectLanguage: (language: string | null) => void;
-  onCreateLanguage: (name: string, label: string) => void;
+  /** Returns a promise that rejects on error so the destructive
+      create-over-existing confirmation can render its failure inline and stay
+      open (grok F2 / #102). The plain create path ignores the result. */
+  onCreateLanguage: (name: string, label: string) => void | Promise<void>;
   /** The caller's effective language EDIT rights, already trump-aware (`"*"`
       for admins and cross-org super-admins). #293: a create over an existing
       slug overwrites its document with a blank scaffold and unpublishes it, so
@@ -61,6 +64,11 @@ interface LanguageSelectorProps {
       refuses up front when they can't (the worker would 403 the write).
       `undefined` is the legacy full-access shape (see hasRights). */
   editRights: LanguageRights | undefined;
+  /** The caller's effective language PUBLISH rights, same trump-aware shape as
+      editRights. #293: re-scaffolding a PUBLISHED language unpublishes it, so
+      the worker's overwrite PUT needs publish rights too — used to block an
+      edit-only caller before a confirmation that would 403. */
+  publishRights: LanguageRights | undefined;
   /** Must return a promise that rejects on error — the destructive
       confirmation dialogs render inline error UI on the rejection path
       and stay open so the user can read it (#102). */
@@ -117,6 +125,7 @@ export function LanguageSelector({
   onSelectLanguage,
   onCreateLanguage,
   editRights,
+  publishRights,
   onDeleteLanguage,
   onSetPublished,
   isCreating,
@@ -145,6 +154,7 @@ export function LanguageSelector({
     slug: string;
     label: string;
   } | null>(null);
+  const [overwriteError, setOverwriteError] = useState<string | null>(null);
 
   // Destructive-confirmation dialogs are controlled so we can keep them
   // open on async failure and render the error inline (#102). Closing on
@@ -303,13 +313,20 @@ export function LanguageSelector({
     // overwrites the language's tuning document and unpublishes it. #272
     // removed the last guard, so it happened silently. #249 lists the org's
     // whole catalog, so `languages` is authoritative for what names are taken;
-    // `editRights` decides whether this caller may overwrite the row (confirm
-    // first) or the worker would 403 the write (block up front).
-    const existingNames = languages.map((l) => l.name);
-    const action = classifyLanguageCreate(slug, existingNames, editRights);
+    // edit/publish rights + the target's published state decide whether this
+    // caller may overwrite (confirm first) or the worker would 403 (block).
+    const existing = languages.find((l) => l.name === slug);
+    const action = classifyLanguageCreate(
+      slug,
+      existing ? { published: isPublished(existing) } : null,
+      editRights,
+      publishRights
+    );
     if (action.kind === "blocked") {
       setCreateError(
-        `A language named “${slug}” already exists in this org, but you don’t have edit rights on it. Pick a different name, or ask a shepherd or admin for access.`
+        action.reason === "publish"
+          ? `“${slug}” is a published language and you don’t have publish rights on it, so it can’t be replaced here — replacing it would unpublish it. Ask an admin.`
+          : `A language named “${slug}” already exists in this org, but you don’t have edit rights on it. Pick a different name, or ask a shepherd or admin for access.`
       );
       return;
     }
@@ -317,7 +334,11 @@ export function LanguageSelector({
       setOverwriteTarget({ slug, label: newLabel.trim() });
       return;
     }
-    onCreateLanguage(slug, newLabel.trim());
+    // Plain create is fire-and-forget; its errors surface via the page's save
+    // state, not inline here. Swallow the rejection so it isn't unhandled.
+    void Promise.resolve(onCreateLanguage(slug, newLabel.trim())).catch(
+      () => {}
+    );
     setNewName("");
     setNewLabel("");
     setShowCreate(false);
@@ -328,20 +349,29 @@ export function LanguageSelector({
     languages,
     languagesData,
     editRights,
+    publishRights,
   ]);
 
   // Re-scaffolding an existing language is destructive (blank document +
-  // unpublish), so it only runs from the confirmation dialog. Fire-and-forget
-  // to match the plain create path — the worker's write error surfaces the
-  // same way either creation does.
+  // unpublish), so it only runs from the confirmation dialog. Unlike the plain
+  // create path it awaits the write and keeps the dialog open on failure,
+  // rendering the error inline (grok F2 / #102) — the same contract as the
+  // Unpublish/Delete dialogs.
   const handleConfirmOverwrite = useCallback(() => {
     if (overwriteTarget === null) return;
-    onCreateLanguage(overwriteTarget.slug, overwriteTarget.label);
-    setOverwriteTarget(null);
-    setNewName("");
-    setNewLabel("");
-    setShowCreate(false);
-    setCreateError(null);
+    const { slug, label } = overwriteTarget;
+    return runConfirmedAction(
+      () => Promise.resolve(onCreateLanguage(slug, label)),
+      setOverwriteError,
+      () => {
+        setOverwriteTarget(null);
+        setNewName("");
+        setNewLabel("");
+        setShowCreate(false);
+        setCreateError(null);
+      },
+      "Failed to replace language."
+    );
   }, [overwriteTarget, onCreateLanguage]);
 
   return (
@@ -757,7 +787,10 @@ export function LanguageSelector({
       <AlertDialog
         open={overwriteTarget !== null}
         onOpenChange={(next) => {
-          if (!next) setOverwriteTarget(null);
+          if (!next) {
+            setOverwriteTarget(null);
+            setOverwriteError(null);
+          }
         }}
       >
         <AlertDialogContent>
@@ -771,6 +804,11 @@ export function LanguageSelector({
               scaffold and unpublishes it. This can&rsquo;t be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {overwriteError && (
+            <p className="text-destructive text-sm" role="alert">
+              {overwriteError}
+            </p>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isCreating}>Cancel</AlertDialogCancel>
             <Button
