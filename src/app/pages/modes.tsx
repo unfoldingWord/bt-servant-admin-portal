@@ -50,6 +50,7 @@ import {
   useRenameMode,
   useRetireMode,
   useSaveMode,
+  useSeedImportedMode,
 } from "@/hooks/use-prompt-config";
 import type { MarkdownHeading } from "@/types/markdown";
 import type { PromptMode } from "@/types/prompt-override";
@@ -116,6 +117,7 @@ export function ModesPage() {
   const modesQuery = useModes(contextOrg);
   const modeQuery = useMode(selectedMode, contextOrg);
   const saveMode = useSaveMode(contextOrg);
+  const seedImportedMode = useSeedImportedMode();
   const deleteMode = useDeleteMode(contextOrg);
   const renameMode = useRenameMode(contextOrg);
   const cloneMode = useCloneMode(contextOrg);
@@ -545,21 +547,38 @@ export function ModesPage() {
   );
 
   const finishImport = useCallback(
-    (mode: ParsedModeImport, saved: PromptMode) => {
-      // Read the LIVE selection, not the render closure — finishImport runs in
-      // an async continuation (after file.text() + the PUT), during which the
-      // user may have switched modes.
+    async (
+      mode: ParsedModeImport,
+      saved: PromptMode,
+      importOrg: string | null
+    ) => {
+      // Seed the imported mode's OWN per-mode cache with the authoritative PUT
+      // response, org pinned to the org the import targeted. `useSaveMode` only
+      // invalidates (active-refetch), so without this a later select of an
+      // overwritten-but-inactive mode hydrates the pre-import cache and the next
+      // save reverts the import; and the same-mode server-label read would stay
+      // stale until a refetch (grok #306 rd-4). Import-local — never on the
+      // shared save hook.
+      await seedImportedMode(mode.name, importOrg, saved);
+
+      // Read the LIVE (org, selection) — finishImport runs in an async
+      // continuation (after file.text() + the PUT), during which the user may
+      // have switched mode OR org. In-place hydration is safe ONLY when both
+      // still match the import's target: a mode slug is not unique across orgs,
+      // so hydrating on slug alone could paint org A's imported document into a
+      // same-named mode the user is now viewing in org B (codex #306 rd-4 P1).
       const liveSelected = useUiStore.getState().selectedMode;
+      const liveOrg = useUiStore.getState().contextOrg;
       const aliasNote = mode.droppedAliases.length
         ? ` Its aliases (${mode.droppedAliases.join(", ")}) were not restored — aliases are managed through rename/retire, not import.`
         : "";
 
-      if (mode.name === liveSelected) {
-        // Overwrote the mode already open in the editor. Re-hydrate IN PLACE
-        // from the authoritative saved values: setSelectedMode would no-op and
-        // the hydration effect early-returns (syncedNameRef already names this
-        // mode), so without this the draft/lastSyncedDoc/flags stay pre-import
-        // and the next autosave silently reverts the import (#302/#303 class).
+      if (mode.name === liveSelected && importOrg === liveOrg) {
+        // Overwrote the mode open in the editor (same org). Re-hydrate IN PLACE
+        // from the authoritative saved values: the hydration effect early-
+        // returns (syncedNameRef already names this mode), so without this the
+        // draft/lastSyncedDoc/flags stay pre-import and the next autosave
+        // silently reverts the import (#302/#303 class).
         setDraft(mode.document);
         setLastSyncedDoc(mode.document);
         applyLastSyncedFlags(
@@ -569,26 +588,23 @@ export function ModesPage() {
           )
         );
         setLastFailedDoc(null);
-        // Pin the anchor so a late initial GET (syncedNameRef null on a fresh
-        // load) can't re-run hydration and clobber the in-place values; the
-        // invalidate refetch reconciles to the same server truth (grok #306).
         syncedNameRef.current = mode.name;
         setImportNotice(
           aliasNote ? `Imported “${mode.name}”.${aliasNote}` : null
         );
         return;
       }
-      // Different / new mode: do NOT auto-switch. Auto-selecting from this async
-      // continuation fought the render-closure dirty-switch guard (a stale
-      // isDirty could drop the user's in-progress edits) and the stale-selection
-      // guard. The mode is saved server-side and the list invalidate refetches
-      // it into the dropdown, so a notice + leaving the user's current editor
-      // untouched is both simpler and safer than yanking them to the new mode.
+      // Different / new mode (or the target is no longer the live selection): do
+      // NOT auto-switch. Auto-selecting from this async continuation fought the
+      // render-closure dirty-switch guard (a stale isDirty could drop the user's
+      // in-progress edits). The mode is saved and its cache is seeded, so the
+      // user picks it from the list when ready — their current editor is left
+      // untouched.
       setImportNotice(
         `Imported “${mode.name}” — select it from the mode list to edit.${aliasNote}`
       );
     },
-    [applyLastSyncedFlags]
+    [applyLastSyncedFlags, seedImportedMode]
   );
 
   const handleImportFileChange = useCallback(
@@ -679,9 +695,12 @@ export function ModesPage() {
         return;
       }
       // Brand-new mode — create directly; a failure surfaces in the banner.
+      // Pin the org the import targets (this render's contextOrg = the org the
+      // PUT is addressed to) so finishImport can refuse cross-org hydration.
+      const importOrg = contextOrg;
       try {
         const saved = await runImport(result.mode);
-        finishImport(result.mode, saved);
+        await finishImport(result.mode, saved, importOrg);
       } catch (err) {
         setImportError(err instanceof Error ? err.message : "Import failed.");
       }
@@ -690,6 +709,7 @@ export function ModesPage() {
       modesQuery.data,
       canEditModeName,
       modePublishRights,
+      contextOrg,
       runImport,
       finishImport,
     ]
@@ -698,16 +718,18 @@ export function ModesPage() {
   const confirmImport = useCallback(() => {
     if (!pendingImport) return;
     const { mode } = pendingImport;
+    // Pin the target org at confirm time (same render as the PUT's saveMode).
+    const importOrg = contextOrg;
     return runConfirmedAction(
       async () => {
         const saved = await runImport(mode);
-        finishImport(mode, saved);
+        await finishImport(mode, saved, importOrg);
       },
       setImportConfirmError,
       () => setPendingImport(null),
       "Import failed."
     );
-  }, [pendingImport, runImport, finishImport]);
+  }, [pendingImport, contextOrg, runImport, finishImport]);
 
   const confirmSwitch = useCallback(() => {
     setSelectedMode(pendingSwitch);
