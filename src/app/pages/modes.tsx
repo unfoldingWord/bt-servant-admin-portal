@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Download, ListOrdered, Save } from "lucide-react";
+import { Download, ListOrdered, Save, Upload } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { shouldAutoSaveDraft } from "@/lib/autosave-gate";
@@ -18,6 +25,10 @@ import {
   reconcileModeFlags,
   type ModeFlags,
 } from "@/lib/mode-flags";
+import {
+  type ParsedModeImport,
+  parseModeImport,
+} from "@/lib/mode-import";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { humanizeModeSlug, slugifyModeName } from "@/lib/mode-slug";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
@@ -407,6 +418,135 @@ export function ModesPage() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [draft, effectiveOrg, lastSyncedFlags, modeQuery.data, selectedMode]);
+
+  // #198 — import a mode from a file produced by Export. The hidden input is
+  // clicked by the Import button; `parseModeImport` validates the file, and a
+  // collision opens an overwrite confirm before any PUT.
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [pendingImport, setPendingImport] = useState<{
+    mode: ParsedModeImport;
+    isOverwrite: boolean;
+  } | null>(null);
+  // Pre-flight banner (parse / permission / read errors, before any dialog).
+  const [importError, setImportError] = useState<string | null>(null);
+  // Inline error inside the overwrite dialog (a failed PUT), same contract as
+  // `labelSyncError` — the dialog stays open so it can render.
+  const [importConfirmError, setImportConfirmError] = useState<string | null>(
+    null
+  );
+  // Non-blocking notice after a successful import (currently: dropped aliases).
+  const [importNotice, setImportNotice] = useState<string | null>(null);
+
+  // The create-or-overwrite PUT for an imported mode, shared by the direct
+  // create path and the overwrite-confirm dialog. Participates in the same
+  // synchronous save lock as every other save path (#209 serialization), and
+  // sends the always-explicit published/requires_group pair the worker needs
+  // (it has no partial update).
+  const runImport = useCallback(
+    (mode: ParsedModeImport) => {
+      inFlightSavesRef.current += 1;
+      return saveMode
+        .mutateAsync({
+          name: mode.name,
+          body: {
+            label: mode.label,
+            description: mode.description,
+            document: mode.document,
+            published: mode.published,
+            requires_group: mode.requires_group,
+          },
+        })
+        .finally(() => {
+          inFlightSavesRef.current -= 1;
+        });
+    },
+    [saveMode]
+  );
+
+  const finishImport = useCallback(
+    (mode: ParsedModeImport) => {
+      setSelectedMode(mode.name);
+      setImportNotice(
+        mode.droppedAliases.length
+          ? `Imported “${mode.name}”. Its aliases (${mode.droppedAliases.join(
+              ", "
+            )}) were not restored — aliases are managed through rename/retire, not import.`
+          : null
+      );
+    },
+    [setSelectedMode]
+  );
+
+  const handleImportFileChange = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const input = e.currentTarget;
+      const file = input.files?.[0];
+      // Clear the input synchronously so the same file can be re-selected
+      // later (a change event won't fire twice for an identical value).
+      input.value = "";
+      if (!file) return;
+      setImportError(null);
+      setImportNotice(null);
+
+      let text: string;
+      try {
+        text = await file.text();
+      } catch {
+        setImportError("Could not read the selected file.");
+        return;
+      }
+      const result = parseModeImport(text);
+      if (!result.ok) {
+        setImportError(result.error);
+        return;
+      }
+
+      const name = result.mode.name;
+      // Existence is checked against the FULL org mode list, not the
+      // authorized subset: importing over a mode the user can't see would
+      // still overwrite it, so a hidden collision must be caught here and
+      // gated by edit rights rather than falling through to the create path.
+      const exists = (modesQuery.data?.modes ?? []).some(
+        (m) => m.name === name
+      );
+      if (exists ? !canEditModeName(name) : !canCreate) {
+        setImportError(
+          exists
+            ? `You don't have permission to overwrite the “${name}” mode.`
+            : "You don't have permission to create modes."
+        );
+        return;
+      }
+
+      if (exists) {
+        setImportConfirmError(null);
+        setPendingImport({ mode: result.mode, isOverwrite: true });
+        return;
+      }
+      // Brand-new mode — create directly; a failure surfaces in the banner.
+      try {
+        await runImport(result.mode);
+        finishImport(result.mode);
+      } catch (err) {
+        setImportError(err instanceof Error ? err.message : "Import failed.");
+      }
+    },
+    [modesQuery.data, canEditModeName, canCreate, runImport, finishImport]
+  );
+
+  const confirmImport = useCallback(() => {
+    if (!pendingImport) return;
+    const { mode } = pendingImport;
+    return runConfirmedAction(
+      () => runImport(mode),
+      setImportConfirmError,
+      () => {
+        setPendingImport(null);
+        finishImport(mode);
+      },
+      "Import failed."
+    );
+  }, [pendingImport, runImport, finishImport]);
 
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
@@ -1027,6 +1167,28 @@ export function ModesPage() {
             />
           </div>
 
+          {/* #198 — import a mode from an exported file. Available whenever
+              the user can create/edit some mode; the per-file check enforces
+              the specific target's rights. */}
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".md,text/markdown"
+            className="hidden"
+            onChange={handleImportFileChange}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0"
+            onClick={() => importInputRef.current?.click()}
+            disabled={!canCreate || !effectiveOrg}
+            title="Import a mode from an exported Markdown file"
+          >
+            <Upload className="mr-1.5 size-3.5" />
+            Import
+          </Button>
+
           {hasSelection && (
             <div className="flex shrink-0 items-center gap-3">
               {/* #209 — group-only gate. Saves immediately on toggle
@@ -1126,6 +1288,26 @@ export function ModesPage() {
           aria-live="polite"
         >
           Save failed: {saveError.message}
+        </div>
+      )}
+
+      {importError && (
+        <div
+          className="bg-destructive/10 text-destructive border-destructive border-l-2 px-6 py-3 text-sm"
+          role="alert"
+          aria-live="polite"
+        >
+          Import failed: {importError}
+        </div>
+      )}
+
+      {importNotice && (
+        <div
+          className="bg-muted text-muted-foreground border-border border-l-2 px-6 py-3 text-sm"
+          role="status"
+          aria-live="polite"
+        >
+          {importNotice}
         </div>
       )}
 
@@ -1324,6 +1506,54 @@ export function ModesPage() {
               disabled={saveMode.isPending || !labelSyncValue.trim()}
             >
               {saveMode.isPending ? "Updating…" : "Update name"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* #198 — confirm before an import overwrites an existing mode. */}
+      <AlertDialog
+        open={pendingImport !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingImport(null);
+            setImportConfirmError(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Overwrite “{pendingImport?.mode.name}”?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              A mode named{" "}
+              <span className="text-foreground font-mono font-medium">
+                {pendingImport?.mode.name}
+              </span>{" "}
+              already exists. Importing this file replaces its document, label,
+              description, and flags with the file&rsquo;s contents. This
+              can&rsquo;t be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {importConfirmError && (
+            <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+              {importConfirmError}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saveMode.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            {/* Plain Button — AlertDialogAction auto-closes before an inline
+                error could render (#102); close happens in confirmImport on
+                success. */}
+            <Button
+              variant="destructive"
+              onClick={confirmImport}
+              disabled={saveMode.isPending}
+            >
+              {saveMode.isPending ? "Importing…" : "Overwrite"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
