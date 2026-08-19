@@ -122,16 +122,20 @@ export function resolveServerLabel(
 export interface ResourceItemDisplay {
   /**
    * Row title: the collapsed label, falling back to the collapsed name when
-   * the label is absent or collapses to nothing. Never blank when `name` is
-   * non-blank, so a whitespace-only label can't produce an empty-looking row.
+   * the label is absent or collapses to nothing — so a whitespace-only label
+   * can't blank the row. It IS empty only when BOTH collapse to nothing (a
+   * name of only control/format characters and no usable label — hostile,
+   * degenerate input); the row still carries its source badge and meta.
    */
   title: string;
   /** The collapsed name. */
   name: string;
   /**
    * The collapsed name to show as a secondary code chip — only when a
-   * DISTINCT label titles the row, so `label === name` doesn't print twice and
-   * a label-less row doesn't repeat its own title. `null` otherwise.
+   * DISTINCT, non-empty name sits under a label title, so `label === name`
+   * doesn't print twice, a label-less row doesn't repeat its own title, and a
+   * name that collapses to nothing doesn't render an empty chip. `null`
+   * otherwise.
    */
   secondaryName: string | null;
   /** Collapsed organization, or `null` when absent or blank after collapse. */
@@ -164,7 +168,9 @@ export function resolveResourceItemDisplay(item: {
   return {
     title: label || name,
     name,
-    secondaryName: label && label !== name ? name : null,
+    // `name &&` keeps the field strictly `string | null`: a name that collapses
+    // to "" must yield null, not the empty string, even when a label is present.
+    secondaryName: label && name && label !== name ? name : null,
     organization: organization || null,
     version: version || null,
   };

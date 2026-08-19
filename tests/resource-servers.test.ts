@@ -200,4 +200,23 @@ describe("resolveResourceItemDisplay", () => {
       })
     ).toMatchObject({ organization: null, version: null });
   });
+
+  it("keeps secondaryName strictly null (never '') when the name collapses away under a label", () => {
+    const display = resolveResourceItemDisplay({
+      name: "\u200b\u200b",
+      label: "Genesis",
+    });
+
+    expect(display.title).toBe("Genesis");
+    expect(display.secondaryName).toBeNull();
+  });
+
+  it("yields an empty title only when both name and label collapse to nothing", () => {
+    // Degenerate hostile input: a name of only zero-width characters, no label.
+    // Documents the edge — the row still renders (badge + meta), just untitled.
+    const display = resolveResourceItemDisplay({ name: "\u200b\u200b" });
+
+    expect(display.title).toBe("");
+    expect(display.secondaryName).toBeNull();
+  });
 });

@@ -290,6 +290,15 @@ export function LanguageSelector({
       .replace(/^-+|-+$/g, "");
     if (!slug) return;
     setCreateError(null);
+    // #293 race: until the catalog loads, `languages` is [], so a collision
+    // would classify as `create` and silently overwrite — the exact bug this
+    // guards against. Refuse to classify against a list we don't have yet.
+    if (languagesData === undefined) {
+      setCreateError(
+        "Still loading the language list — try again in a moment."
+      );
+      return;
+    }
     // #293: a create over an existing slug PUTs a blank scaffold that
     // overwrites the language's tuning document and unpublishes it. #272
     // removed the last guard, so it happened silently. #249 lists the org's
@@ -312,7 +321,14 @@ export function LanguageSelector({
     setNewName("");
     setNewLabel("");
     setShowCreate(false);
-  }, [newName, newLabel, onCreateLanguage, languages, editRights]);
+  }, [
+    newName,
+    newLabel,
+    onCreateLanguage,
+    languages,
+    languagesData,
+    editRights,
+  ]);
 
   // Re-scaffolding an existing language is destructive (blank document +
   // unpublish), so it only runs from the confirmation dialog. Fire-and-forget
@@ -703,11 +719,7 @@ export function LanguageSelector({
             </p>
           )}
           {createError && (
-            <p
-              className="text-destructive mt-3 text-xs"
-              role="alert"
-              aria-live="polite"
-            >
+            <p className="text-destructive mt-3 text-xs" role="alert">
               {createError}
             </p>
           )}
@@ -725,7 +737,12 @@ export function LanguageSelector({
             <Button
               size="sm"
               onClick={handleCreate}
-              disabled={!newName.trim() || isCreating || !isScaffoldReady}
+              disabled={
+                !newName.trim() ||
+                isCreating ||
+                !isScaffoldReady ||
+                languagesData === undefined
+              }
             >
               {isCreating ? "Creating..." : "Create Draft"}
             </Button>
