@@ -533,6 +533,7 @@ export function LanguagesPage() {
               selectedLanguage={selectedLanguage}
               onSelectLanguage={handleSelectLanguage}
               onCreateLanguage={handleCreateLanguage}
+              editRights={editRights}
               onDeleteLanguage={handleDeleteLanguage}
               onSetPublished={handleSetPublished}
               isCreating={saveLanguage.isPending}
