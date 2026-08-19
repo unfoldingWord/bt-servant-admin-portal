@@ -119,13 +119,6 @@ export function LanguagesPage() {
   const orgDefaultQuery = useOrgDefaultLanguage(contextOrg);
   const setOrgDefault = useSetOrgDefaultLanguage();
 
-  // Detail loaded for the CURRENT selection — not a stale row still in the
-  // cache mid-switch. Publish/Unpublish acts on the loaded document + label, so
-  // it must wait for this: clicked during an A→B load it would send A's draft
-  // and label into B (grok rd-3). Matches the editor pane, which is read-only
-  // until the detail arrives.
-  const detailReady = languageQuery.data?.name === selectedLanguage;
-
   // Local document draft (auto-save target).
   //
   // We track `lastSyncedDoc` separately from React Query's cache so that:
@@ -200,6 +193,14 @@ export function LanguagesPage() {
   const isDirty = draft !== lastSyncedDoc;
   const isSaving = saveLanguage.isPending;
   const hasSelection = selectedLanguage !== null && languageQuery.data;
+  // Local editor state is synced to the CURRENT selection. Gate Publish/Unpublish
+  // on this, not on `languageQuery.data?.name === selectedLanguage`: a cache HIT
+  // makes the query name match on the first render after a switch, before the
+  // sync effect above has loaded this language's document/label — so a Publish
+  // in that render would send the PREVIOUS language's draft and label into this
+  // one (codex rd-4 P1). `syncedNameRef` only advances alongside those state
+  // writes, so it re-renders correctly and can't be true with stale locals.
+  const detailReady = syncedNameRef.current === selectedLanguage;
 
   // Single save path — both auto-save and the manual Save button funnel
   // through here so the lastSyncedDoc bookkeeping stays consistent.
