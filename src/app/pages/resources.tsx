@@ -167,13 +167,19 @@ function ResourceRow({
         {display.title}
       </span>
       {display.secondaryName && (
-        <code className="text-muted-foreground text-[11px]">
+        <code
+          className="text-muted-foreground max-w-[16rem] min-w-0 truncate text-[11px]"
+          title={display.secondaryName}
+        >
           {display.secondaryName}
         </code>
       )}
       <ServerBadge serverId={item.serverId} serverNames={serverNames} />
       {meta.length > 0 && (
-        <span className="text-muted-foreground text-xs">
+        <span
+          className="text-muted-foreground max-w-full min-w-0 truncate text-xs"
+          title={meta.join(" · ")}
+        >
           {meta.join(" · ")}
         </span>
       )}

@@ -219,9 +219,14 @@ export function LanguagesPage() {
   const performSave = useCallback(
     (doc: string) => {
       if (!selectedLanguage) return;
+      // The row this save targets, pinned at call time. A save that settles
+      // after a discard-and-switch must not retarget the NEW selection's
+      // shared bookkeeping — check the live selection in the callbacks before
+      // touching lastSyncedDoc/lastFailedDoc (grok rd-5).
+      const target = selectedLanguage;
       saveLanguage.mutate(
         {
-          name: selectedLanguage,
+          name: target,
           // Org pinned at call time — see handleSetDefault.
           org: contextOrg,
           body: {
@@ -235,10 +240,14 @@ export function LanguagesPage() {
         },
         {
           onSuccess: () => {
+            if (useUiStore.getState().selectedLanguage !== target) return;
             setLastSyncedDoc(doc);
             setLastFailedDoc(null);
           },
-          onError: () => setLastFailedDoc(doc),
+          onError: () => {
+            if (useUiStore.getState().selectedLanguage !== target) return;
+            setLastFailedDoc(doc);
+          },
         }
       );
     },
@@ -266,6 +275,12 @@ export function LanguagesPage() {
   useEffect(() => {
     if (!selectedLanguage) return;
     if (saveLanguage.isPending) return;
+    // Local editor state must belong to the current selection. On a
+    // discard-and-switch the selection flips to B in a render where `draft`,
+    // `lastSyncedLabel` and `lastSyncedPublished` are still A's, before the sync
+    // effect loads B — saving in that window PUTs A's document onto B (grok
+    // rd-5). Same gate the publish control uses.
+    if (syncedName !== selectedLanguage) return;
     // A debounced snapshot that hasn't caught up to `draft` is a value from
     // the past — writing it would undo an out-of-band change (an overwrite
     // reset, or a language switch) that already advanced `draft`/lastSyncedDoc.
@@ -290,14 +305,26 @@ export function LanguagesPage() {
     lastFailedDoc,
     performSave,
     selectedLanguage,
+    syncedName,
     canEditSelected,
   ]);
 
   const flushSave = useCallback(() => {
     if (!isDirty || isSaving) return;
     if (!canEditSelected) return;
+    // Same selection-ownership gate as autosave: never flush A's locals onto B
+    // during the render window after a discard-and-switch (grok rd-5).
+    if (syncedName !== selectedLanguage) return;
     performSave(draft);
-  }, [canEditSelected, draft, isDirty, isSaving, performSave]);
+  }, [
+    canEditSelected,
+    draft,
+    isDirty,
+    isSaving,
+    performSave,
+    syncedName,
+    selectedLanguage,
+  ]);
 
   // Block route changes while there are pending edits or an in-flight save.
   // The blocker fires only when navigating to a different pathname (selecting

@@ -6,7 +6,11 @@ import {
 } from "@tanstack/react-query";
 
 import * as languagesApi from "@/lib/languages-api";
-import type { Language, OrgDefaultLanguage } from "@/types/language";
+import type {
+  Language,
+  OrgDefaultLanguage,
+  OrgLanguages,
+} from "@/types/language";
 
 // Org is part of every key so a super-admin's cross-org view doesn't collide
 // with the same-org cache. `null` is the canonical same-org placeholder.
@@ -73,6 +77,20 @@ export function languageSaveMutationOptions(qc: QueryClient) {
       // the pre-save document straight back into the cache (grok rd-4).
       await qc.cancelQueries({ queryKey: keys.language(name, org) });
       qc.setQueryData(keys.language(name, org), saved);
+      // Upsert the row into the collection cache in the same tick, so a
+      // just-created slug is immediately `existing` for the next create.
+      // Without this, until the list refetch lands, re-creating the slug
+      // classifies as a fresh create and silently overwrites it (grok rd-5).
+      qc.setQueryData<OrgLanguages>(keys.languages(org), (old) =>
+        old
+          ? {
+              ...old,
+              languages: old.languages.some((l) => l.name === saved.name)
+                ? old.languages.map((l) => (l.name === saved.name ? saved : l))
+                : [...old.languages, saved],
+            }
+          : old
+      );
       void qc.invalidateQueries({ queryKey: keys.languages(org) });
     },
   };

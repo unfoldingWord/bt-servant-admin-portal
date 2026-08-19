@@ -315,10 +315,21 @@ export function LanguageSelector({
     // whole catalog, so `languages` is authoritative for what names are taken;
     // edit/publish rights + the target's published state decide whether this
     // caller may overwrite (confirm first) or the worker would 403 (block).
-    const existing = languages.find((l) => l.name === slug);
+    const existingRow = languages.find((l) => l.name === slug);
+    // The collection can lag a just-created slug (its save seeds the detail
+    // cache and upserts the list, but a second create can still race a pending
+    // refetch). If the slug is the row currently open, it definitionally
+    // exists, so route it through confirm rather than a silent re-create even
+    // when the list hasn't caught up (grok rd-5). A freshly created row is a
+    // draft; the worker still gates the write.
+    const existing = existingRow
+      ? { published: isPublished(existingRow) }
+      : selectedLanguage === slug
+        ? { published: false }
+        : null;
     const action = classifyLanguageCreate(
       slug,
-      existing ? { published: isPublished(existing) } : null,
+      existing,
       editRights,
       publishRights
     );
@@ -348,6 +359,7 @@ export function LanguageSelector({
     onCreateLanguage,
     languages,
     languagesData,
+    selectedLanguage,
     editRights,
     publishRights,
   ]);
