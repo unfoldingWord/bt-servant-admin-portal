@@ -137,6 +137,40 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - Watch Ian: the #303 worker create-only endpoint, worker#354 (#269/#279).
 - **#264** assembly once Benjamin's source-check lands.
 
+### 2026-08-19 evening — batch: #303 Part 1 (PR #305) + #198 import (PR #306) shipped through a 6-round local codex+grok loop; triage + worker issues filed
+
+**Context entering the session:** SOD (clean tree, up to date). Checked GitHub for Elsy pings — she'd left a **#277** staging finding (resource-priority ranks set on `translation Coach`, but chat still returned UST/ULT + Greek defaults → no observable effect). Posted the Weds 1pm written standup.
+
+**Cleaned the batch backlog first (evidence over assumption).** Three read-only investigations corrected a false SOD note: nearly every hot MCP item is **worker-side, not portal-buildable** — the portal is a pure read-only proxy over the worker's aggregated-resources endpoint. #278 (global pool), #280 (PTX removal), #279/#284/#285 (resource enumeration) are all worker/adapter concerns. That collapsed a big-looking batch into **two real portal lanes** + triage. Saved as memory [[project_mcp_issues_are_worker_side]].
+
+**Shipped (both squash-merged to main → staging auto-deployed):**
+
+- **#305 → #303 Part 1** (`stillOwnsSelection` unified mutation-ownership guard for the Languages editor; adds the org dimension the per-function #302 guards missed, fixes the `handleDeleteLanguage` closure read). External review: both codex rounds + grok round-1 blessed the pair-equality core as a strict improvement. grok's deep lens found a **leave-and-return-during-save re-entry data-loss race**; my first fix (a selection-generation token) was itself flawed (keyed to identity not re-anchor → could revert a publish toggle), so I **reverted it** ([[feedback_converge_by_deleting_mechanism]]) and shipped the clean core. Deeper race → **#307**.
+- **#306 → #198** (mode-config import — inverse of #187 export; new `parseModeImport` + Import button/overwrite-confirm/file-input, composes on the existing PUT). **6 review rounds.** codex ended **clean**; grok's deep lens caught a cascade of silent-data-loss P1s codex + my internal review missed (cross-org cache poisoning, stale-inactive-cache reverts, dirty-autosave revert). Round 3's two P1s → **deleted** the two mechanisms generating them (shared cache-seed + post-import auto-switch); round 5's edges → **constrained** the feature (import requires a clean idle editor, org-pinned, fail-closed on unloaded list). Residual near-unreachable (modal-picker) P2s + P3s → **#308**.
+
+**Review harness:** ran codex + grok **locally** per [[reference_review_harness_invocation]] (`codex exec review --base origin/main -c sandbox_mode=danger-full-access`; `grok --prompt-file … --allow read_file --allow grep --allow list_dir --cwd .`). Waited for BOTH reviewers before editing each round; grok reads disk. The asymmetry paid off repeatedly — grok found real P1s on rounds where codex was clean.
+
+**Triage (portal):** closed **#279** (worker-side, resolved behind #269) and **#285** (dup of #284); annotated **#284** (FIA has no listing tool — worker/adapter side, left for Ian).
+
+**Worker issues filed (Ian's lane) + cross-linked:**
+
+- **bt-servant-worker#365** — atomic create-only / conditional-PUT endpoint for languages + modes (= **#303 Part 2**; commented on #303).
+- **bt-servant-worker#366** — resource-priority Tool Guidance block has no observable chat effect (= **#277** adherence; commented on #277). Portal side of #277 verified correct (block IS spliced into the mode document); this is worker/prompt-assembly.
+
+**Milestones:** neither repo uses GitHub milestones (0 defined in portal + worker) — progress is tracked here + via epics/labels, so nothing to milestone.
+
+**Blockers / follow-ups:**
+
+- **#303** stays open pending worker#365 (create-only endpoint) + a systematic portal mutation-safety pass (#307).
+- **#308** — mode-import residual P2s (re-validate collision at confirm; label-sync/import dialog conflict) + P3s.
+- **#277** — awaiting worker#366 (adherence trace); confirm Elsy actually clicked Apply on staging.
+
+**Next Steps:**
+
+- **#307** — the languages re-entry race, as a systematic pass (the deferred gen-token/re-anchor design).
+- **#292 + #278** — MCP server management UI + global-pool, once the worker exposes a mutable MCP-server API (both are worker-gated per [[project_mcp_issues_are_worker_side]]).
+- Watch Ian: worker#365, worker#366, worker#354.
+
 ### 2026-08-13 — #264 OBS mode-integration diff delivered; worker v2.39.0 (#255) shipped overnight
 
 **Context entering the session:** No open PR on our side (the 08-11 batch all merged; #295 docs merged). Interactive session driven by Seth — issue triage, a late written standup, then the #264 mode-diff build. No portal code changed today; work was analysis, comms, and one artifact.
