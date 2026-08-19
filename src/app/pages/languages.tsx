@@ -166,9 +166,17 @@ export function LanguagesPage() {
   // into local state, so we don't repeatedly overwrite the draft each time
   // the cache emits.
   const syncedNameRef = useRef<string | null>(null);
+  // A STATE mirror of syncedNameRef, used for render-time gating. The ref gives
+  // the sync effect a synchronous guard; the state gives the publish gate a
+  // reactive one. A ref alone can't drive render output: switching to a cached
+  // language whose document/published/label/failure all equal the current
+  // locals makes every setter below a no-op, so nothing re-renders and a
+  // ref-derived flag would stay stale forever (codex rd-5).
+  const [syncedName, setSyncedName] = useState<string | null>(null);
   useEffect(() => {
     if (!selectedLanguage) {
       syncedNameRef.current = null;
+      setSyncedName(null);
       setDraft("");
       setLastSyncedDoc("");
       setLastSyncedPublished(false);
@@ -188,6 +196,7 @@ export function LanguagesPage() {
     setLastSyncedLabel(languageQuery.data.label);
     setLastFailedDoc(null);
     syncedNameRef.current = selectedLanguage;
+    setSyncedName(selectedLanguage);
   }, [selectedLanguage, languageQuery.data]);
 
   const isDirty = draft !== lastSyncedDoc;
@@ -198,9 +207,9 @@ export function LanguagesPage() {
   // makes the query name match on the first render after a switch, before the
   // sync effect above has loaded this language's document/label — so a Publish
   // in that render would send the PREVIOUS language's draft and label into this
-  // one (codex rd-4 P1). `syncedNameRef` only advances alongside those state
-  // writes, so it re-renders correctly and can't be true with stale locals.
-  const detailReady = syncedNameRef.current === selectedLanguage;
+  // one (codex rd-4 P1). Read from `syncedName` STATE, not the ref, so an
+  // all-no-op sync still re-renders the gate (codex rd-5).
+  const detailReady = syncedName === selectedLanguage;
 
   // Single save path — both auto-save and the manual Save button funnel
   // through here so the lastSyncedDoc bookkeeping stays consistent.
@@ -428,6 +437,7 @@ export function LanguagesPage() {
           setLastSyncedLabel(label || undefined);
           setLastFailedDoc(null);
           syncedNameRef.current = name;
+          setSyncedName(name);
           if (name !== liveSelection) setSelectedLanguage(name);
         });
     },
