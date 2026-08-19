@@ -88,7 +88,19 @@ export function useSaveMode(org?: string | null) {
         requires_group?: boolean;
       };
     }) => configApi.putMode(name, body, undefined, key),
-    onSuccess: (_data, { name }) => {
+    onSuccess: (data, { name }) => {
+      // Seed both caches from the server response BEFORE invalidating — the
+      // same three-step pattern as clone/rename/retire. Invalidate alone only
+      // refetches ACTIVE queries in TanStack v5, so an INACTIVE per-mode query
+      // (import overwriting a non-selected mode) or a not-yet-listed new mode
+      // (import creating one) would otherwise be read stale by the page, which
+      // hydrates the editor / runs its stale-selection guard off that cache
+      // (grok #306 Issues 1/2/4). Every non-import caller saves the ACTIVE
+      // mode, where this write is a harmless no-op the refetch would produce.
+      qc.setQueryData(keys.mode(name, key), data);
+      qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
+        applyCloneToModeList(prev, data)
+      );
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
     },

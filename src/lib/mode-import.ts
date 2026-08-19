@@ -11,6 +11,7 @@
 // from a future export) but strict where ambiguity would corrupt data.
 
 import { MODE_EXPORT_VERSION } from "./mode-export";
+import { slugifyModeName } from "./mode-slug";
 
 export interface ParsedModeImport {
   name: string;
@@ -117,12 +118,43 @@ export function parseModeImport(raw: string): ModeImportResult {
       error: "Not a recognized mode export — missing a mode 'name'.",
     };
   }
+  // The name is PUT straight into the URL path; a non-slug (e.g. a hand-typed
+  // "Spoken Mode") would either 400 at the engine or create a second row
+  // beside the canonical slug. Reject anything that isn't already canonical
+  // rather than silently reslugging behind the user's back.
+  if (name !== slugifyModeName(name)) {
+    return {
+      ok: false,
+      error: `Invalid mode name “${name}” — expected a slug like “${slugifyModeName(
+        name
+      )}”.`,
+    };
+  }
+
+  // Flags default to false when absent, but a PRESENT value must be exactly
+  // "true" or "false". Coercing anything else to false would let a typo
+  // ("published: TRUE", "published: tru") silently unpublish an overwritten
+  // mode — the parser presents its result as validated, so reject instead.
+  const published = parseFlag(fields.scalars.published);
+  if (published === null) {
+    return {
+      ok: false,
+      error: `Invalid 'published' value “${fields.scalars.published}” — expected true or false.`,
+    };
+  }
+  const requiresGroup = parseFlag(fields.scalars.requires_group);
+  if (requiresGroup === null) {
+    return {
+      ok: false,
+      error: `Invalid 'requires_group' value “${fields.scalars.requires_group}” — expected true or false.`,
+    };
+  }
 
   const mode: ParsedModeImport = {
     name,
     document,
-    published: fields.scalars.published === "true",
-    requires_group: fields.scalars.requires_group === "true",
+    published,
+    requires_group: requiresGroup,
     droppedAliases: fields.aliases,
   };
   if (fields.scalars.label !== undefined) mode.label = fields.scalars.label;
@@ -170,6 +202,18 @@ function parseFrontmatter(frontmatterLines: string[]): ParsedFrontmatter {
   }
 
   return { scalars, aliases };
+}
+
+/**
+ * Parse a boolean flag scalar: absent → false (the documented default), the
+ * exact strings "true"/"false" → their value, anything else → null (malformed,
+ * the caller rejects).
+ */
+function parseFlag(raw: string | undefined): boolean | null {
+  if (raw === undefined) return false;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return null;
 }
 
 /**

@@ -514,6 +514,17 @@ export function ModesPage() {
   // (it has no partial update).
   const runImport = useCallback(
     (mode: ParsedModeImport) => {
+      // A GATE, not just a counter (#209 contract, mirrors handleSetPublished).
+      // The file-pick lock check is stale by the time we get here: `await
+      // file.text()` yields, and the overwrite dialog holds no lock for an
+      // unbounded time, so an autosave of the open mode can start in between.
+      // Refuse rather than overlap a second PUT on the same hook whose
+      // late-settling onSuccess would revert the import (grok #306 Issue 3).
+      if (inFlightSavesRef.current > 0) {
+        throw new Error(
+          "A save is already in progress — try again in a moment."
+        );
+      }
       inFlightSavesRef.current += 1;
       return saveMode
         .mutateAsync({
@@ -558,6 +569,13 @@ export function ModesPage() {
           )
         );
         setLastFailedDoc(null);
+        // Pin the anchor to this mode. If the initial GET was still in flight
+        // (syncedNameRef null on a fresh page load), its late arrival with the
+        // PRE-import document would otherwise re-run hydration and clobber the
+        // values just written; pinning makes that hydration early-return
+        // (grok #306 Issue 4). The useSaveMode cache-seed holds the imported
+        // doc, so the invalidate refetch reconciles to server truth.
+        syncedNameRef.current = mode.name;
         return;
       }
       // Landing on a DIFFERENT mode — route through the dirty/in-flight switch
@@ -1568,9 +1586,10 @@ export function ModesPage() {
               <span className="text-foreground font-mono font-medium">
                 {pendingImport?.mode.name}
               </span>{" "}
-              already exists. Importing this file replaces its document, label,
-              description, and flags with the file&rsquo;s contents. This
-              can&rsquo;t be undone.
+              already exists. Importing this file replaces its document and its
+              published / group-chat settings, and updates the display name and
+              description when the file includes them. This can&rsquo;t be
+              undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {importConfirmError && (

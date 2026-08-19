@@ -191,6 +191,53 @@ describe("parseModeImport — rejections", () => {
     if (result.ok) return;
     expect(result.error).toContain("newer version");
   });
+
+  it("rejects a non-slug mode name instead of silently reslugging", () => {
+    const raw = [
+      "---",
+      'name: "Spoken Mode"',
+      "export_version: 1",
+      "---",
+      "",
+      "body",
+    ].join("\n");
+    const result = parseModeImport(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("spoken-mode");
+  });
+
+  it("rejects a malformed 'published' value rather than coercing to false", () => {
+    const raw = [
+      "---",
+      'name: "spoken"',
+      "published: TRUE",
+      "export_version: 1",
+      "---",
+      "",
+      "body",
+    ].join("\n");
+    const result = parseModeImport(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("published");
+  });
+
+  it("rejects a malformed 'requires_group' value", () => {
+    const raw = [
+      "---",
+      'name: "spoken"',
+      "requires_group: yes",
+      "export_version: 1",
+      "---",
+      "",
+      "body",
+    ].join("\n");
+    const result = parseModeImport(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("requires_group");
+  });
 });
 
 describe("parseModeImport — document body edge cases", () => {
