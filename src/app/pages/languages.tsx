@@ -16,6 +16,7 @@ import {
 } from "@/lib/language-error-surface";
 import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
+  mayApplyMutationResult,
   stillOwnsSelection,
   type SelectionTarget,
 } from "@/lib/mutation-ownership";
@@ -174,6 +175,20 @@ export function LanguagesPage() {
     undefined
   );
 
+  // A token bumped on every (org, language) change — including RETURNING to a
+  // pair we were just on. Mutation callbacks capture it at call time and
+  // re-check it at settle (`mayApplyMutationResult`): the product lets the user
+  // leave and come back while a PUT is in flight, and on the return the locals
+  // are re-anchored to the reloaded cache, so a settling mutation must NOT
+  // stamp its result even though the (org, language) pair matches again — doing
+  // so would let the next autosave PUT the stale doc over the good save (grok
+  // review P2). Delete stays on bare pair-equality (re-selecting the just-
+  // deleted row should still clear).
+  const selectionGenRef = useRef(0);
+  useEffect(() => {
+    selectionGenRef.current += 1;
+  }, [contextOrg, selectedLanguage]);
+
   // Re-sync from the server *only* when the selection changes — never
   // post-save. The ref tracks the language whose contents we last loaded
   // into local state, so we don't repeatedly overwrite the draft each time
@@ -241,6 +256,10 @@ export function LanguagesPage() {
         org: contextOrg,
         language: selectedLanguage,
       };
+      // Captured with the target: a leave-and-return to the same pair while
+      // this PUT is in flight moves the generation, so the settle callbacks
+      // refuse to stamp even though the pair matches again.
+      const targetGen = selectionGenRef.current;
       saveLanguage.mutate(
         {
           name: selectedLanguage,
@@ -257,12 +276,28 @@ export function LanguagesPage() {
         },
         {
           onSuccess: () => {
-            if (!stillOwnsSelection(target, liveSelectionTarget())) return;
+            if (
+              !mayApplyMutationResult(
+                target,
+                liveSelectionTarget(),
+                targetGen,
+                selectionGenRef.current
+              )
+            )
+              return;
             setLastSyncedDoc(doc);
             setLastFailedDoc(null);
           },
           onError: () => {
-            if (!stillOwnsSelection(target, liveSelectionTarget())) return;
+            if (
+              !mayApplyMutationResult(
+                target,
+                liveSelectionTarget(),
+                targetGen,
+                selectionGenRef.current
+              )
+            )
+              return;
             setLastFailedDoc(doc);
           },
         }
@@ -505,18 +540,30 @@ export function LanguagesPage() {
       // await + render inline errors (#102).
       const isSelected = name === selectedLanguage;
       const doc = isSelected ? draft : (languageQuery.data?.document ?? "");
+      // Capture the target AND the generation BEFORE the await, same as
+      // performSave — `name`/`contextOrg` are call-time values, and the gen
+      // pins "this exact visit" so a leave-and-return to the same pair mid-PUT
+      // doesn't stamp (grok review P2 / the PR's own capture-at-call rule).
+      const target: SelectionTarget = { org: contextOrg, language: name };
+      const targetGen = selectionGenRef.current;
       await saveLanguage.mutateAsync({
         name,
         org: contextOrg,
         body: { label: lastSyncedLabel, document: doc, published },
       });
       // Only bookkeep locals if we're STILL on the (org, language) this toggle
-      // targeted — a discard-and-switch, or an org switch to a namespace that
-      // has the same slug, would otherwise stamp this row's published flag and
-      // document onto the newly selected language, which the next autosave then
-      // PUTs (grok rd-6). Same unified gate as performSave (#303).
-      const target: SelectionTarget = { org: contextOrg, language: name };
-      if (stillOwnsSelection(target, liveSelectionTarget())) {
+      // targeted AND haven't left-and-returned since — a discard-and-switch, an
+      // org switch to a namespace with the same slug, or a re-entry would
+      // otherwise stamp this row's published flag and document onto the current
+      // selection, which the next autosave then PUTs (grok rd-6 + re-entry P2).
+      if (
+        mayApplyMutationResult(
+          target,
+          liveSelectionTarget(),
+          targetGen,
+          selectionGenRef.current
+        )
+      ) {
         setLastSyncedDoc(doc);
         setLastSyncedPublished(published);
       }
