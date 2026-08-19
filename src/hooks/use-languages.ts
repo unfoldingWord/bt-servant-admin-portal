@@ -59,15 +59,19 @@ export function languageSaveMutationOptions(qc: QueryClient) {
   return {
     mutationFn: ({ name, body, org }: LanguageSaveTarget) =>
       languagesApi.putLanguage(name, body, undefined, org),
-    onSuccess: (saved: Language, { name, org }: LanguageSaveTarget) => {
-      // Seed the per-language cache with the saved row (cancelling any GET in
-      // flight for it) rather than only invalidating: an invalidated but
-      // inactive detail query keeps serving its PRE-save document, so a later
-      // select — auto or manual — paints the old doc, the sync effect pins it,
-      // and the next edit saves it back over what we just wrote (grok rd-3).
-      // putLanguage returns a full Language (matches getLanguage), so this is
-      // the authoritative post-save state, org pinned via the variables.
-      void qc.cancelQueries({ queryKey: keys.language(name, org) });
+    onSuccess: async (saved: Language, { name, org }: LanguageSaveTarget) => {
+      // Seed the per-language cache with the saved row rather than only
+      // invalidating: an invalidated but inactive detail query keeps serving
+      // its PRE-save document, so a later select — auto or manual — paints the
+      // old doc, the sync effect pins it, and the next edit saves it back over
+      // what we just wrote (grok rd-3). putLanguage returns a full Language
+      // (matches getLanguage), so this is the authoritative post-save state,
+      // org pinned via the variables.
+      //
+      // AWAIT the cancel before seeding (TanStack's optimistic-update order):
+      // an in-flight getLanguage that settles AFTER setQueryData would write
+      // the pre-save document straight back into the cache (grok rd-4).
+      await qc.cancelQueries({ queryKey: keys.language(name, org) });
       qc.setQueryData(keys.language(name, org), saved);
       void qc.invalidateQueries({ queryKey: keys.languages(org) });
     },

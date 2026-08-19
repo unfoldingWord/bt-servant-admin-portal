@@ -380,7 +380,15 @@ export function LanguagesPage() {
       // refuse to save instead of silently committing an empty doc
       // (Frank P2 on PR #106).
       const scaffold = scaffoldQuery.data;
-      if (!scaffold) return;
+      // Reject (not a silent resolve) so the destructive overwrite dialog stays
+      // open and shows the error instead of closing as if it replaced (grok
+      // rd-4). The create button is disabled until the scaffold loads, so this
+      // is defense in depth (Frank P2 on PR #106).
+      if (!scaffold) {
+        return Promise.reject(
+          new Error("The language template isn't loaded yet — try again.")
+        );
+      }
       // Returned so the selector's overwrite confirmation can await the write
       // and render failures inline (grok F2 / #102).
       return saveLanguage
@@ -394,16 +402,22 @@ export function LanguagesPage() {
           },
         })
         .then(() => {
-          // Never re-scaffold onto a DIFFERENT language while one is being
-          // edited: auto-selecting it would couple the two through the
-          // autosave debounce register and could show a stale cache read over
-          // the scaffold just written (grok rd-2 F2). Leave the selection put;
-          // the new language is in the dropdown either way.
-          if (name !== selectedLanguage && selectedLanguage !== null) return;
-          // Otherwise we are landing on `name` — either replacing the language
-          // being VIEWED, or selecting the freshly written one from an empty
-          // editor. Install the scaffold state locally and PIN syncedNameRef so
-          // the sync effect won't overwrite it: without this the next keystroke
+          // Read the LIVE selection, not the click-time closure value: the user
+          // can switch languages during the in-flight PUT (the switch dialog
+          // offers "discard and switch" while saving), and acting on a stale
+          // `selectedLanguage` would skip the local install for the row now on
+          // screen, or yank the selection off a row they moved to (grok rd-4).
+          const liveSelection = useUiStore.getState().selectedLanguage;
+          // Never re-scaffold onto a DIFFERENT language while one is open:
+          // auto-selecting it would couple the two through the autosave debounce
+          // register and could show a stale cache read over the scaffold just
+          // written (grok rd-2 F2). Leave the selection put; the new language is
+          // in the dropdown either way.
+          if (name !== liveSelection && liveSelection !== null) return;
+          // Otherwise we are landing on `name` — replacing the language being
+          // VIEWED, or selecting the freshly written one from an empty editor.
+          // Install the scaffold state locally and PIN syncedNameRef so the sync
+          // effect won't overwrite it: without this the next keystroke
           // republishes the old document (grok rd-2 F1), or a stale cache read
           // for a previously-visited language reloads its old doc over the
           // scaffold (codex rd-3 P1). The label is mirrored for the same reason
@@ -414,16 +428,10 @@ export function LanguagesPage() {
           setLastSyncedLabel(label || undefined);
           setLastFailedDoc(null);
           syncedNameRef.current = name;
-          if (name !== selectedLanguage) setSelectedLanguage(name);
+          if (name !== liveSelection) setSelectedLanguage(name);
         });
     },
-    [
-      contextOrg,
-      saveLanguage,
-      scaffoldQuery.data,
-      selectedLanguage,
-      setSelectedLanguage,
-    ]
+    [contextOrg, saveLanguage, scaffoldQuery.data, setSelectedLanguage]
   );
 
   const handleSetPublished = useCallback(

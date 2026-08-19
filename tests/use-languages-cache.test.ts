@@ -197,7 +197,7 @@ describe("languageSaveMutationOptions — org travels in the variables", () => {
     );
   });
 
-  it("invalidates the mutate-time org after the ambient key moved on", () => {
+  it("invalidates the mutate-time org after the ambient key moved on", async () => {
     // Reachable, not theoretical: the org-context dialog offers "Discard
     // and switch" WHILE a save is in flight. With a closure-read key, org
     // A's completed save would refresh org B and leave A's cache holding
@@ -208,7 +208,7 @@ describe("languageSaveMutationOptions — org travels in the variables", () => {
     const setSpy = vi.spyOn(qc, "setQueryData");
     const cancelSpy = vi.spyOn(qc, "cancelQueries");
     const saved: Language = { name: "hindi", document: "x", published: false };
-    languageSaveMutationOptions(qc).onSuccess(saved, {
+    await languageSaveMutationOptions(qc).onSuccess(saved, {
       name: "hindi",
       body: { document: "x" },
       org: "alpha",
@@ -226,7 +226,7 @@ describe("languageSaveMutationOptions — org travels in the variables", () => {
     }
   });
 
-  it("seeds the saved row's cache and invalidates the collection", () => {
+  it("seeds the saved row's cache and invalidates the collection", async () => {
     // Seeding (not invalidating) the detail query is what stops a later select
     // of an overwritten language from painting its pre-save document from an
     // inactive-but-stale cache (grok rd-3).
@@ -234,7 +234,7 @@ describe("languageSaveMutationOptions — org travels in the variables", () => {
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
     const setSpy = vi.spyOn(qc, "setQueryData");
     const saved: Language = { name: "hindi", document: "x", published: false };
-    languageSaveMutationOptions(qc).onSuccess(saved, {
+    await languageSaveMutationOptions(qc).onSuccess(saved, {
       name: "hindi",
       body: { document: "x" },
       org: null,
