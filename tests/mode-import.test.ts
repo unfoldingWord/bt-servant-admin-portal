@@ -192,3 +192,59 @@ describe("parseModeImport — rejections", () => {
     expect(result.error).toContain("newer version");
   });
 });
+
+describe("parseModeImport — document body edge cases", () => {
+  it("round-trips a document that contains a bare '---' horizontal rule", () => {
+    // The closing fence is the FIRST '---' after the opening one, found only
+    // in the frontmatter region; '---' lines in the body must survive.
+    const mode: PromptMode = {
+      name: "hr",
+      document: "Intro\n\n---\n\nAfter the rule\n\n---\n\nEnd",
+    };
+    const result = parseModeImport(exported(mode));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode.document).toBe(
+      "Intro\n\n---\n\nAfter the rule\n\n---\n\nEnd"
+    );
+  });
+
+  it("round-trips an empty document", () => {
+    const result = parseModeImport(exported({ name: "empty", document: "" }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode.document).toBe("");
+  });
+
+  it("round-trips a document with a trailing newline and trailing blank line", () => {
+    const mode: PromptMode = { name: "trail", document: "body\n\n" };
+    const result = parseModeImport(exported(mode));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode.document).toBe("body\n\n");
+  });
+
+  it("round-trips a scalar whose value is a single double-quote", () => {
+    const mode: PromptMode = { name: "q", label: '"', document: "d" };
+    const result = parseModeImport(exported(mode));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode.label).toBe('"');
+  });
+
+  it("round-trips alias values containing ':' , '\"' and '\\'", () => {
+    const mode: PromptMode = {
+      name: "a",
+      document: "d",
+      aliases: ["ns:old", 'has"quote', "back\\slash"],
+    };
+    const result = parseModeImport(exported(mode));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode.droppedAliases).toEqual([
+      "ns:old",
+      'has"quote',
+      "back\\slash",
+    ]);
+  });
+});

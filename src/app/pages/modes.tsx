@@ -434,117 +434,6 @@ export function ModesPage() {
   // Non-blocking notice after a successful import (currently: dropped aliases).
   const [importNotice, setImportNotice] = useState<string | null>(null);
 
-  // The create-or-overwrite PUT for an imported mode, shared by the direct
-  // create path and the overwrite-confirm dialog. Participates in the same
-  // synchronous save lock as every other save path (#209 serialization), and
-  // sends the always-explicit published/requires_group pair the worker needs
-  // (it has no partial update).
-  const runImport = useCallback(
-    (mode: ParsedModeImport) => {
-      inFlightSavesRef.current += 1;
-      return saveMode
-        .mutateAsync({
-          name: mode.name,
-          body: {
-            label: mode.label,
-            description: mode.description,
-            document: mode.document,
-            published: mode.published,
-            requires_group: mode.requires_group,
-          },
-        })
-        .finally(() => {
-          inFlightSavesRef.current -= 1;
-        });
-    },
-    [saveMode]
-  );
-
-  const finishImport = useCallback(
-    (mode: ParsedModeImport) => {
-      setSelectedMode(mode.name);
-      setImportNotice(
-        mode.droppedAliases.length
-          ? `Imported “${mode.name}”. Its aliases (${mode.droppedAliases.join(
-              ", "
-            )}) were not restored — aliases are managed through rename/retire, not import.`
-          : null
-      );
-    },
-    [setSelectedMode]
-  );
-
-  const handleImportFileChange = useCallback(
-    async (e: ChangeEvent<HTMLInputElement>) => {
-      const input = e.currentTarget;
-      const file = input.files?.[0];
-      // Clear the input synchronously so the same file can be re-selected
-      // later (a change event won't fire twice for an identical value).
-      input.value = "";
-      if (!file) return;
-      setImportError(null);
-      setImportNotice(null);
-
-      let text: string;
-      try {
-        text = await file.text();
-      } catch {
-        setImportError("Could not read the selected file.");
-        return;
-      }
-      const result = parseModeImport(text);
-      if (!result.ok) {
-        setImportError(result.error);
-        return;
-      }
-
-      const name = result.mode.name;
-      // Existence is checked against the FULL org mode list, not the
-      // authorized subset: importing over a mode the user can't see would
-      // still overwrite it, so a hidden collision must be caught here and
-      // gated by edit rights rather than falling through to the create path.
-      const exists = (modesQuery.data?.modes ?? []).some(
-        (m) => m.name === name
-      );
-      if (exists ? !canEditModeName(name) : !canCreate) {
-        setImportError(
-          exists
-            ? `You don't have permission to overwrite the “${name}” mode.`
-            : "You don't have permission to create modes."
-        );
-        return;
-      }
-
-      if (exists) {
-        setImportConfirmError(null);
-        setPendingImport({ mode: result.mode, isOverwrite: true });
-        return;
-      }
-      // Brand-new mode — create directly; a failure surfaces in the banner.
-      try {
-        await runImport(result.mode);
-        finishImport(result.mode);
-      } catch (err) {
-        setImportError(err instanceof Error ? err.message : "Import failed.");
-      }
-    },
-    [modesQuery.data, canEditModeName, canCreate, runImport, finishImport]
-  );
-
-  const confirmImport = useCallback(() => {
-    if (!pendingImport) return;
-    const { mode } = pendingImport;
-    return runConfirmedAction(
-      () => runImport(mode),
-      setImportConfirmError,
-      () => {
-        setPendingImport(null);
-        finishImport(mode);
-      },
-      "Import failed."
-    );
-  }, [pendingImport, runImport, finishImport]);
-
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
       (isDirty || isSaving) &&
@@ -613,6 +502,155 @@ export function ModesPage() {
     },
     [isDirty, isSaving, selectedMode, setSelectedMode]
   );
+
+  // #198 — import handlers. Defined here, AFTER handleSelectMode, because
+  // finishImport routes a post-import switch through it (the fix for the
+  // dirty-switch-guard bypass below).
+
+  // The create-or-overwrite PUT for an imported mode, shared by the direct
+  // create path and the overwrite-confirm dialog. Participates in the same
+  // synchronous save lock as every other save path (#209 serialization), and
+  // sends the always-explicit published/requires_group pair the worker needs
+  // (it has no partial update).
+  const runImport = useCallback(
+    (mode: ParsedModeImport) => {
+      inFlightSavesRef.current += 1;
+      return saveMode
+        .mutateAsync({
+          name: mode.name,
+          body: {
+            label: mode.label,
+            description: mode.description,
+            document: mode.document,
+            published: mode.published,
+            requires_group: mode.requires_group,
+          },
+        })
+        .finally(() => {
+          inFlightSavesRef.current -= 1;
+        });
+    },
+    [saveMode]
+  );
+
+  const finishImport = useCallback(
+    (mode: ParsedModeImport, saved: PromptMode) => {
+      setImportNotice(
+        mode.droppedAliases.length
+          ? `Imported “${mode.name}”. Its aliases (${mode.droppedAliases.join(
+              ", "
+            )}) were not restored — aliases are managed through rename/retire, not import.`
+          : null
+      );
+      if (mode.name === selectedMode) {
+        // Overwrote the mode already open in the editor. setSelectedMode would
+        // no-op and the hydration effect early-returns (syncedNameRef already
+        // names this mode), so re-hydrate the editor IN PLACE from the
+        // authoritative saved values — otherwise draft/lastSyncedDoc/flags stay
+        // pre-import and the next autosave silently reverts the import (the
+        // exact stale-tracker class of #302/#303).
+        setDraft(mode.document);
+        setLastSyncedDoc(mode.document);
+        applyLastSyncedFlags(
+          reconcileModeFlags(
+            { published: mode.published, requires_group: mode.requires_group },
+            saved
+          )
+        );
+        setLastFailedDoc(null);
+        return;
+      }
+      // Landing on a DIFFERENT mode — route through the dirty/in-flight switch
+      // guard so unsaved edits on the current mode aren't dropped silently
+      // (same reason clone/retire route through it). The imported mode already
+      // exists server-side, so cancelling the switch merely stays put; the
+      // hydration effect loads the imported document on arrival.
+      handleSelectMode(mode.name);
+    },
+    [applyLastSyncedFlags, handleSelectMode, selectedMode]
+  );
+
+  const handleImportFileChange = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const input = e.currentTarget;
+      const file = input.files?.[0];
+      // Clear the input synchronously so the same file can be re-selected
+      // later (a change event won't fire twice for an identical value).
+      input.value = "";
+      if (!file) return;
+      setImportError(null);
+      setImportNotice(null);
+      // Honor the shared save lock like every other write path: don't start an
+      // import PUT while another save is in flight (it would race a concurrent
+      // autosave on the same hook).
+      if (inFlightSavesRef.current > 0) {
+        setImportError(
+          "A save is already in progress — try again in a moment."
+        );
+        return;
+      }
+
+      let text: string;
+      try {
+        text = await file.text();
+      } catch {
+        setImportError("Could not read the selected file.");
+        return;
+      }
+      const result = parseModeImport(text);
+      if (!result.ok) {
+        setImportError(result.error);
+        return;
+      }
+
+      const name = result.mode.name;
+      // Existence is checked against the FULL org mode list, not the
+      // authorized subset: importing over a mode the user can't see would
+      // still overwrite it, so a hidden collision must be caught here and
+      // gated by edit rights rather than falling through to the create path.
+      // The Import button is disabled until the list has loaded, so an
+      // undefined list here is not a silent "treat as create".
+      const exists = (modesQuery.data?.modes ?? []).some(
+        (m) => m.name === name
+      );
+      if (exists ? !canEditModeName(name) : !canCreate) {
+        setImportError(
+          exists
+            ? `You don't have permission to overwrite the “${name}” mode.`
+            : "You don't have permission to create modes."
+        );
+        return;
+      }
+
+      if (exists) {
+        setImportConfirmError(null);
+        setPendingImport({ mode: result.mode, isOverwrite: true });
+        return;
+      }
+      // Brand-new mode — create directly; a failure surfaces in the banner.
+      try {
+        const saved = await runImport(result.mode);
+        finishImport(result.mode, saved);
+      } catch (err) {
+        setImportError(err instanceof Error ? err.message : "Import failed.");
+      }
+    },
+    [modesQuery.data, canEditModeName, canCreate, runImport, finishImport]
+  );
+
+  const confirmImport = useCallback(() => {
+    if (!pendingImport) return;
+    const { mode } = pendingImport;
+    return runConfirmedAction(
+      async () => {
+        const saved = await runImport(mode);
+        finishImport(mode, saved);
+      },
+      setImportConfirmError,
+      () => setPendingImport(null),
+      "Import failed."
+    );
+  }, [pendingImport, runImport, finishImport]);
 
   const confirmSwitch = useCallback(() => {
     setSelectedMode(pendingSwitch);
@@ -1179,7 +1217,9 @@ export function ModesPage() {
             variant="outline"
             className="shrink-0"
             onClick={() => importInputRef.current?.click()}
-            disabled={!canCreate || !effectiveOrg}
+            // Gated until the mode list has loaded so the overwrite-vs-create
+            // decision can't silently degrade to "create" on an undefined list.
+            disabled={!canCreate || !effectiveOrg || !modesQuery.data}
             title="Import a mode from an exported Markdown file"
           >
             <Upload className="mr-1.5 size-3.5" />
@@ -1294,7 +1334,7 @@ export function ModesPage() {
           role="alert"
           aria-live="polite"
         >
-          Import failed: {importError}
+          {importError}
         </div>
       )}
 
