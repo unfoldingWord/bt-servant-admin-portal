@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-query";
 
 import * as languagesApi from "@/lib/languages-api";
-import type { OrgDefaultLanguage } from "@/types/language";
+import type { Language, OrgDefaultLanguage } from "@/types/language";
 
 // Org is part of every key so a super-admin's cross-org view doesn't collide
 // with the same-org cache. `null` is the canonical same-org placeholder.
@@ -59,9 +59,17 @@ export function languageSaveMutationOptions(qc: QueryClient) {
   return {
     mutationFn: ({ name, body, org }: LanguageSaveTarget) =>
       languagesApi.putLanguage(name, body, undefined, org),
-    onSuccess: (_data: unknown, { name, org }: LanguageSaveTarget) => {
+    onSuccess: (saved: Language, { name, org }: LanguageSaveTarget) => {
+      // Seed the per-language cache with the saved row (cancelling any GET in
+      // flight for it) rather than only invalidating: an invalidated but
+      // inactive detail query keeps serving its PRE-save document, so a later
+      // select — auto or manual — paints the old doc, the sync effect pins it,
+      // and the next edit saves it back over what we just wrote (grok rd-3).
+      // putLanguage returns a full Language (matches getLanguage), so this is
+      // the authoritative post-save state, org pinned via the variables.
+      void qc.cancelQueries({ queryKey: keys.language(name, org) });
+      qc.setQueryData(keys.language(name, org), saved);
       void qc.invalidateQueries({ queryKey: keys.languages(org) });
-      void qc.invalidateQueries({ queryKey: keys.language(name, org) });
     },
   };
 }

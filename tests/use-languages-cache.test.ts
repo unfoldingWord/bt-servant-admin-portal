@@ -9,7 +9,11 @@ import {
   languageSaveMutationOptions,
   orgDefaultMutationOptions,
 } from "../src/hooks/use-languages";
-import type { OrgDefaultLanguage, OrgLanguages } from "../src/types/language";
+import type {
+  Language,
+  OrgDefaultLanguage,
+  OrgLanguages,
+} from "../src/types/language";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -200,30 +204,47 @@ describe("languageSaveMutationOptions — org travels in the variables", () => {
     // the pre-save document — a save that looks lost, and a stale base for
     // the next edit to overwrite it from.
     const qc = makeClient();
-    const spy = vi.spyOn(qc, "invalidateQueries");
-    languageSaveMutationOptions(qc).onSuccess(undefined, {
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    const setSpy = vi.spyOn(qc, "setQueryData");
+    const cancelSpy = vi.spyOn(qc, "cancelQueries");
+    const saved: Language = { name: "hindi", document: "x", published: false };
+    languageSaveMutationOptions(qc).onSuccess(saved, {
       name: "hindi",
       body: { document: "x" },
       org: "alpha",
     });
-    for (const key of invalidatedKeys(spy)) {
+    for (const key of invalidatedKeys(invalidateSpy)) {
       expect(key).toContain("alpha");
+    }
+    // The seed and the cancel are pinned to the mutate-time org too.
+    expect(setSpy).toHaveBeenCalledWith(
+      languageQueryKeys.language("hindi", "alpha"),
+      saved
+    );
+    for (const call of cancelSpy.mock.calls) {
+      expect((call[0] as { queryKey: unknown[] }).queryKey).toContain("alpha");
     }
   });
 
-  it("refreshes both the collection and the saved row's own entry", () => {
+  it("seeds the saved row's cache and invalidates the collection", () => {
+    // Seeding (not invalidating) the detail query is what stops a later select
+    // of an overwritten language from painting its pre-save document from an
+    // inactive-but-stale cache (grok rd-3).
     const qc = makeClient();
-    const spy = vi.spyOn(qc, "invalidateQueries");
-    languageSaveMutationOptions(qc).onSuccess(undefined, {
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    const setSpy = vi.spyOn(qc, "setQueryData");
+    const saved: Language = { name: "hindi", document: "x", published: false };
+    languageSaveMutationOptions(qc).onSuccess(saved, {
       name: "hindi",
       body: { document: "x" },
       org: null,
     });
-    expect(invalidatedKeys(spy)).toContainEqual(
+    expect(invalidatedKeys(invalidateSpy)).toContainEqual(
       languageQueryKeys.languages(null)
     );
-    expect(invalidatedKeys(spy)).toContainEqual(
-      languageQueryKeys.language("hindi", null)
+    expect(setSpy).toHaveBeenCalledWith(
+      languageQueryKeys.language("hindi", null),
+      saved
     );
   });
 });

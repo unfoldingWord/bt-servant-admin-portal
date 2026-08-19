@@ -119,6 +119,13 @@ export function LanguagesPage() {
   const orgDefaultQuery = useOrgDefaultLanguage(contextOrg);
   const setOrgDefault = useSetOrgDefaultLanguage();
 
+  // Detail loaded for the CURRENT selection — not a stale row still in the
+  // cache mid-switch. Publish/Unpublish acts on the loaded document + label, so
+  // it must wait for this: clicked during an A→B load it would send A's draft
+  // and label into B (grok rd-3). Matches the editor pane, which is read-only
+  // until the detail arrives.
+  const detailReady = languageQuery.data?.name === selectedLanguage;
+
   // Local document draft (auto-save target).
   //
   // We track `lastSyncedDoc` separately from React Query's cache so that:
@@ -386,31 +393,27 @@ export function LanguagesPage() {
           },
         })
         .then(() => {
-          if (name === selectedLanguage) {
-            // Replacing the language being VIEWED: the selection doesn't
-            // change, so the sync effect won't re-pull. Reset the editor to
-            // the blank scaffold the server now holds — otherwise the next
-            // keystroke autosaves the OLD document back and republishes it,
-            // undoing the replace (grok F1, Failure A). Leave syncedNameRef
-            // alone so a refetch of stale cache can't reload the old doc.
-            setDraft(scaffold.document);
-            setLastSyncedDoc(scaffold.document);
-            setLastSyncedPublished(false);
-            // Mirror the label we just sent so autosave doesn't revert it to
-            // the stale cached label before the refetch lands (codex rd-2 P2).
-            setLastSyncedLabel(label || undefined);
-            setLastFailedDoc(null);
-          } else if (selectedLanguage === null) {
-            // Only jump to the new/replaced language when no editor is open.
-            // Auto-selecting a DIFFERENT language while one is being edited
-            // couples the two through the autosave debounce register: the
-            // lagging draft would PUT into the new row, and a stale cache read
-            // for a previously-opened target would show its old document over
-            // the scaffold we just wrote (grok rd-2 F2). Leaving the selection
-            // put avoids both; the new language is in the dropdown either way.
-            // (#249 — creation is an ordinary admin write; no creator grant.)
-            setSelectedLanguage(name);
-          }
+          // Never re-scaffold onto a DIFFERENT language while one is being
+          // edited: auto-selecting it would couple the two through the
+          // autosave debounce register and could show a stale cache read over
+          // the scaffold just written (grok rd-2 F2). Leave the selection put;
+          // the new language is in the dropdown either way.
+          if (name !== selectedLanguage && selectedLanguage !== null) return;
+          // Otherwise we are landing on `name` — either replacing the language
+          // being VIEWED, or selecting the freshly written one from an empty
+          // editor. Install the scaffold state locally and PIN syncedNameRef so
+          // the sync effect won't overwrite it: without this the next keystroke
+          // republishes the old document (grok rd-2 F1), or a stale cache read
+          // for a previously-visited language reloads its old doc over the
+          // scaffold (codex rd-3 P1). The label is mirrored for the same reason
+          // (codex rd-2 P2). (#249 — creation is an ordinary admin write.)
+          setDraft(scaffold.document);
+          setLastSyncedDoc(scaffold.document);
+          setLastSyncedPublished(false);
+          setLastSyncedLabel(label || undefined);
+          setLastFailedDoc(null);
+          syncedNameRef.current = name;
+          if (name !== selectedLanguage) setSelectedLanguage(name);
         });
     },
     [
@@ -586,7 +589,7 @@ export function LanguagesPage() {
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
               canCreate={canCreate}
-              canPublishSelected={canPublishSelected}
+              canPublishSelected={canPublishSelected && detailReady}
               canDeleteSelected={canDeleteSelected}
               isScaffoldReady={scaffoldQuery.isSuccess}
               scaffoldError={scaffoldQuery.isError}
