@@ -282,6 +282,13 @@ export function ModesPage() {
     draftRef.current = draft;
   }, [draft]);
 
+  // Committed dirty state, readable from an async callback (the import handler)
+  // without a stale closure — same synced-in-effect discipline as draftRef.
+  const isDirtyRef = useRef(isDirty);
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
   const performSave = useCallback(
     (doc: string) => {
       if (!selectedMode) return;
@@ -425,6 +432,8 @@ export function ModesPage() {
   const [pendingImport, setPendingImport] = useState<{
     mode: ParsedModeImport;
     isOverwrite: boolean;
+    /** Org validated at file-pick; the confirm executes against this org. */
+    org: string | null;
   } | null>(null);
   // Pre-flight banner (parse / permission / read errors, before any dialog).
   const [importError, setImportError] = useState<string | null>(null);
@@ -617,15 +626,9 @@ export function ModesPage() {
       if (!file) return;
       setImportError(null);
       setImportNotice(null);
-      // Honor the shared save lock like every other write path: don't start an
-      // import PUT while another save is in flight (it would race a concurrent
-      // autosave on the same hook).
-      if (inFlightSavesRef.current > 0) {
-        setImportError(
-          "A save is already in progress — try again in a moment."
-        );
-        return;
-      }
+      // The org the import is validated and executed against, pinned at the
+      // moment the picker opened.
+      const startOrg = contextOrg;
 
       let text: string;
       try {
@@ -634,6 +637,36 @@ export function ModesPage() {
         setImportError("Could not read the selected file.");
         return;
       }
+      // The OS file picker does not block the page: org, selection, and dirty
+      // state can all change between opening it and choosing a file. Re-check
+      // LIVE state now, before validating or writing anything — otherwise a
+      // stale render's mode list / rights / org would gate a cross-context PUT.
+      if (useUiStore.getState().contextOrg !== startOrg) {
+        setImportError(
+          "The org context changed while the file picker was open — reopen Import for the current org."
+        );
+        return;
+      }
+      // Import requires a clean, idle editor. A dirty or mid-save open mode plus
+      // a same-slug import is the one path where autosave can revert the import
+      // (the wholesale document replace races the debounce); requiring a clean
+      // editor removes that class outright rather than racing it.
+      if (isDirtyRef.current || inFlightSavesRef.current > 0) {
+        setImportError(
+          "Save or discard your current changes before importing."
+        );
+        return;
+      }
+      // Fail CLOSED when the mode list has not loaded: without it the collision
+      // check below would see an empty list, treat an existing mode as new, and
+      // overwrite it with no confirmation.
+      if (!modesQuery.data) {
+        setImportError(
+          "The mode list is still loading — try again in a moment."
+        );
+        return;
+      }
+
       const result = parseModeImport(text);
       if (!result.ok) {
         setImportError(result.error);
@@ -648,9 +681,8 @@ export function ModesPage() {
       // DIFFERENT canonical mode with no confirmation — refuse and point the
       // user at the canonical slug rather than clobber it (codex+grok rd-2).
       // (Full list, not authorized subset: a hidden collision must still be
-      // caught; the Import button is disabled until the list has loaded.)
-      const modes = modesQuery.data?.modes ?? [];
-      const collision = modes.find(
+      // caught. The list is guaranteed loaded by the fail-closed guard above.)
+      const collision = modesQuery.data.modes.find(
         (m) => m.name === name || m.aliases?.includes(name)
       );
       if (collision && collision.name !== name) {
@@ -691,16 +723,24 @@ export function ModesPage() {
 
       if (exists) {
         setImportConfirmError(null);
-        setPendingImport({ mode: result.mode, isOverwrite: true });
+        // Pin the validated org onto the pending import. The overwrite dialog
+        // can sit open across an org switch; confirming must target the org
+        // whose list / collision / rights were just checked, not whatever org
+        // is live at click time (codex rd-5). A context-change effect also
+        // clears pendingImport, so the two together forbid a cross-org confirm.
+        setPendingImport({
+          mode: result.mode,
+          isOverwrite: true,
+          org: startOrg,
+        });
         return;
       }
       // Brand-new mode — create directly; a failure surfaces in the banner.
-      // Pin the org the import targets (this render's contextOrg = the org the
-      // PUT is addressed to) so finishImport can refuse cross-org hydration.
-      const importOrg = contextOrg;
+      // startOrg is the validated + PUT-target org (unchanged since the picker
+      // opened, enforced above), so finishImport can refuse cross-org hydration.
       try {
         const saved = await runImport(result.mode);
-        await finishImport(result.mode, saved, importOrg);
+        await finishImport(result.mode, saved, startOrg);
       } catch (err) {
         setImportError(err instanceof Error ? err.message : "Import failed.");
       }
@@ -715,21 +755,26 @@ export function ModesPage() {
     ]
   );
 
+  // Discard a pending overwrite when the org context changes — its collision
+  // and permission checks were validated against the previous org (codex rd-5).
+  useEffect(() => {
+    setPendingImport(null);
+    setImportConfirmError(null);
+  }, [contextOrg]);
+
   const confirmImport = useCallback(() => {
     if (!pendingImport) return;
-    const { mode } = pendingImport;
-    // Pin the target org at confirm time (same render as the PUT's saveMode).
-    const importOrg = contextOrg;
+    const { mode, org } = pendingImport;
     return runConfirmedAction(
       async () => {
         const saved = await runImport(mode);
-        await finishImport(mode, saved, importOrg);
+        await finishImport(mode, saved, org);
       },
       setImportConfirmError,
       () => setPendingImport(null),
       "Import failed."
     );
-  }, [pendingImport, contextOrg, runImport, finishImport]);
+  }, [pendingImport, runImport, finishImport]);
 
   const confirmSwitch = useCallback(() => {
     setSelectedMode(pendingSwitch);
@@ -1296,10 +1341,23 @@ export function ModesPage() {
             variant="outline"
             className="shrink-0"
             onClick={() => importInputRef.current?.click()}
-            // Gated until the mode list has loaded so the overwrite-vs-create
-            // decision can't silently degrade to "create" on an undefined list.
-            disabled={!canCreate || !effectiveOrg || !modesQuery.data}
-            title="Import a mode from an exported Markdown file"
+            // Gated until the mode list has loaded (so overwrite-vs-create can't
+            // degrade to "create" on an undefined list) and while the editor is
+            // dirty/saving (a same-slug import could otherwise race autosave).
+            // The handler re-checks live, for the case where state changes while
+            // the OS file picker is open.
+            disabled={
+              !canCreate ||
+              !effectiveOrg ||
+              !modesQuery.data ||
+              isDirty ||
+              isSaving
+            }
+            title={
+              isDirty || isSaving
+                ? "Save or discard your changes before importing"
+                : "Import a mode from an exported Markdown file"
+            }
           >
             <Upload className="mr-1.5 size-3.5" />
             Import

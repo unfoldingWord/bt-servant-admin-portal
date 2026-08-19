@@ -111,6 +111,16 @@ export function useSeedImportedMode() {
     const key = normalize(org);
     await qc.cancelQueries({ queryKey: keys.mode(name, key) });
     qc.setQueryData(keys.mode(name, key), mode);
+    // Upsert the LIST too, in the same tick, so a just-created slug is
+    // immediately present in the dropdown AND classified `existing` on a
+    // re-import — otherwise a user who re-picks the file before the list
+    // refetch lands takes the create path again and clobbers the first write
+    // with no overwrite confirm (grok #306 rd-5 / languages rd-5). Cancel the
+    // in-flight list GET first so a pre-create response can't drop the row.
+    await qc.cancelQueries({ queryKey: keys.modes(key) });
+    qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
+      applyCloneToModeList(prev, mode)
+    );
   };
 }
 
