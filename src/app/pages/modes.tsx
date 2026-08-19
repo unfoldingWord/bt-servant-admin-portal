@@ -546,20 +546,20 @@ export function ModesPage() {
 
   const finishImport = useCallback(
     (mode: ParsedModeImport, saved: PromptMode) => {
-      setImportNotice(
-        mode.droppedAliases.length
-          ? `Imported “${mode.name}”. Its aliases (${mode.droppedAliases.join(
-              ", "
-            )}) were not restored — aliases are managed through rename/retire, not import.`
-          : null
-      );
-      if (mode.name === selectedMode) {
-        // Overwrote the mode already open in the editor. setSelectedMode would
-        // no-op and the hydration effect early-returns (syncedNameRef already
-        // names this mode), so re-hydrate the editor IN PLACE from the
-        // authoritative saved values — otherwise draft/lastSyncedDoc/flags stay
-        // pre-import and the next autosave silently reverts the import (the
-        // exact stale-tracker class of #302/#303).
+      // Read the LIVE selection, not the render closure — finishImport runs in
+      // an async continuation (after file.text() + the PUT), during which the
+      // user may have switched modes.
+      const liveSelected = useUiStore.getState().selectedMode;
+      const aliasNote = mode.droppedAliases.length
+        ? ` Its aliases (${mode.droppedAliases.join(", ")}) were not restored — aliases are managed through rename/retire, not import.`
+        : "";
+
+      if (mode.name === liveSelected) {
+        // Overwrote the mode already open in the editor. Re-hydrate IN PLACE
+        // from the authoritative saved values: setSelectedMode would no-op and
+        // the hydration effect early-returns (syncedNameRef already names this
+        // mode), so without this the draft/lastSyncedDoc/flags stay pre-import
+        // and the next autosave silently reverts the import (#302/#303 class).
         setDraft(mode.document);
         setLastSyncedDoc(mode.document);
         applyLastSyncedFlags(
@@ -569,23 +569,26 @@ export function ModesPage() {
           )
         );
         setLastFailedDoc(null);
-        // Pin the anchor to this mode. If the initial GET was still in flight
-        // (syncedNameRef null on a fresh page load), its late arrival with the
-        // PRE-import document would otherwise re-run hydration and clobber the
-        // values just written; pinning makes that hydration early-return
-        // (grok #306 Issue 4). The useSaveMode cache-seed holds the imported
-        // doc, so the invalidate refetch reconciles to server truth.
+        // Pin the anchor so a late initial GET (syncedNameRef null on a fresh
+        // load) can't re-run hydration and clobber the in-place values; the
+        // invalidate refetch reconciles to the same server truth (grok #306).
         syncedNameRef.current = mode.name;
+        setImportNotice(
+          aliasNote ? `Imported “${mode.name}”.${aliasNote}` : null
+        );
         return;
       }
-      // Landing on a DIFFERENT mode — route through the dirty/in-flight switch
-      // guard so unsaved edits on the current mode aren't dropped silently
-      // (same reason clone/retire route through it). The imported mode already
-      // exists server-side, so cancelling the switch merely stays put; the
-      // hydration effect loads the imported document on arrival.
-      handleSelectMode(mode.name);
+      // Different / new mode: do NOT auto-switch. Auto-selecting from this async
+      // continuation fought the render-closure dirty-switch guard (a stale
+      // isDirty could drop the user's in-progress edits) and the stale-selection
+      // guard. The mode is saved server-side and the list invalidate refetches
+      // it into the dropdown, so a notice + leaving the user's current editor
+      // untouched is both simpler and safer than yanking them to the new mode.
+      setImportNotice(
+        `Imported “${mode.name}” — select it from the mode list to edit.${aliasNote}`
+      );
     },
-    [applyLastSyncedFlags, handleSelectMode, selectedMode]
+    [applyLastSyncedFlags]
   );
 
   const handleImportFileChange = useCallback(
@@ -654,17 +657,18 @@ export function ModesPage() {
         );
         return;
       }
-      // An overwrite that FLIPS published additionally needs publish rights —
-      // the worker's diff gate requires the `publish` verb when the flag
-      // changes, so an edit-only user would otherwise hit a bare 403 after
-      // confirming (codex rd-2 / grok P3).
-      if (
-        exists &&
-        result.mode.published !== (collision?.published ?? false) &&
-        !hasRights(modePublishRights, name)
-      ) {
+      // Publishing additionally needs publish rights — the worker's diff gate
+      // requires the `publish` verb when creating a published mode OR flipping
+      // an existing one's flag, so a user without it would hit a bare 403 after
+      // confirming (codex+grok rd-2/3). Compute whether this import publishes:
+      // a create sets published from false→its value; an overwrite is a change
+      // only when the flag differs.
+      const publishChanges = exists
+        ? result.mode.published !== (collision?.published ?? false)
+        : result.mode.published;
+      if (publishChanges && !hasRights(modePublishRights, name)) {
         setImportError(
-          `Importing this file changes whether “${name}” is published, which needs publish rights you don't have on it.`
+          `This import changes the published state of “${name}”, which needs publish rights you don't have on it.`
         );
         return;
       }

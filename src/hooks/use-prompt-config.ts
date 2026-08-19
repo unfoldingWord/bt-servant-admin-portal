@@ -88,28 +88,9 @@ export function useSaveMode(org?: string | null) {
         requires_group?: boolean;
       };
     }) => configApi.putMode(name, body, undefined, key),
-    onSuccess: async (data, { name }) => {
-      // Seed both caches from the server response rather than only
-      // invalidating — invalidate refetches ACTIVE queries only in TanStack
-      // v5, so an INACTIVE per-mode query (import overwriting a non-selected
-      // mode) or a not-yet-listed new mode (import creating one) would be read
-      // stale by the page, which hydrates the editor / runs its stale-selection
-      // guard off that cache. Every non-import caller saves the ACTIVE mode,
-      // where this write is the no-op the refetch would have produced. Mirrors
-      // `languageSaveMutationOptions` exactly, including the load-bearing
-      // AWAIT-cancel-before-seed: an in-flight getMode that settled AFTER
-      // setQueryData would write the PRE-save document straight back into the
-      // cache and poison it for the hydration effect (grok #306 rd-2).
-      await qc.cancelQueries({ queryKey: keys.mode(name, key) });
-      qc.setQueryData(keys.mode(name, key), data);
-      // Cancel the list GET first for the same reason: an in-flight /modes that
-      // predates an import-create would settle after the upsert and drop the
-      // new slug, tripping the stale-selection guard.
-      await qc.cancelQueries({ queryKey: keys.modes(key) });
-      qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
-        applyCloneToModeList(prev, data)
-      );
+    onSuccess: (_data, { name }) => {
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
     },
   });
 }
