@@ -622,20 +622,49 @@ export function ModesPage() {
       }
 
       const name = result.mode.name;
-      // Existence is checked against the FULL org mode list, not the
-      // authorized subset: importing over a mode the user can't see would
-      // still overwrite it, so a hidden collision must be caught here and
-      // gated by edit rights rather than falling through to the create path.
-      // The Import button is disabled until the list has loaded, so an
-      // undefined list here is not a silent "treat as create".
-      const exists = (modesQuery.data?.modes ?? []).some(
-        (m) => m.name === name
+      // Resolve against the FULL org mode list by canonical name AND aliases.
+      // The engine resolves alias slugs on PUT (findModeBySlug honors aliases),
+      // so a PUT addressed to an alias mutates the aliased-TO mode. An import
+      // whose name is a stale/retired slug would therefore silently overwrite a
+      // DIFFERENT canonical mode with no confirmation — refuse and point the
+      // user at the canonical slug rather than clobber it (codex+grok rd-2).
+      // (Full list, not authorized subset: a hidden collision must still be
+      // caught; the Import button is disabled until the list has loaded.)
+      const modes = modesQuery.data?.modes ?? [];
+      const collision = modes.find(
+        (m) => m.name === name || m.aliases?.includes(name)
       );
-      if (exists ? !canEditModeName(name) : !canCreate) {
+      if (collision && collision.name !== name) {
+        setImportError(
+          `“${name}” is an alias of “${collision.name}” — import against the canonical slug.`
+        );
+        return;
+      }
+      const exists = collision !== undefined;
+
+      // Edit rights on the TARGET slug are required whether creating or
+      // overwriting: the worker early-denies any caller with no rights on the
+      // exact name (admins and cross-org carry "*"), so `canCreate` — "has a
+      // right on SOME mode" — is not sufficient for a new slug (codex rd-2).
+      if (!canEditModeName(name)) {
         setImportError(
           exists
             ? `You don't have permission to overwrite the “${name}” mode.`
-            : "You don't have permission to create modes."
+            : `You don't have permission to create the “${name}” mode. Creating a new mode needs edit rights on that slug (admin or a wildcard grant).`
+        );
+        return;
+      }
+      // An overwrite that FLIPS published additionally needs publish rights —
+      // the worker's diff gate requires the `publish` verb when the flag
+      // changes, so an edit-only user would otherwise hit a bare 403 after
+      // confirming (codex rd-2 / grok P3).
+      if (
+        exists &&
+        result.mode.published !== (collision?.published ?? false) &&
+        !hasRights(modePublishRights, name)
+      ) {
+        setImportError(
+          `Importing this file changes whether “${name}” is published, which needs publish rights you don't have on it.`
         );
         return;
       }
@@ -653,7 +682,13 @@ export function ModesPage() {
         setImportError(err instanceof Error ? err.message : "Import failed.");
       }
     },
-    [modesQuery.data, canEditModeName, canCreate, runImport, finishImport]
+    [
+      modesQuery.data,
+      canEditModeName,
+      modePublishRights,
+      runImport,
+      finishImport,
+    ]
   );
 
   const confirmImport = useCallback(() => {
