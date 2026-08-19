@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildServerNameMap,
+  resolveResourceItemDisplay,
   resolveServerLabel,
   resolveServerName,
 } from "../src/lib/resource-servers";
@@ -54,7 +55,7 @@ describe("buildServerNameMap", () => {
     // and must not smuggle invisible structure into a chip.
     const names = buildServerNameMap([
       server("multiline", "Translation\nHelps\r\n  MCP"),
-      server("zerowidth", "Aqui​fer‮"),
+      server("zerowidth", "Aqui\u200bfer‮"),
     ]);
 
     expect(names.get("multiline")).toBe("Translation Helps MCP");
@@ -131,5 +132,72 @@ describe("resolveServerLabel", () => {
     );
 
     expect(label.full).toBe("Aquifer MCP");
+  });
+});
+
+describe("resolveResourceItemDisplay", () => {
+  it("titles the row with the label and keeps the name as a secondary chip", () => {
+    expect(
+      resolveResourceItemDisplay({ name: "gen", label: "Genesis" })
+    ).toEqual({
+      title: "Genesis",
+      name: "gen",
+      secondaryName: "gen",
+      organization: null,
+      version: null,
+    });
+  });
+
+  it("falls back to the name when the label is absent", () => {
+    expect(resolveResourceItemDisplay({ name: "Genesis" })).toEqual({
+      title: "Genesis",
+      name: "Genesis",
+      secondaryName: null,
+      organization: null,
+      version: null,
+    });
+  });
+
+  it("falls back to the name when the label collapses to nothing", () => {
+    expect(
+      resolveResourceItemDisplay({ name: "Genesis", label: "  \u200b " })
+    ).toEqual({
+      title: "Genesis",
+      name: "Genesis",
+      secondaryName: null,
+      organization: null,
+      version: null,
+    });
+  });
+
+  it("drops the secondary chip when the label equals the name", () => {
+    expect(
+      resolveResourceItemDisplay({ name: "Genesis", label: "Genesis" })
+        .secondaryName
+    ).toBeNull();
+  });
+
+  it("collapses control and format characters in every field", () => {
+    const display = resolveResourceItemDisplay({
+      name: "ge\tn",
+      label: "Gen\ne\u200bsis",
+      organization: "unfolding\r\nWord",
+      version: "1\t.0",
+    });
+
+    expect(display.title).toBe("Gen e sis");
+    expect(display.name).toBe("ge n");
+    expect(display.organization).toBe("unfolding Word");
+    expect(display.version).toBe("1 .0");
+  });
+
+  it("nulls organization and version when absent or blank after collapse", () => {
+    expect(
+      resolveResourceItemDisplay({
+        name: "x",
+        organization: "   ",
+        version: "",
+      })
+    ).toMatchObject({ organization: null, version: null });
   });
 });

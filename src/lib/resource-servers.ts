@@ -117,3 +117,55 @@ export function resolveServerLabel(
     title: differs ? `${full} (${id})` : full,
   };
 }
+
+/** A resource row's untrusted display fields, each flattened to one safe line. */
+export interface ResourceItemDisplay {
+  /**
+   * Row title: the collapsed label, falling back to the collapsed name when
+   * the label is absent or collapses to nothing. Never blank when `name` is
+   * non-blank, so a whitespace-only label can't produce an empty-looking row.
+   */
+  title: string;
+  /** The collapsed name. */
+  name: string;
+  /**
+   * The collapsed name to show as a secondary code chip — only when a
+   * DISTINCT label titles the row, so `label === name` doesn't print twice and
+   * a label-less row doesn't repeat its own title. `null` otherwise.
+   */
+  secondaryName: string | null;
+  /** Collapsed organization, or `null` when absent or blank after collapse. */
+  organization: string | null;
+  /** Collapsed version, or `null` when absent or blank after collapse. */
+  version: string | null;
+}
+
+/**
+ * Collapse a `ResourceItem`'s untrusted, MCP-relayed display fields (#294).
+ *
+ * Same class of text as `serverName` — third-party output relayed by the
+ * worker, React-escaped, so the hazard is layout/legibility (embedded
+ * newlines, zero-width and bidi characters), not injection. Each field is run
+ * through `collapseDisplayText`; length is left to CSS at the render boundary,
+ * matching how server labels are handled.
+ */
+export function resolveResourceItemDisplay(item: {
+  name: string;
+  label?: string;
+  organization?: string;
+  version?: string;
+}): ResourceItemDisplay {
+  const label = collapseDisplayText(item.label ?? "");
+  const name = collapseDisplayText(item.name);
+  const organization = item.organization
+    ? collapseDisplayText(item.organization)
+    : "";
+  const version = item.version ? collapseDisplayText(item.version) : "";
+  return {
+    title: label || name,
+    name,
+    secondaryName: label && label !== name ? name : null,
+    organization: organization || null,
+    version: version || null,
+  };
+}
