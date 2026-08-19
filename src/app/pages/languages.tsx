@@ -16,6 +16,10 @@ import {
 } from "@/lib/language-error-surface";
 import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
+  stillOwnsSelection,
+  type SelectionTarget,
+} from "@/lib/mutation-ownership";
+import {
   effectiveLanguageEditRights,
   effectiveLanguagePublishRights,
   hasAdminPowers,
@@ -56,6 +60,15 @@ import { OrgContextSelector } from "@/components/org-context-selector";
 import { PageHeader } from "@/components/page-header";
 
 const AUTO_SAVE_DEBOUNCE_MS = 800;
+
+// The live (org, language) selection, read from the store at the moment a
+// mutation settles. Module-scope so it needs no dependency threading, and
+// reads `getState()` (not the render-time closure) so it reflects any
+// discard-and-switch or org switch that happened during the in-flight write.
+function liveSelectionTarget(): SelectionTarget {
+  const s = useUiStore.getState();
+  return { org: s.contextOrg, language: s.selectedLanguage };
+}
 
 export function LanguagesPage() {
   const user = useAuthStore((s) => s.user);
@@ -219,14 +232,18 @@ export function LanguagesPage() {
   const performSave = useCallback(
     (doc: string) => {
       if (!selectedLanguage) return;
-      // The row this save targets, pinned at call time. A save that settles
-      // after a discard-and-switch must not retarget the NEW selection's
-      // shared bookkeeping — check the live selection in the callbacks before
-      // touching lastSyncedDoc/lastFailedDoc (grok rd-5).
-      const target = selectedLanguage;
+      // The (org, language) this save targets, pinned at call time. A save
+      // that settles after a discard-and-switch — or an org switch — must not
+      // retarget the NEW selection's shared bookkeeping, so both callbacks
+      // gate on `stillOwnsSelection` before touching lastSyncedDoc/
+      // lastFailedDoc (grok rd-5; #303 unifies + adds the org dimension).
+      const target: SelectionTarget = {
+        org: contextOrg,
+        language: selectedLanguage,
+      };
       saveLanguage.mutate(
         {
-          name: target,
+          name: selectedLanguage,
           // Org pinned at call time — see handleSetDefault.
           org: contextOrg,
           body: {
@@ -240,12 +257,12 @@ export function LanguagesPage() {
         },
         {
           onSuccess: () => {
-            if (useUiStore.getState().selectedLanguage !== target) return;
+            if (!stillOwnsSelection(target, liveSelectionTarget())) return;
             setLastSyncedDoc(doc);
             setLastFailedDoc(null);
           },
           onError: () => {
-            if (useUiStore.getState().selectedLanguage !== target) return;
+            if (!stillOwnsSelection(target, liveSelectionTarget())) return;
             setLastFailedDoc(doc);
           },
         }
@@ -493,11 +510,13 @@ export function LanguagesPage() {
         org: contextOrg,
         body: { label: lastSyncedLabel, document: doc, published },
       });
-      // Only bookkeep locals if we're STILL on the row this toggle targeted —
-      // a discard-and-switch during the await would otherwise stamp this row's
-      // published flag and document onto the newly selected language, which the
-      // next autosave then PUTs (grok rd-6). Same live check as performSave.
-      if (useUiStore.getState().selectedLanguage === name) {
+      // Only bookkeep locals if we're STILL on the (org, language) this toggle
+      // targeted — a discard-and-switch, or an org switch to a namespace that
+      // has the same slug, would otherwise stamp this row's published flag and
+      // document onto the newly selected language, which the next autosave then
+      // PUTs (grok rd-6). Same unified gate as performSave (#303).
+      const target: SelectionTarget = { org: contextOrg, language: name };
+      if (stillOwnsSelection(target, liveSelectionTarget())) {
         setLastSyncedDoc(doc);
         setLastSyncedPublished(published);
       }
@@ -559,10 +578,18 @@ export function LanguagesPage() {
   const handleDeleteLanguage = useCallback(
     async (name: string) => {
       // Org pinned at click time — same reason as handleSetDefault.
+      const target: SelectionTarget = { org: contextOrg, language: name };
       await deleteLanguage.mutateAsync({ name, org: contextOrg });
-      if (name === selectedLanguage) setSelectedLanguage(null);
+      // Clear the selection ONLY if the deleted row is still the live
+      // selection. #302 hardened the other mutation callbacks but left this
+      // one reading the click-time closure `selectedLanguage`: a delete of A
+      // that settled after the user switched to B (or switched org) would then
+      // yank the selection off B. Read live, gated on (org, language) (#303).
+      if (stillOwnsSelection(target, liveSelectionTarget())) {
+        setSelectedLanguage(null);
+      }
     },
-    [contextOrg, deleteLanguage, selectedLanguage, setSelectedLanguage]
+    [contextOrg, deleteLanguage, setSelectedLanguage]
   );
 
   const handleJumpToLine = useCallback((line: number) => {
