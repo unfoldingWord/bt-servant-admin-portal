@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Download, ListOrdered, Save } from "lucide-react";
+import { Download, ListOrdered, Save, Upload } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { shouldAutoSaveDraft } from "@/lib/autosave-gate";
@@ -18,6 +25,7 @@ import {
   reconcileModeFlags,
   type ModeFlags,
 } from "@/lib/mode-flags";
+import { type ParsedModeImport, parseModeImport } from "@/lib/mode-import";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { humanizeModeSlug, slugifyModeName } from "@/lib/mode-slug";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
@@ -42,6 +50,7 @@ import {
   useRenameMode,
   useRetireMode,
   useSaveMode,
+  useSeedImportedMode,
 } from "@/hooks/use-prompt-config";
 import type { MarkdownHeading } from "@/types/markdown";
 import type { PromptMode } from "@/types/prompt-override";
@@ -108,6 +117,7 @@ export function ModesPage() {
   const modesQuery = useModes(contextOrg);
   const modeQuery = useMode(selectedMode, contextOrg);
   const saveMode = useSaveMode(contextOrg);
+  const seedImportedMode = useSeedImportedMode();
   const deleteMode = useDeleteMode(contextOrg);
   const renameMode = useRenameMode(contextOrg);
   const cloneMode = useCloneMode(contextOrg);
@@ -272,6 +282,13 @@ export function ModesPage() {
     draftRef.current = draft;
   }, [draft]);
 
+  // Committed dirty state, readable from an async callback (the import handler)
+  // without a stale closure — same synced-in-effect discipline as draftRef.
+  const isDirtyRef = useRef(isDirty);
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
   const performSave = useCallback(
     (doc: string) => {
       if (!selectedMode) return;
@@ -408,6 +425,26 @@ export function ModesPage() {
     URL.revokeObjectURL(url);
   }, [draft, effectiveOrg, lastSyncedFlags, modeQuery.data, selectedMode]);
 
+  // #198 — import a mode from a file produced by Export. The hidden input is
+  // clicked by the Import button; `parseModeImport` validates the file, and a
+  // collision opens an overwrite confirm before any PUT.
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [pendingImport, setPendingImport] = useState<{
+    mode: ParsedModeImport;
+    isOverwrite: boolean;
+    /** Org validated at file-pick; the confirm executes against this org. */
+    org: string | null;
+  } | null>(null);
+  // Pre-flight banner (parse / permission / read errors, before any dialog).
+  const [importError, setImportError] = useState<string | null>(null);
+  // Inline error inside the overwrite dialog (a failed PUT), same contract as
+  // `labelSyncError` — the dialog stays open so it can render.
+  const [importConfirmError, setImportConfirmError] = useState<string | null>(
+    null
+  );
+  // Non-blocking notice after a successful import (currently: dropped aliases).
+  const [importNotice, setImportNotice] = useState<string | null>(null);
+
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
       (isDirty || isSaving) &&
@@ -476,6 +513,268 @@ export function ModesPage() {
     },
     [isDirty, isSaving, selectedMode, setSelectedMode]
   );
+
+  // #198 — import handlers. Defined here, AFTER handleSelectMode, because
+  // finishImport routes a post-import switch through it (the fix for the
+  // dirty-switch-guard bypass below).
+
+  // The create-or-overwrite PUT for an imported mode, shared by the direct
+  // create path and the overwrite-confirm dialog. Participates in the same
+  // synchronous save lock as every other save path (#209 serialization), and
+  // sends the always-explicit published/requires_group pair the worker needs
+  // (it has no partial update).
+  const runImport = useCallback(
+    (mode: ParsedModeImport) => {
+      // A GATE, not just a counter (#209 contract, mirrors handleSetPublished).
+      // The file-pick lock check is stale by the time we get here: `await
+      // file.text()` yields, and the overwrite dialog holds no lock for an
+      // unbounded time, so an autosave of the open mode can start in between.
+      // Refuse rather than overlap a second PUT on the same hook whose
+      // late-settling onSuccess would revert the import (grok #306 Issue 3).
+      if (inFlightSavesRef.current > 0) {
+        throw new Error(
+          "A save is already in progress — try again in a moment."
+        );
+      }
+      inFlightSavesRef.current += 1;
+      return saveMode
+        .mutateAsync({
+          name: mode.name,
+          body: {
+            label: mode.label,
+            description: mode.description,
+            document: mode.document,
+            published: mode.published,
+            requires_group: mode.requires_group,
+          },
+        })
+        .finally(() => {
+          inFlightSavesRef.current -= 1;
+        });
+    },
+    [saveMode]
+  );
+
+  const finishImport = useCallback(
+    async (
+      mode: ParsedModeImport,
+      saved: PromptMode,
+      importOrg: string | null
+    ) => {
+      // Seed the imported mode's OWN per-mode cache with the authoritative PUT
+      // response, org pinned to the org the import targeted. `useSaveMode` only
+      // invalidates (active-refetch), so without this a later select of an
+      // overwritten-but-inactive mode hydrates the pre-import cache and the next
+      // save reverts the import; and the same-mode server-label read would stay
+      // stale until a refetch (grok #306 rd-4). Import-local — never on the
+      // shared save hook.
+      await seedImportedMode(mode.name, importOrg, saved);
+
+      // Read the LIVE (org, selection) — finishImport runs in an async
+      // continuation (after file.text() + the PUT), during which the user may
+      // have switched mode OR org. In-place hydration is safe ONLY when both
+      // still match the import's target: a mode slug is not unique across orgs,
+      // so hydrating on slug alone could paint org A's imported document into a
+      // same-named mode the user is now viewing in org B (codex #306 rd-4 P1).
+      const liveSelected = useUiStore.getState().selectedMode;
+      const liveOrg = useUiStore.getState().contextOrg;
+      const aliasNote = mode.droppedAliases.length
+        ? ` Its aliases (${mode.droppedAliases.join(", ")}) were not restored — aliases are managed through rename/retire, not import.`
+        : "";
+
+      if (mode.name === liveSelected && importOrg === liveOrg) {
+        // Overwrote the mode open in the editor (same org). Re-hydrate IN PLACE
+        // from the authoritative saved values: the hydration effect early-
+        // returns (syncedNameRef already names this mode), so without this the
+        // draft/lastSyncedDoc/flags stay pre-import and the next autosave
+        // silently reverts the import (#302/#303 class).
+        setDraft(mode.document);
+        setLastSyncedDoc(mode.document);
+        applyLastSyncedFlags(
+          reconcileModeFlags(
+            { published: mode.published, requires_group: mode.requires_group },
+            saved
+          )
+        );
+        setLastFailedDoc(null);
+        syncedNameRef.current = mode.name;
+        setImportNotice(
+          aliasNote ? `Imported “${mode.name}”.${aliasNote}` : null
+        );
+        return;
+      }
+      // Different / new mode (or the target is no longer the live selection): do
+      // NOT auto-switch. Auto-selecting from this async continuation fought the
+      // render-closure dirty-switch guard (a stale isDirty could drop the user's
+      // in-progress edits). The mode is saved and its cache is seeded, so the
+      // user picks it from the list when ready — their current editor is left
+      // untouched.
+      setImportNotice(
+        `Imported “${mode.name}” — select it from the mode list to edit.${aliasNote}`
+      );
+    },
+    [applyLastSyncedFlags, seedImportedMode]
+  );
+
+  const handleImportFileChange = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const input = e.currentTarget;
+      const file = input.files?.[0];
+      // Clear the input synchronously so the same file can be re-selected
+      // later (a change event won't fire twice for an identical value).
+      input.value = "";
+      if (!file) return;
+      setImportError(null);
+      setImportNotice(null);
+      // The org the import is validated and executed against, pinned at the
+      // moment the picker opened.
+      const startOrg = contextOrg;
+
+      let text: string;
+      try {
+        text = await file.text();
+      } catch {
+        setImportError("Could not read the selected file.");
+        return;
+      }
+      // The OS file picker does not block the page: org, selection, and dirty
+      // state can all change between opening it and choosing a file. Re-check
+      // LIVE state now, before validating or writing anything — otherwise a
+      // stale render's mode list / rights / org would gate a cross-context PUT.
+      if (useUiStore.getState().contextOrg !== startOrg) {
+        setImportError(
+          "The org context changed while the file picker was open — reopen Import for the current org."
+        );
+        return;
+      }
+      // Import requires a clean, idle editor. A dirty or mid-save open mode plus
+      // a same-slug import is the one path where autosave can revert the import
+      // (the wholesale document replace races the debounce); requiring a clean
+      // editor removes that class outright rather than racing it.
+      if (isDirtyRef.current || inFlightSavesRef.current > 0) {
+        setImportError(
+          "Save or discard your current changes before importing."
+        );
+        return;
+      }
+      // Fail CLOSED when the mode list has not loaded: without it the collision
+      // check below would see an empty list, treat an existing mode as new, and
+      // overwrite it with no confirmation.
+      if (!modesQuery.data) {
+        setImportError(
+          "The mode list is still loading — try again in a moment."
+        );
+        return;
+      }
+
+      const result = parseModeImport(text);
+      if (!result.ok) {
+        setImportError(result.error);
+        return;
+      }
+
+      const name = result.mode.name;
+      // Resolve against the FULL org mode list by canonical name AND aliases.
+      // The engine resolves alias slugs on PUT (findModeBySlug honors aliases),
+      // so a PUT addressed to an alias mutates the aliased-TO mode. An import
+      // whose name is a stale/retired slug would therefore silently overwrite a
+      // DIFFERENT canonical mode with no confirmation — refuse and point the
+      // user at the canonical slug rather than clobber it (codex+grok rd-2).
+      // (Full list, not authorized subset: a hidden collision must still be
+      // caught. The list is guaranteed loaded by the fail-closed guard above.)
+      const collision = modesQuery.data.modes.find(
+        (m) => m.name === name || m.aliases?.includes(name)
+      );
+      if (collision && collision.name !== name) {
+        setImportError(
+          `“${name}” is an alias of “${collision.name}” — import against the canonical slug.`
+        );
+        return;
+      }
+      const exists = collision !== undefined;
+
+      // Edit rights on the TARGET slug are required whether creating or
+      // overwriting: the worker early-denies any caller with no rights on the
+      // exact name (admins and cross-org carry "*"), so `canCreate` — "has a
+      // right on SOME mode" — is not sufficient for a new slug (codex rd-2).
+      if (!canEditModeName(name)) {
+        setImportError(
+          exists
+            ? `You don't have permission to overwrite the “${name}” mode.`
+            : `You don't have permission to create the “${name}” mode. Creating a new mode needs edit rights on that slug (admin or a wildcard grant).`
+        );
+        return;
+      }
+      // Publishing additionally needs publish rights — the worker's diff gate
+      // requires the `publish` verb when creating a published mode OR flipping
+      // an existing one's flag, so a user without it would hit a bare 403 after
+      // confirming (codex+grok rd-2/3). Compute whether this import publishes:
+      // a create sets published from false→its value; an overwrite is a change
+      // only when the flag differs.
+      const publishChanges = exists
+        ? result.mode.published !== (collision?.published ?? false)
+        : result.mode.published;
+      if (publishChanges && !hasRights(modePublishRights, name)) {
+        setImportError(
+          `This import changes the published state of “${name}”, which needs publish rights you don't have on it.`
+        );
+        return;
+      }
+
+      if (exists) {
+        setImportConfirmError(null);
+        // Pin the validated org onto the pending import. The overwrite dialog
+        // can sit open across an org switch; confirming must target the org
+        // whose list / collision / rights were just checked, not whatever org
+        // is live at click time (codex rd-5). A context-change effect also
+        // clears pendingImport, so the two together forbid a cross-org confirm.
+        setPendingImport({
+          mode: result.mode,
+          isOverwrite: true,
+          org: startOrg,
+        });
+        return;
+      }
+      // Brand-new mode — create directly; a failure surfaces in the banner.
+      // startOrg is the validated + PUT-target org (unchanged since the picker
+      // opened, enforced above), so finishImport can refuse cross-org hydration.
+      try {
+        const saved = await runImport(result.mode);
+        await finishImport(result.mode, saved, startOrg);
+      } catch (err) {
+        setImportError(err instanceof Error ? err.message : "Import failed.");
+      }
+    },
+    [
+      modesQuery.data,
+      canEditModeName,
+      modePublishRights,
+      contextOrg,
+      runImport,
+      finishImport,
+    ]
+  );
+
+  // Discard a pending overwrite when the org context changes — its collision
+  // and permission checks were validated against the previous org (codex rd-5).
+  useEffect(() => {
+    setPendingImport(null);
+    setImportConfirmError(null);
+  }, [contextOrg]);
+
+  const confirmImport = useCallback(() => {
+    if (!pendingImport) return;
+    const { mode, org } = pendingImport;
+    return runConfirmedAction(
+      async () => {
+        const saved = await runImport(mode);
+        await finishImport(mode, saved, org);
+      },
+      setImportConfirmError,
+      () => setPendingImport(null),
+      "Import failed."
+    );
+  }, [pendingImport, runImport, finishImport]);
 
   const confirmSwitch = useCallback(() => {
     setSelectedMode(pendingSwitch);
@@ -1027,6 +1326,43 @@ export function ModesPage() {
             />
           </div>
 
+          {/* #198 — import a mode from an exported file. Available whenever
+              the user can create/edit some mode; the per-file check enforces
+              the specific target's rights. */}
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".md,text/markdown"
+            className="hidden"
+            onChange={handleImportFileChange}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0"
+            onClick={() => importInputRef.current?.click()}
+            // Gated until the mode list has loaded (so overwrite-vs-create can't
+            // degrade to "create" on an undefined list) and while the editor is
+            // dirty/saving (a same-slug import could otherwise race autosave).
+            // The handler re-checks live, for the case where state changes while
+            // the OS file picker is open.
+            disabled={
+              !canCreate ||
+              !effectiveOrg ||
+              !modesQuery.data ||
+              isDirty ||
+              isSaving
+            }
+            title={
+              isDirty || isSaving
+                ? "Save or discard your changes before importing"
+                : "Import a mode from an exported Markdown file"
+            }
+          >
+            <Upload className="mr-1.5 size-3.5" />
+            Import
+          </Button>
+
           {hasSelection && (
             <div className="flex shrink-0 items-center gap-3">
               {/* #209 — group-only gate. Saves immediately on toggle
@@ -1126,6 +1462,26 @@ export function ModesPage() {
           aria-live="polite"
         >
           Save failed: {saveError.message}
+        </div>
+      )}
+
+      {importError && (
+        <div
+          className="bg-destructive/10 text-destructive border-destructive border-l-2 px-6 py-3 text-sm"
+          role="alert"
+          aria-live="polite"
+        >
+          {importError}
+        </div>
+      )}
+
+      {importNotice && (
+        <div
+          className="bg-muted text-muted-foreground border-border border-l-2 px-6 py-3 text-sm"
+          role="status"
+          aria-live="polite"
+        >
+          {importNotice}
         </div>
       )}
 
@@ -1324,6 +1680,55 @@ export function ModesPage() {
               disabled={saveMode.isPending || !labelSyncValue.trim()}
             >
               {saveMode.isPending ? "Updating…" : "Update name"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* #198 — confirm before an import overwrites an existing mode. */}
+      <AlertDialog
+        open={pendingImport !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingImport(null);
+            setImportConfirmError(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Overwrite “{pendingImport?.mode.name}”?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              A mode named{" "}
+              <span className="text-foreground font-mono font-medium">
+                {pendingImport?.mode.name}
+              </span>{" "}
+              already exists. Importing this file replaces its document and its
+              published / group-chat settings, and updates the display name and
+              description when the file includes them. This can&rsquo;t be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {importConfirmError && (
+            <p className="bg-destructive/10 text-destructive border-destructive border-l-2 px-3 py-2 text-sm">
+              {importConfirmError}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saveMode.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            {/* Plain Button — AlertDialogAction auto-closes before an inline
+                error could render (#102); close happens in confirmImport on
+                success. */}
+            <Button
+              variant="destructive"
+              onClick={confirmImport}
+              disabled={saveMode.isPending}
+            >
+              {saveMode.isPending ? "Importing…" : "Overwrite"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

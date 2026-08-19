@@ -95,6 +95,35 @@ export function useSaveMode(org?: string | null) {
   });
 }
 
+// Import-local cache seed (#198). After an import PUT succeeds, write the
+// authoritative response into the TARGET mode's per-mode cache so a later
+// select (overwrite of a mode viewed earlier this session) or the same-mode
+// server-label read cannot resurrect a stale INACTIVE cache — `useSaveMode`'s
+// invalidate refetches ACTIVE queries only, and the imported mode is usually
+// inactive. Deliberately kept OUT of `useSaveMode`: only the import writes its
+// own target here (org pinned by the caller, captured when the import started),
+// so it never touches the shared save-cache machinery on every mode save.
+// Cancels a late in-flight GET first (TanStack optimistic-update order) so it
+// can't overwrite the seed with the pre-import document.
+export function useSeedImportedMode() {
+  const qc = useQueryClient();
+  return async (name: string, org: string | null, mode: PromptMode) => {
+    const key = normalize(org);
+    await qc.cancelQueries({ queryKey: keys.mode(name, key) });
+    qc.setQueryData(keys.mode(name, key), mode);
+    // Upsert the LIST too, in the same tick, so a just-created slug is
+    // immediately present in the dropdown AND classified `existing` on a
+    // re-import — otherwise a user who re-picks the file before the list
+    // refetch lands takes the create path again and clobbers the first write
+    // with no overwrite confirm (grok #306 rd-5 / languages rd-5). Cancel the
+    // in-flight list GET first so a pre-create response can't drop the row.
+    await qc.cancelQueries({ queryKey: keys.modes(key) });
+    qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
+      applyCloneToModeList(prev, mode)
+    );
+  };
+}
+
 // Note: publish/unpublish flows through useSaveMode with the full body
 // (always send { label, description, document, published }). The worker
 // PUT contract requires exactly one of `document` or `overrides` per
