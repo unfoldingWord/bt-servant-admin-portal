@@ -60,6 +60,18 @@ describe("stillOwnsSelection", () => {
     ).toBe(false);
   });
 
+  it("does not own when the selection was CLEARED during the mutation", () => {
+    // The load-bearing runtime case: a delete (or discard-and-switch) settles
+    // after the selection was nulled. The mutation must not touch bookkeeping
+    // for a row that is no longer selected.
+    expect(
+      stillOwnsSelection(
+        { org: null, language: "en" },
+        { org: null, language: null }
+      )
+    ).toBe(false);
+  });
+
   it("distinguishes a null org (home) from a named org", () => {
     expect(
       stillOwnsSelection(
