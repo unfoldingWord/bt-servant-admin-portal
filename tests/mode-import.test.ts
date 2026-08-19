@@ -105,7 +105,9 @@ describe("parseModeImport — tolerant of hand-edits", () => {
   });
 
   it("accepts a leading UTF-8 BOM", () => {
-    const result = parseModeImport("﻿" + exported({ name: "m", document: "d" }));
+    const result = parseModeImport(
+      "﻿" + exported({ name: "m", document: "d" })
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.mode.name).toBe("m");

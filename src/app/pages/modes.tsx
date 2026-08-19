@@ -25,10 +25,7 @@ import {
   reconcileModeFlags,
   type ModeFlags,
 } from "@/lib/mode-flags";
-import {
-  type ParsedModeImport,
-  parseModeImport,
-} from "@/lib/mode-import";
+import { type ParsedModeImport, parseModeImport } from "@/lib/mode-import";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { humanizeModeSlug, slugifyModeName } from "@/lib/mode-slug";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";

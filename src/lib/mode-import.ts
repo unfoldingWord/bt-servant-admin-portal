@@ -71,7 +71,8 @@ export function parseModeImport(raw: string): ModeImportResult {
   if (closing === -1) {
     return {
       ok: false,
-      error: "Malformed export — the frontmatter block is not closed with '---'.",
+      error:
+        "Malformed export — the frontmatter block is not closed with '---'.",
     };
   }
 
