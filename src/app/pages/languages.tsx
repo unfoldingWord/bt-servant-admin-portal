@@ -438,6 +438,11 @@ export function LanguagesPage() {
           },
         })
         .then(() => {
+          // Bail if the ORG context switched during the in-flight PUT: the
+          // discard-and-switch dialog nulls selectedLanguage, and treating that
+          // as "empty editor, land here" would install org A's scaffold and
+          // autosave it onto org B's row (grok rd-6). Only land on the same org.
+          if (useUiStore.getState().contextOrg !== contextOrg) return;
           // Read the LIVE selection, not the click-time closure value: the user
           // can switch languages during the in-flight PUT (the switch dialog
           // offers "discard and switch" while saving), and acting on a stale
@@ -488,7 +493,11 @@ export function LanguagesPage() {
         org: contextOrg,
         body: { label: lastSyncedLabel, document: doc, published },
       });
-      if (isSelected) {
+      // Only bookkeep locals if we're STILL on the row this toggle targeted —
+      // a discard-and-switch during the await would otherwise stamp this row's
+      // published flag and document onto the newly selected language, which the
+      // next autosave then PUTs (grok rd-6). Same live check as performSave.
+      if (useUiStore.getState().selectedLanguage === name) {
         setLastSyncedDoc(doc);
         setLastSyncedPublished(published);
       }

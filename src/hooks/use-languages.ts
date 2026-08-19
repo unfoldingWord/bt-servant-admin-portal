@@ -81,6 +81,10 @@ export function languageSaveMutationOptions(qc: QueryClient) {
       // just-created slug is immediately `existing` for the next create.
       // Without this, until the list refetch lands, re-creating the slug
       // classifies as a fresh create and silently overwrites it (grok rd-5).
+      // Cancel the list GET first for the same reason as the detail seed: an
+      // in-flight `/languages` started before this row existed would settle
+      // after the upsert and drop it again (grok rd-6).
+      await qc.cancelQueries({ queryKey: keys.languages(org) });
       qc.setQueryData<OrgLanguages>(keys.languages(org), (old) =>
         old
           ? {

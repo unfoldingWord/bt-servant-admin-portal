@@ -226,25 +226,44 @@ describe("languageSaveMutationOptions — org travels in the variables", () => {
     }
   });
 
-  it("seeds the saved row's cache and invalidates the collection", async () => {
+  it("seeds the detail cache, upserts the collection, and cancels both GETs", async () => {
     // Seeding (not invalidating) the detail query is what stops a later select
     // of an overwritten language from painting its pre-save document from an
-    // inactive-but-stale cache (grok rd-3).
+    // inactive-but-stale cache (grok rd-3). The collection upsert makes a
+    // just-created slug immediately `existing` (grok rd-5), and BOTH GETs are
+    // cancelled first so an in-flight fetch can't settle over the writes (grok
+    // rd-6).
     const qc = makeClient();
+    qc.setQueryData<OrgLanguages>(languageQueryKeys.languages(null), {
+      languages: [],
+    });
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
-    const setSpy = vi.spyOn(qc, "setQueryData");
+    const cancelSpy = vi.spyOn(qc, "cancelQueries");
     const saved: Language = { name: "hindi", document: "x", published: false };
     await languageSaveMutationOptions(qc).onSuccess(saved, {
       name: "hindi",
       body: { document: "x" },
       org: null,
     });
+    // Detail seeded, collection upserted with the new row.
+    expect(qc.getQueryData(languageQueryKeys.language("hindi", null))).toEqual(
+      saved
+    );
+    expect(
+      qc.getQueryData<OrgLanguages>(languageQueryKeys.languages(null))
+        ?.languages
+    ).toContainEqual(saved);
+    // Both GETs cancelled before the writes.
+    const cancelledKeys = cancelSpy.mock.calls.map(
+      (call) => (call[0] as { queryKey: unknown[] }).queryKey
+    );
+    expect(cancelledKeys).toContainEqual(
+      languageQueryKeys.language("hindi", null)
+    );
+    expect(cancelledKeys).toContainEqual(languageQueryKeys.languages(null));
+    // Collection still invalidated for eventual reconciliation.
     expect(invalidatedKeys(invalidateSpy)).toContainEqual(
       languageQueryKeys.languages(null)
-    );
-    expect(setSpy).toHaveBeenCalledWith(
-      languageQueryKeys.language("hindi", null),
-      saved
     );
   });
 });
