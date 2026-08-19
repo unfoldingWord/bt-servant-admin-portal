@@ -9,7 +9,11 @@ import {
   languageSaveMutationOptions,
   orgDefaultMutationOptions,
 } from "../src/hooks/use-languages";
-import type { OrgDefaultLanguage, OrgLanguages } from "../src/types/language";
+import type {
+  Language,
+  OrgDefaultLanguage,
+  OrgLanguages,
+} from "../src/types/language";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -193,37 +197,73 @@ describe("languageSaveMutationOptions — org travels in the variables", () => {
     );
   });
 
-  it("invalidates the mutate-time org after the ambient key moved on", () => {
+  it("invalidates the mutate-time org after the ambient key moved on", async () => {
     // Reachable, not theoretical: the org-context dialog offers "Discard
     // and switch" WHILE a save is in flight. With a closure-read key, org
     // A's completed save would refresh org B and leave A's cache holding
     // the pre-save document — a save that looks lost, and a stale base for
     // the next edit to overwrite it from.
     const qc = makeClient();
-    const spy = vi.spyOn(qc, "invalidateQueries");
-    languageSaveMutationOptions(qc).onSuccess(undefined, {
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    const setSpy = vi.spyOn(qc, "setQueryData");
+    const cancelSpy = vi.spyOn(qc, "cancelQueries");
+    const saved: Language = { name: "hindi", document: "x", published: false };
+    await languageSaveMutationOptions(qc).onSuccess(saved, {
       name: "hindi",
       body: { document: "x" },
       org: "alpha",
     });
-    for (const key of invalidatedKeys(spy)) {
+    for (const key of invalidatedKeys(invalidateSpy)) {
       expect(key).toContain("alpha");
+    }
+    // The seed and the cancel are pinned to the mutate-time org too.
+    expect(setSpy).toHaveBeenCalledWith(
+      languageQueryKeys.language("hindi", "alpha"),
+      saved
+    );
+    for (const call of cancelSpy.mock.calls) {
+      expect((call[0] as { queryKey: unknown[] }).queryKey).toContain("alpha");
     }
   });
 
-  it("refreshes both the collection and the saved row's own entry", () => {
+  it("seeds the detail cache, upserts the collection, and cancels both GETs", async () => {
+    // Seeding (not invalidating) the detail query is what stops a later select
+    // of an overwritten language from painting its pre-save document from an
+    // inactive-but-stale cache (grok rd-3). The collection upsert makes a
+    // just-created slug immediately `existing` (grok rd-5), and BOTH GETs are
+    // cancelled first so an in-flight fetch can't settle over the writes (grok
+    // rd-6).
     const qc = makeClient();
-    const spy = vi.spyOn(qc, "invalidateQueries");
-    languageSaveMutationOptions(qc).onSuccess(undefined, {
+    qc.setQueryData<OrgLanguages>(languageQueryKeys.languages(null), {
+      languages: [],
+    });
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    const cancelSpy = vi.spyOn(qc, "cancelQueries");
+    const saved: Language = { name: "hindi", document: "x", published: false };
+    await languageSaveMutationOptions(qc).onSuccess(saved, {
       name: "hindi",
       body: { document: "x" },
       org: null,
     });
-    expect(invalidatedKeys(spy)).toContainEqual(
-      languageQueryKeys.languages(null)
+    // Detail seeded, collection upserted with the new row.
+    expect(qc.getQueryData(languageQueryKeys.language("hindi", null))).toEqual(
+      saved
     );
-    expect(invalidatedKeys(spy)).toContainEqual(
+    expect(
+      qc.getQueryData<OrgLanguages>(languageQueryKeys.languages(null))
+        ?.languages
+    ).toContainEqual(saved);
+    // Both GETs cancelled before the writes.
+    const cancelledKeys = cancelSpy.mock.calls.map(
+      (call) => (call[0] as { queryKey: unknown[] }).queryKey
+    );
+    expect(cancelledKeys).toContainEqual(
       languageQueryKeys.language("hindi", null)
+    );
+    expect(cancelledKeys).toContainEqual(languageQueryKeys.languages(null));
+    // Collection still invalidated for eventual reconciliation.
+    expect(invalidatedKeys(invalidateSpy)).toContainEqual(
+      languageQueryKeys.languages(null)
     );
   });
 });

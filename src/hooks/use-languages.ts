@@ -6,7 +6,11 @@ import {
 } from "@tanstack/react-query";
 
 import * as languagesApi from "@/lib/languages-api";
-import type { OrgDefaultLanguage } from "@/types/language";
+import type {
+  Language,
+  OrgDefaultLanguage,
+  OrgLanguages,
+} from "@/types/language";
 
 // Org is part of every key so a super-admin's cross-org view doesn't collide
 // with the same-org cache. `null` is the canonical same-org placeholder.
@@ -59,9 +63,39 @@ export function languageSaveMutationOptions(qc: QueryClient) {
   return {
     mutationFn: ({ name, body, org }: LanguageSaveTarget) =>
       languagesApi.putLanguage(name, body, undefined, org),
-    onSuccess: (_data: unknown, { name, org }: LanguageSaveTarget) => {
+    onSuccess: async (saved: Language, { name, org }: LanguageSaveTarget) => {
+      // Seed the per-language cache with the saved row rather than only
+      // invalidating: an invalidated but inactive detail query keeps serving
+      // its PRE-save document, so a later select — auto or manual — paints the
+      // old doc, the sync effect pins it, and the next edit saves it back over
+      // what we just wrote (grok rd-3). putLanguage returns a full Language
+      // (matches getLanguage), so this is the authoritative post-save state,
+      // org pinned via the variables.
+      //
+      // AWAIT the cancel before seeding (TanStack's optimistic-update order):
+      // an in-flight getLanguage that settles AFTER setQueryData would write
+      // the pre-save document straight back into the cache (grok rd-4).
+      await qc.cancelQueries({ queryKey: keys.language(name, org) });
+      qc.setQueryData(keys.language(name, org), saved);
+      // Upsert the row into the collection cache in the same tick, so a
+      // just-created slug is immediately `existing` for the next create.
+      // Without this, until the list refetch lands, re-creating the slug
+      // classifies as a fresh create and silently overwrites it (grok rd-5).
+      // Cancel the list GET first for the same reason as the detail seed: an
+      // in-flight `/languages` started before this row existed would settle
+      // after the upsert and drop it again (grok rd-6).
+      await qc.cancelQueries({ queryKey: keys.languages(org) });
+      qc.setQueryData<OrgLanguages>(keys.languages(org), (old) =>
+        old
+          ? {
+              ...old,
+              languages: old.languages.some((l) => l.name === saved.name)
+                ? old.languages.map((l) => (l.name === saved.name ? saved : l))
+                : [...old.languages, saved],
+            }
+          : old
+      );
       void qc.invalidateQueries({ queryKey: keys.languages(org) });
-      void qc.invalidateQueries({ queryKey: keys.language(name, org) });
     },
   };
 }

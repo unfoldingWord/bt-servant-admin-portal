@@ -18,12 +18,14 @@ import {
   isDefaultControlAvailable,
   type LanguageDefaultState,
 } from "@/lib/language-default-state";
+import { classifyLanguageCreate } from "@/lib/language-create";
 import {
   describeLanguageDeleteError,
   shouldOfferDefaultRecovery,
 } from "@/lib/language-error-surface";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import { cn } from "@/lib/utils";
+import type { LanguageRights } from "@/types/auth";
 import type { Language, OrgLanguages } from "@/types/language";
 import {
   AlertDialog,
@@ -51,7 +53,22 @@ interface LanguageSelectorProps {
   languagesData: OrgLanguages | undefined;
   selectedLanguage: string | null;
   onSelectLanguage: (language: string | null) => void;
-  onCreateLanguage: (name: string, label: string) => void;
+  /** Returns a promise that rejects on error so the destructive
+      create-over-existing confirmation can render its failure inline and stay
+      open (grok F2 / #102). The plain create path ignores the result. */
+  onCreateLanguage: (name: string, label: string) => void | Promise<void>;
+  /** The caller's effective language EDIT rights, already trump-aware (`"*"`
+      for admins and cross-org super-admins). #293: a create over an existing
+      slug overwrites its document with a blank scaffold and unpublishes it, so
+      the selector confirms first when the caller may overwrite the row, and
+      refuses up front when they can't (the worker would 403 the write).
+      `undefined` is the legacy full-access shape (see hasRights). */
+  editRights: LanguageRights | undefined;
+  /** The caller's effective language PUBLISH rights, same trump-aware shape as
+      editRights. #293: re-scaffolding a PUBLISHED language unpublishes it, so
+      the worker's overwrite PUT needs publish rights too — used to block an
+      edit-only caller before a confirmation that would 403. */
+  publishRights: LanguageRights | undefined;
   /** Must return a promise that rejects on error — the destructive
       confirmation dialogs render inline error UI on the rejection path
       and stay open so the user can read it (#102). */
@@ -107,6 +124,8 @@ export function LanguageSelector({
   selectedLanguage,
   onSelectLanguage,
   onCreateLanguage,
+  editRights,
+  publishRights,
   onDeleteLanguage,
   onSetPublished,
   isCreating,
@@ -127,6 +146,15 @@ export function LanguageSelector({
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newLabel, setNewLabel] = useState("");
+  // #293: create-time collision handling. `createError` blocks a create over a
+  // name the caller can't edit; `overwriteTarget` drives the destructive
+  // confirmation for a create over one they can (replace document + unpublish).
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [overwriteTarget, setOverwriteTarget] = useState<{
+    slug: string;
+    label: string;
+  } | null>(null);
+  const [overwriteError, setOverwriteError] = useState<string | null>(null);
 
   // Destructive-confirmation dialogs are controlled so we can keep them
   // open on async failure and render the error inline (#102). Closing on
@@ -271,17 +299,92 @@ export function LanguageSelector({
       .replace(/[^a-z0-9\-_]/g, "")
       .replace(/^-+|-+$/g, "");
     if (!slug) return;
-    // #272: no hidden-name collision check any more. It guarded the case
-    // where a name was taken by a row the user couldn't see, which #249
-    // removed — the dropdown now lists the org's whole catalog, so a taken
-    // name is always a name in `languages`, and re-creating one is the
-    // deliberate PUT-over-existing re-scaffold flow (#256 rd-3) rather
-    // than an error. The worker's gate remains the enforcement either way.
-    onCreateLanguage(slug, newLabel.trim());
+    setCreateError(null);
+    // #293 race: until the catalog loads, `languages` is [], so a collision
+    // would classify as `create` and silently overwrite — the exact bug this
+    // guards against. Refuse to classify against a list we don't have yet.
+    if (languagesData === undefined) {
+      setCreateError(
+        "Still loading the language list — try again in a moment."
+      );
+      return;
+    }
+    // #293: a create over an existing slug PUTs a blank scaffold that
+    // overwrites the language's tuning document and unpublishes it. #272
+    // removed the last guard, so it happened silently. #249 lists the org's
+    // whole catalog, so `languages` is authoritative for what names are taken;
+    // edit/publish rights + the target's published state decide whether this
+    // caller may overwrite (confirm first) or the worker would 403 (block).
+    const existingRow = languages.find((l) => l.name === slug);
+    // The collection can lag a just-created slug (its save seeds the detail
+    // cache and upserts the list, but a second create can still race a pending
+    // refetch). If the slug is the row currently open, it definitionally
+    // exists, so route it through confirm rather than a silent re-create even
+    // when the list hasn't caught up (grok rd-5). A freshly created row is a
+    // draft; the worker still gates the write.
+    const existing = existingRow
+      ? { published: isPublished(existingRow) }
+      : selectedLanguage === slug
+        ? { published: false }
+        : null;
+    const action = classifyLanguageCreate(
+      slug,
+      existing,
+      editRights,
+      publishRights
+    );
+    if (action.kind === "blocked") {
+      setCreateError(
+        action.reason === "publish"
+          ? `“${slug}” is a published language and you don’t have publish rights on it, so it can’t be replaced here — replacing it would unpublish it. Ask an admin.`
+          : `A language named “${slug}” already exists in this org, but you don’t have edit rights on it. Pick a different name, or ask a shepherd or admin for access.`
+      );
+      return;
+    }
+    if (action.kind === "confirm") {
+      setOverwriteTarget({ slug, label: newLabel.trim() });
+      return;
+    }
+    // Plain create is fire-and-forget; its errors surface via the page's save
+    // state, not inline here. Swallow the rejection so it isn't unhandled.
+    void Promise.resolve(onCreateLanguage(slug, newLabel.trim())).catch(
+      () => {}
+    );
     setNewName("");
     setNewLabel("");
     setShowCreate(false);
-  }, [newName, newLabel, onCreateLanguage]);
+  }, [
+    newName,
+    newLabel,
+    onCreateLanguage,
+    languages,
+    languagesData,
+    selectedLanguage,
+    editRights,
+    publishRights,
+  ]);
+
+  // Re-scaffolding an existing language is destructive (blank document +
+  // unpublish), so it only runs from the confirmation dialog. Unlike the plain
+  // create path it awaits the write and keeps the dialog open on failure,
+  // rendering the error inline (grok F2 / #102) — the same contract as the
+  // Unpublish/Delete dialogs.
+  const handleConfirmOverwrite = useCallback(() => {
+    if (overwriteTarget === null) return;
+    const { slug, label } = overwriteTarget;
+    return runConfirmedAction(
+      () => Promise.resolve(onCreateLanguage(slug, label)),
+      setOverwriteError,
+      () => {
+        setOverwriteTarget(null);
+        setNewName("");
+        setNewLabel("");
+        setShowCreate(false);
+        setCreateError(null);
+      },
+      "Failed to replace language."
+    );
+  }, [overwriteTarget, onCreateLanguage]);
 
   return (
     <div className="space-y-3">
@@ -657,24 +760,79 @@ export function LanguageSelector({
                 : "Loading language template…"}
             </p>
           )}
+          {createError && (
+            <p className="text-destructive mt-3 text-xs" role="alert">
+              {createError}
+            </p>
+          )}
           <div className="mt-4 flex justify-end gap-2">
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setShowCreate(false)}
+              onClick={() => {
+                setShowCreate(false);
+                setCreateError(null);
+              }}
             >
               Cancel
             </Button>
             <Button
               size="sm"
               onClick={handleCreate}
-              disabled={!newName.trim() || isCreating || !isScaffoldReady}
+              disabled={
+                !newName.trim() ||
+                isCreating ||
+                !isScaffoldReady ||
+                languagesData === undefined
+              }
             >
               {isCreating ? "Creating..." : "Create Draft"}
             </Button>
           </div>
         </div>
       )}
+
+      {/* #293 — a create over an existing language re-scaffolds it (blank
+          document + unpublish). Confirm before that destructive write instead
+          of doing it silently. Plain Button, not AlertDialogAction, to match
+          the file's other destructive dialogs (#102). */}
+      <AlertDialog
+        open={overwriteTarget !== null}
+        onOpenChange={(next) => {
+          if (!next) {
+            setOverwriteTarget(null);
+            setOverwriteError(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Replace “{overwriteTarget?.slug}”?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              A language named “{overwriteTarget?.slug}” already exists.
+              Creating it again replaces its tuning document with a blank
+              scaffold and unpublishes it. This can&rsquo;t be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {overwriteError && (
+            <p className="text-destructive text-sm" role="alert">
+              {overwriteError}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isCreating}>Cancel</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmOverwrite}
+              disabled={isCreating}
+            >
+              Replace and unpublish
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

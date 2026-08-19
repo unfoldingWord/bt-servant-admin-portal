@@ -152,19 +152,35 @@ export function LanguagesPage() {
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
 
-  const serverLabel = languageQuery.data?.label;
+  // Same local-mirror rationale as lastSyncedDoc/Published: the label lives in
+  // the React Query cache, which lags a create/overwrite that changed it. An
+  // autosave must send the label we KNOW we last synced — not a stale
+  // languageQuery.data.label — or a save right after an overwrite that set a
+  // new label reverts it (codex rd-2 P2).
+  const [lastSyncedLabel, setLastSyncedLabel] = useState<string | undefined>(
+    undefined
+  );
 
   // Re-sync from the server *only* when the selection changes — never
   // post-save. The ref tracks the language whose contents we last loaded
   // into local state, so we don't repeatedly overwrite the draft each time
   // the cache emits.
   const syncedNameRef = useRef<string | null>(null);
+  // A STATE mirror of syncedNameRef, used for render-time gating. The ref gives
+  // the sync effect a synchronous guard; the state gives the publish gate a
+  // reactive one. A ref alone can't drive render output: switching to a cached
+  // language whose document/published/label/failure all equal the current
+  // locals makes every setter below a no-op, so nothing re-renders and a
+  // ref-derived flag would stay stale forever (codex rd-5).
+  const [syncedName, setSyncedName] = useState<string | null>(null);
   useEffect(() => {
     if (!selectedLanguage) {
       syncedNameRef.current = null;
+      setSyncedName(null);
       setDraft("");
       setLastSyncedDoc("");
       setLastSyncedPublished(false);
+      setLastSyncedLabel(undefined);
       setLastFailedDoc(null);
       return;
     }
@@ -177,13 +193,23 @@ export function LanguagesPage() {
     setDraft(languageQuery.data.document);
     setLastSyncedDoc(languageQuery.data.document);
     setLastSyncedPublished(languageQuery.data.published ?? false);
+    setLastSyncedLabel(languageQuery.data.label);
     setLastFailedDoc(null);
     syncedNameRef.current = selectedLanguage;
+    setSyncedName(selectedLanguage);
   }, [selectedLanguage, languageQuery.data]);
 
   const isDirty = draft !== lastSyncedDoc;
   const isSaving = saveLanguage.isPending;
   const hasSelection = selectedLanguage !== null && languageQuery.data;
+  // Local editor state is synced to the CURRENT selection. Gate Publish/Unpublish
+  // on this, not on `languageQuery.data?.name === selectedLanguage`: a cache HIT
+  // makes the query name match on the first render after a switch, before the
+  // sync effect above has loaded this language's document/label — so a Publish
+  // in that render would send the PREVIOUS language's draft and label into this
+  // one (codex rd-4 P1). Read from `syncedName` STATE, not the ref, so an
+  // all-no-op sync still re-renders the gate (codex rd-5).
+  const detailReady = syncedName === selectedLanguage;
 
   // Single save path — both auto-save and the manual Save button funnel
   // through here so the lastSyncedDoc bookkeeping stays consistent.
@@ -193,13 +219,18 @@ export function LanguagesPage() {
   const performSave = useCallback(
     (doc: string) => {
       if (!selectedLanguage) return;
+      // The row this save targets, pinned at call time. A save that settles
+      // after a discard-and-switch must not retarget the NEW selection's
+      // shared bookkeeping — check the live selection in the callbacks before
+      // touching lastSyncedDoc/lastFailedDoc (grok rd-5).
+      const target = selectedLanguage;
       saveLanguage.mutate(
         {
-          name: selectedLanguage,
+          name: target,
           // Org pinned at call time — see handleSetDefault.
           org: contextOrg,
           body: {
-            label: serverLabel,
+            label: lastSyncedLabel,
             document: doc,
             // Read published from local state, not the React Query cache —
             // the cache lags a just-completed Publish/Unpublish PUT, so
@@ -209,10 +240,14 @@ export function LanguagesPage() {
         },
         {
           onSuccess: () => {
+            if (useUiStore.getState().selectedLanguage !== target) return;
             setLastSyncedDoc(doc);
             setLastFailedDoc(null);
           },
-          onError: () => setLastFailedDoc(doc),
+          onError: () => {
+            if (useUiStore.getState().selectedLanguage !== target) return;
+            setLastFailedDoc(doc);
+          },
         }
       );
     },
@@ -221,7 +256,7 @@ export function LanguagesPage() {
       lastSyncedPublished,
       saveLanguage,
       selectedLanguage,
-      serverLabel,
+      lastSyncedLabel,
     ]
   );
 
@@ -240,6 +275,19 @@ export function LanguagesPage() {
   useEffect(() => {
     if (!selectedLanguage) return;
     if (saveLanguage.isPending) return;
+    // Local editor state must belong to the current selection. On a
+    // discard-and-switch the selection flips to B in a render where `draft`,
+    // `lastSyncedLabel` and `lastSyncedPublished` are still A's, before the sync
+    // effect loads B — saving in that window PUTs A's document onto B (grok
+    // rd-5). Same gate the publish control uses.
+    if (syncedName !== selectedLanguage) return;
+    // A debounced snapshot that hasn't caught up to `draft` is a value from
+    // the past — writing it would undo an out-of-band change (an overwrite
+    // reset, or a language switch) that already advanced `draft`/lastSyncedDoc.
+    // Same refusal the modes editor extracted as `shouldAutoSaveDraft`
+    // (lib/autosave-gate) after the priority-panel Apply race; grok rd-2 flagged
+    // the identical lag here (overwrite → republish, cross-language draft bleed).
+    if (debouncedDraft !== draft) return;
     if (debouncedDraft === lastSyncedDoc) return;
     if (debouncedDraft === lastFailedDoc) return;
     // Frank rd-2 P2: skip autosave when the user has no edit rights on
@@ -250,20 +298,33 @@ export function LanguagesPage() {
     if (!canEditSelected) return;
     performSave(debouncedDraft);
   }, [
+    draft,
     debouncedDraft,
     saveLanguage.isPending,
     lastSyncedDoc,
     lastFailedDoc,
     performSave,
     selectedLanguage,
+    syncedName,
     canEditSelected,
   ]);
 
   const flushSave = useCallback(() => {
     if (!isDirty || isSaving) return;
     if (!canEditSelected) return;
+    // Same selection-ownership gate as autosave: never flush A's locals onto B
+    // during the render window after a discard-and-switch (grok rd-5).
+    if (syncedName !== selectedLanguage) return;
     performSave(draft);
-  }, [canEditSelected, draft, isDirty, isSaving, performSave]);
+  }, [
+    canEditSelected,
+    draft,
+    isDirty,
+    isSaving,
+    performSave,
+    syncedName,
+    selectedLanguage,
+  ]);
 
   // Block route changes while there are pending edits or an in-flight save.
   // The blocker fires only when navigating to a different pathname (selecting
@@ -355,9 +416,19 @@ export function LanguagesPage() {
       // refuse to save instead of silently committing an empty doc
       // (Frank P2 on PR #106).
       const scaffold = scaffoldQuery.data;
-      if (!scaffold) return;
-      saveLanguage.mutate(
-        {
+      // Reject (not a silent resolve) so the destructive overwrite dialog stays
+      // open and shows the error instead of closing as if it replaced (grok
+      // rd-4). The create button is disabled until the scaffold loads, so this
+      // is defense in depth (Frank P2 on PR #106).
+      if (!scaffold) {
+        return Promise.reject(
+          new Error("The language template isn't loaded yet — try again.")
+        );
+      }
+      // Returned so the selector's overwrite confirmation can await the write
+      // and render failures inline (grok F2 / #102).
+      return saveLanguage
+        .mutateAsync({
           name,
           org: contextOrg,
           body: {
@@ -365,16 +436,42 @@ export function LanguagesPage() {
             document: scaffold.document,
             published: false,
           },
-        },
-        {
-          onSuccess: () => {
-            // #249 — no creator auto-grant to mirror any more: creation
-            // is an ordinary admin write under the worker's admin trump,
-            // and admins read every row through the "*" short-circuit.
-            setSelectedLanguage(name);
-          },
-        }
-      );
+        })
+        .then(() => {
+          // Bail if the ORG context switched during the in-flight PUT: the
+          // discard-and-switch dialog nulls selectedLanguage, and treating that
+          // as "empty editor, land here" would install org A's scaffold and
+          // autosave it onto org B's row (grok rd-6). Only land on the same org.
+          if (useUiStore.getState().contextOrg !== contextOrg) return;
+          // Read the LIVE selection, not the click-time closure value: the user
+          // can switch languages during the in-flight PUT (the switch dialog
+          // offers "discard and switch" while saving), and acting on a stale
+          // `selectedLanguage` would skip the local install for the row now on
+          // screen, or yank the selection off a row they moved to (grok rd-4).
+          const liveSelection = useUiStore.getState().selectedLanguage;
+          // Never re-scaffold onto a DIFFERENT language while one is open:
+          // auto-selecting it would couple the two through the autosave debounce
+          // register and could show a stale cache read over the scaffold just
+          // written (grok rd-2 F2). Leave the selection put; the new language is
+          // in the dropdown either way.
+          if (name !== liveSelection && liveSelection !== null) return;
+          // Otherwise we are landing on `name` — replacing the language being
+          // VIEWED, or selecting the freshly written one from an empty editor.
+          // Install the scaffold state locally and PIN syncedNameRef so the sync
+          // effect won't overwrite it: without this the next keystroke
+          // republishes the old document (grok rd-2 F1), or a stale cache read
+          // for a previously-visited language reloads its old doc over the
+          // scaffold (codex rd-3 P1). The label is mirrored for the same reason
+          // (codex rd-2 P2). (#249 — creation is an ordinary admin write.)
+          setDraft(scaffold.document);
+          setLastSyncedDoc(scaffold.document);
+          setLastSyncedPublished(false);
+          setLastSyncedLabel(label || undefined);
+          setLastFailedDoc(null);
+          syncedNameRef.current = name;
+          setSyncedName(name);
+          if (name !== liveSelection) setSelectedLanguage(name);
+        });
     },
     [contextOrg, saveLanguage, scaffoldQuery.data, setSelectedLanguage]
   );
@@ -394,9 +491,13 @@ export function LanguagesPage() {
       await saveLanguage.mutateAsync({
         name,
         org: contextOrg,
-        body: { label: serverLabel, document: doc, published },
+        body: { label: lastSyncedLabel, document: doc, published },
       });
-      if (isSelected) {
+      // Only bookkeep locals if we're STILL on the row this toggle targeted —
+      // a discard-and-switch during the await would otherwise stamp this row's
+      // published flag and document onto the newly selected language, which the
+      // next autosave then PUTs (grok rd-6). Same live check as performSave.
+      if (useUiStore.getState().selectedLanguage === name) {
         setLastSyncedDoc(doc);
         setLastSyncedPublished(published);
       }
@@ -407,7 +508,7 @@ export function LanguagesPage() {
       languageQuery.data,
       saveLanguage,
       selectedLanguage,
-      serverLabel,
+      lastSyncedLabel,
     ]
   );
 
@@ -533,6 +634,8 @@ export function LanguagesPage() {
               selectedLanguage={selectedLanguage}
               onSelectLanguage={handleSelectLanguage}
               onCreateLanguage={handleCreateLanguage}
+              editRights={editRights}
+              publishRights={publishRights}
               onDeleteLanguage={handleDeleteLanguage}
               onSetPublished={handleSetPublished}
               isCreating={saveLanguage.isPending}
@@ -541,7 +644,7 @@ export function LanguagesPage() {
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
               canCreate={canCreate}
-              canPublishSelected={canPublishSelected}
+              canPublishSelected={canPublishSelected && detailReady}
               canDeleteSelected={canDeleteSelected}
               isScaffoldReady={scaffoldQuery.isSuccess}
               scaffoldError={scaffoldQuery.isError}

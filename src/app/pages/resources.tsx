@@ -12,6 +12,8 @@ import {
 import { safeResourceHref } from "@/lib/resource-href";
 import {
   buildServerNameMap,
+  collapseDisplayText,
+  resolveResourceItemDisplay,
   resolveServerLabel,
   type ServerNameMap,
 } from "@/lib/resource-servers";
@@ -82,7 +84,13 @@ function ServerChip({
       {server.status === "unsupported" && <span>no resource listing</span>}
       {server.status === "error" && (
         <>
-          <span title={server.error}>failed to respond</span>
+          {/* server.error is untrusted MCP-relayed text; collapse control and
+              format characters out of the tooltip (#294), matching the map. */}
+          <span
+            title={server.error ? collapseDisplayText(server.error) : undefined}
+          >
+            failed to respond
+          </span>
           <button
             type="button"
             className="hover:text-foreground inline-flex items-center gap-1 underline underline-offset-2"
@@ -138,24 +146,40 @@ function ResourceRow({
   // Scheme-guarded: item.url is third-party MCP server output relayed by
   // the worker — see lib/resource-href.ts.
   const href = safeResourceHref(item.url);
+  // label / name / organization / version are untrusted MCP-relayed text:
+  // collapse control and format characters so a value can't span rows or
+  // smuggle invisible width (#294). The load-bearing title also gets a CSS
+  // width bound with the full text kept in the DOM (title tooltip).
+  const display = resolveResourceItemDisplay(item);
   const meta = [
-    item.organization,
-    item.version && `v${item.version}`,
+    display.organization,
+    display.version && `v${display.version}`,
     item.articleCount !== undefined &&
       `${String(item.articleCount)} article${item.articleCount === 1 ? "" : "s"}`,
   ].filter(Boolean);
 
   return (
     <li className="flex flex-wrap items-baseline gap-x-2 gap-y-1 py-2">
-      <span className="text-foreground text-sm font-medium">
-        {item.label || item.name}
+      <span
+        className="text-foreground max-w-full min-w-0 truncate text-sm font-medium"
+        title={display.title}
+      >
+        {display.title}
       </span>
-      {item.label && (
-        <code className="text-muted-foreground text-[11px]">{item.name}</code>
+      {display.secondaryName && (
+        <code
+          className="text-muted-foreground max-w-[16rem] min-w-0 truncate text-[11px]"
+          title={display.secondaryName}
+        >
+          {display.secondaryName}
+        </code>
       )}
       <ServerBadge serverId={item.serverId} serverNames={serverNames} />
       {meta.length > 0 && (
-        <span className="text-muted-foreground text-xs">
+        <span
+          className="text-muted-foreground max-w-full min-w-0 truncate text-xs"
+          title={meta.join(" · ")}
+        >
           {meta.join(" · ")}
         </span>
       )}
