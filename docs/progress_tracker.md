@@ -6,7 +6,7 @@
 
 **Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **2026-07-31 was the first ultracode batch day**: three features shipped same-day through the new batch pipeline (parallel implement lanes → independent verify → dual external review via **codex + grok CLIs** → authorized merges) — **#209 group-chat toggle (PR #267), #261 MCP topology map (PR #268), #249 language admin trump + org-wide visibility (PR #271, −888 net lines via #247 carve-out deletion)**. #249 went design→decided→spec→shipped in one day after Elsy's morning +1. Review loops earned their keep: 5 confirmed defects fixed post-verification, including a real BFF authz gap (`requires_group` invisible to the verb-rights gate) caught only by the deep-tree lens in _untouched_ code. #195 premise-check stopped a half-feature; exact worker ask filed as worker#346. #254 eval harness built (9 scenarios / 32 checks over baruch's real prompt assembly, `claude-sonnet-4-6` vs `claude-opus-4-8`); blocked only on an API credential (Ian's lane). **2026-08-10 was ultracode day 2**: #277 resource prioritization went design→decided→built→dual-external-approved same day (**PR #282**, awaiting merge) via a mechanism pivot that un-gated it from worker#257 item 2 — the ordering persists as a generated block in the mode document's `## Tool Guidance` section (the document IS the injection; zero worker changes). Same session: #269/#279 root-caused by live MCP probes as a worker adapter gap (worker#354 filed — TC Helps has enumeration on both endpoints; the issues' premises were wrong), #278 scoped with a recommendation (global server "library" key; partner orgs currently get zero MCP fan-out even in chat), and the #264 five-movements mode document drafted from the live obs-5m-mcp server and posted for Tim/Elsy review.
 **2026-08-11 was ultracode day 3 — the fastest full cycle yet**: Ian settled the worker#236 org-default-language contract in the morning; by mid-afternoon **four PRs were built, adversarially verified, dual-external-reviewed to convergence, and merged** — #288 (#286 org default language + #272 cleanups, contract-first against the not-yet-implemented worker route), #289 (#230 follow-up: one server-attribution join across all three resource surfaces, emission bytes frozen), #290 (#281 outside-priority disclosure riding the #277 Tool Guidance block, zero worker changes), #287 (gitleaks-action v2→v3, the last Node-20 action runtime). Review pipeline: per-lane adversarial verify → 3 codex+grok rounds → final delta pass; ~20 confirmed findings fixed, including a dual-confirmed P1 data-loss path in orphan repair, a CommonMark lazy-continuation bug that would have inverted the disclosure's meaning for the model, an Apply/autosave revert race, and a grok-forced design reversal (emission frozen, hardening display-only). Also merged same morning: **PR #282 (#277) and the 08-10 docs PR**; Elsy's dupe re-files #284/#285 got diagnosis cross-links; follow-ups filed as #293/#294.
-**Last Updated**: 2026-08-13
+**Last Updated**: 2026-08-19
 **Demo target**: June 9 (passed) — outcome to be summarized
 **Last prod deploy**: **2026-08-05 evening — the promotion completed.** Ian merged the version bump (PR #275, `9c7f2a3`, 1.10.4 → 1.11.0, tag `v1.11.0`) and dispatched Deploy Production the same evening (run `31041497803`, succeeded 19:53 UTC) — prod is at **v1.11.0**. That closed out the promotion coordinated earlier that day: sign-off in standup (Seth + Elsy: no objection), Elsy's two staging verifications same afternoon (#249 4/4 scenarios, #260 3/3), and the **worker prod deploy (2.29.0 → 2.37.0) at 17:03 UTC**. Prod worker was confirmed to carry worker#270's `requires_group` merge semantics since v2.27.0, and 2.37.0 brings worker#257, un-degrading the Resources panel/topology map. _(Amended 2026-08-10: at EOD writing time the portal dispatch was still pending; it ran ~an hour later.)_
 
@@ -107,6 +107,69 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-08-19 — #293 + #294 shipped (PR #302); 6-round codex+grok review closed ~15 editor-state data-integrity bugs
+
+**Context entering the session:** SOD (2026-08-18; date rolled to 08-19 mid-session) found no open PRs, CI green, 6 issues assigned. Interactive session driven by Seth: processed Benjamin's answers to the #264 open questions, answered two of Elsy's prod questions, then re-scanned the board and picked up **#293 + #294** as the cleanest available portal lane.
+
+**Completed:**
+
+- **#293 shipped (PR #302, squash `dfb7011`).** Confirm before a create overwrites an existing language — post-#272 the create path silently PUT a blank scaffold that wiped the tuning document and unpublished it. New pure `classifyLanguageCreate` → create / blocked(edit|publish) / confirm, verified against the worker's `computeRequiredVerbsForPut` (overwriting a PUBLISHED row needs publish rights too, since create sends `published:false`). Destructive confirm dialog (plain-Button #102), catalog-load guard, role-aware block copy.
+- **#294 shipped (same PR).** Collapsed the last raw untrusted MCP-relayed text on the resources page — row label/name/organization/version + the ServerChip error tooltip — via a new tested `resolveResourceItemDisplay`, with CSS width bounds on title/code/meta.
+- **6-round codex+grok review — ~15 real data-integrity bugs fixed.** Every one in the Languages editor's mutation/switch/cache state machine the overwrite-reset perturbed, **never** the #293/#294 core: republish-on-overwrite, cross-language draft bleed on discard-and-switch, stale-cache reselect, label-mirror revert, the `detailReady` ref-not-reactive trap, publish/autosave bookkeeping retargeting after a switch, the collection-cache upsert race, org-switch during create. Fixed at the root where possible: cache seed+cancel on save (`setQueryData` the detail, upsert+cancel the collection), a shared `syncedName` STATE gate reused across publish/autosave/flush, live-selection reads via `useUiStore.getState()` in async settles. 906 tests green; CI green on every push. Harness note: codex reviews the committed git diff, **grok reads files from disk** — don't edit the worktree while grok runs (cost 2 disturbed runs; captured in memory).
+- **#264 unblocked (analysis).** Benjamin answered the 7 open questions (hybrid tool set; keep translation-helps-mcp#34 workaround; drop "only mode"). Ran the two gating live probes against `obs-5m-mcp`: `language=id` returns **structured** per-panel questions (server converts self-hosted PDF → markdown; one `storyTitle` field mis-maps), and `reference="1:0"` = the **intro** (matches the draft, not the current mode's "frame 0 = title"). Only Benjamin's practitioner en_obs_tf source-check remains before assembling the integrated mode document. Reply drafted; Seth posted.
+- **Elsy's prod questions answered.** The add-user modal's Organization field + Super-admin checkbox are super-admin-only by design (gated on `session.user.isSuperAdmin`); not version skew (shipped v1.10.2 < prod v1.11.0). From her prod user-list view (no Org column) Seth is **not** a prod super-admin, and the "Super" badge is viewer-gated so the list can't reveal who is — bootstrapping a prod super-admin needs the X-Admin-Secret path (the `create-org-admin` CLI can't; no `isSuperAdmin` field). Left with Seth.
+
+**Merged + deployed:** PR #302 **admin-squash-merged** on Seth's word (`dfb7011`) → #293/#294 auto-closed → staging deploys on merge. Remote branch deleted. (`main` is at v1.12.0 via the separate #300 bump; prod still v1.11.0.)
+
+**Follow-ups filed:**
+
+- **#303** — the systemic residual from #302's review: (1) a single shared discard-and-switch **mutation-ownership guard** (replacing the per-function guards #302 added) + audit `handleDeleteLanguage`/`handleSetDefault`; (2) the **cross-client TOCTOU** (another tab/user creates the slug after this client's catalog loaded → still overwrites) is not portal-fixable and needs a **bt-servant-worker create-only / conditional-PUT endpoint** (Ian's lane; both reviewers agree it's inherent).
+
+**Blockers:**
+
+- **#303** — worker create-only endpoint (Ian) + a systematic portal mutation-safety pass.
+- **#264** — Benjamin's practitioner en_obs_tf source-check before assembling the integrated mode doc.
+
+**Next Steps:**
+
+- **#292 + #278** — MCP server management UI + global-pool refactor as one design slice; the cleanest available portal work.
+- Watch Ian: the #303 worker create-only endpoint, worker#354 (#269/#279).
+- **#264** assembly once Benjamin's source-check lands.
+
+### 2026-08-19 evening — batch: #303 Part 1 (PR #305) + #198 import (PR #306) shipped through a 6-round local codex+grok loop; triage + worker issues filed
+
+**Context entering the session:** SOD (clean tree, up to date). Checked GitHub for Elsy pings — she'd left a **#277** staging finding (resource-priority ranks set on `translation Coach`, but chat still returned UST/ULT + Greek defaults → no observable effect). Posted the Weds 1pm written standup.
+
+**Cleaned the batch backlog first (evidence over assumption).** Three read-only investigations corrected a false SOD note: nearly every hot MCP item is **worker-side, not portal-buildable** — the portal is a pure read-only proxy over the worker's aggregated-resources endpoint. #278 (global pool), #280 (PTX removal), #279/#284/#285 (resource enumeration) are all worker/adapter concerns. That collapsed a big-looking batch into **two real portal lanes** + triage. Saved as memory [[project_mcp_issues_are_worker_side]].
+
+**Shipped (both squash-merged to main → staging auto-deployed):**
+
+- **#305 → #303 Part 1** (`stillOwnsSelection` unified mutation-ownership guard for the Languages editor; adds the org dimension the per-function #302 guards missed, fixes the `handleDeleteLanguage` closure read). External review: both codex rounds + grok round-1 blessed the pair-equality core as a strict improvement. grok's deep lens found a **leave-and-return-during-save re-entry data-loss race**; my first fix (a selection-generation token) was itself flawed (keyed to identity not re-anchor → could revert a publish toggle), so I **reverted it** ([[feedback_converge_by_deleting_mechanism]]) and shipped the clean core. Deeper race → **#307**.
+- **#306 → #198** (mode-config import — inverse of #187 export; new `parseModeImport` + Import button/overwrite-confirm/file-input, composes on the existing PUT). **6 review rounds.** codex ended **clean**; grok's deep lens caught a cascade of silent-data-loss P1s codex + my internal review missed (cross-org cache poisoning, stale-inactive-cache reverts, dirty-autosave revert). Round 3's two P1s → **deleted** the two mechanisms generating them (shared cache-seed + post-import auto-switch); round 5's edges → **constrained** the feature (import requires a clean idle editor, org-pinned, fail-closed on unloaded list). Residual near-unreachable (modal-picker) P2s + P3s → **#308**.
+
+**Review harness:** ran codex + grok **locally** per [[reference_review_harness_invocation]] (`codex exec review --base origin/main -c sandbox_mode=danger-full-access`; `grok --prompt-file … --allow read_file --allow grep --allow list_dir --cwd .`). Waited for BOTH reviewers before editing each round; grok reads disk. The asymmetry paid off repeatedly — grok found real P1s on rounds where codex was clean.
+
+**Triage (portal):** closed **#279** (worker-side, resolved behind #269) and **#285** (dup of #284); annotated **#284** (FIA has no listing tool — worker/adapter side, left for Ian).
+
+**Worker issues filed (Ian's lane) + cross-linked:**
+
+- **bt-servant-worker#365** — atomic create-only / conditional-PUT endpoint for languages + modes (= **#303 Part 2**; commented on #303).
+- **bt-servant-worker#366** — resource-priority Tool Guidance block has no observable chat effect (= **#277** adherence; commented on #277). Portal side of #277 verified correct (block IS spliced into the mode document); this is worker/prompt-assembly.
+
+**Milestones:** neither repo uses GitHub milestones (0 defined in portal + worker) — progress is tracked here + via epics/labels, so nothing to milestone.
+
+**Blockers / follow-ups:**
+
+- **#303** stays open pending worker#365 (create-only endpoint) + a systematic portal mutation-safety pass (#307).
+- **#308** — mode-import residual P2s (re-validate collision at confirm; label-sync/import dialog conflict) + P3s.
+- **#277** — awaiting worker#366 (adherence trace); confirm Elsy actually clicked Apply on staging.
+
+**Next Steps:**
+
+- **#307** — the languages re-entry race, as a systematic pass (the deferred gen-token/re-anchor design).
+- **#292 + #278** — MCP server management UI + global-pool, once the worker exposes a mutable MCP-server API (both are worker-gated per [[project_mcp_issues_are_worker_side]]).
+- Watch Ian: worker#365, worker#366, worker#354.
 
 ### 2026-08-13 — #264 OBS mode-integration diff delivered; worker v2.39.0 (#255) shipped overnight
 
