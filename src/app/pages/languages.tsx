@@ -16,7 +16,10 @@ import {
 } from "@/lib/language-error-surface";
 import { LanguageForbiddenError } from "@/lib/languages-api";
 import {
+  classifyMutationSettle,
+  reconcileReanchor,
   stillOwnsSelection,
+  type SavedRow,
   type SelectionTarget,
 } from "@/lib/mutation-ownership";
 import {
@@ -186,6 +189,47 @@ export function LanguagesPage() {
   // locals makes every setter below a no-op, so nothing re-renders and a
   // ref-derived flag would stay stale forever (codex rd-5).
   const [syncedName, setSyncedName] = useState<string | null>(null);
+  // A generation counter bumped ONLY where the sync effect actually re-anchors
+  // the editor's locals (the two branches below). A mutation captures it at
+  // call time and re-checks it at settle (`classifyMutationSettle`): the product
+  // lets the user leave a language and return while a PUT is in flight, and the
+  // return re-anchors locals to the reloaded cache, so a settling mutation whose
+  // (org, language) pair matches again must NOT stamp its captured (now stale)
+  // result — it must reload from the post-PUT cache instead (#307). It is bumped
+  // on the RE-ANCHOR, not on selection identity: a first attempt bumping it on
+  // every [contextOrg, selectedLanguage] change was reverted (b3b759d → 9a10b51)
+  // because a warm-cache return early-returns below without re-anchoring, so the
+  // generation moved while the locals stayed put — a false "resync" that staled
+  // lastSyncedPublished and reverted the toggle it meant to protect.
+  const syncGenRef = useRef(0);
+  // Live mirrors of `draft` and `lastSyncedDoc`, read by `reconcileAfterReentry`
+  // when a mutation settles: the callback runs after an await, so a render-time
+  // closure over these would be stale. Assigned in render (not a hook) because
+  // they only feed an async callback, never render output.
+  const draftRef = useRef("");
+  draftRef.current = draft;
+  const lastSyncedDocRef = useRef("");
+  lastSyncedDocRef.current = lastSyncedDoc;
+  // Reconcile the editor's locals when a successful mutation settles onto a
+  // selection whose locals were re-anchored mid-flight ("resync"). Applied
+  // SYNCHRONOUSLY in the settle callback — not bounced through the sync effect —
+  // so the next render already carries the reconciled locals and no same-commit
+  // autosave can PUT the pre-reconcile draft over the save (grok P2). Advances
+  // the synced baseline to what was saved (kills the #307 doc/publish revert)
+  // and reloads the draft only if the user hasn't typed since the re-anchor
+  // (codex P1 — otherwise their newer draft is kept and autosave flushes it).
+  const reconcileAfterReentry = useCallback((saved: SavedRow) => {
+    const r = reconcileReanchor(
+      draftRef.current,
+      lastSyncedDocRef.current,
+      saved
+    );
+    if (r.nextDraft !== null) setDraft(r.nextDraft);
+    setLastSyncedDoc(r.nextSyncedDoc);
+    setLastSyncedPublished(r.nextPublished);
+    setLastSyncedLabel(r.nextLabel);
+    setLastFailedDoc(null);
+  }, []);
   useEffect(() => {
     if (!selectedLanguage) {
       syncedNameRef.current = null;
@@ -195,6 +239,8 @@ export function LanguagesPage() {
       setLastSyncedPublished(false);
       setLastSyncedLabel(undefined);
       setLastFailedDoc(null);
+      // Locals were reset — any in-flight mutation captured a stale generation.
+      syncGenRef.current += 1;
       return;
     }
     // Wait for the query data to arrive AND match the current selection
@@ -210,6 +256,10 @@ export function LanguagesPage() {
     setLastFailedDoc(null);
     syncedNameRef.current = selectedLanguage;
     setSyncedName(selectedLanguage);
+    // Locals were re-anchored to this row's cache — move the generation so any
+    // mutation that was in flight across this re-anchor resyncs instead of
+    // stamping its captured result (#307).
+    syncGenRef.current += 1;
   }, [selectedLanguage, languageQuery.data]);
 
   const isDirty = draft !== lastSyncedDoc;
@@ -241,28 +291,59 @@ export function LanguagesPage() {
         org: contextOrg,
         language: selectedLanguage,
       };
+      // Pinned with the target: a leave-and-return to the same pair while this
+      // PUT is in flight re-anchors the locals and moves the generation, so the
+      // settle callbacks reconcile from what was saved instead of stamping the
+      // stale draft back over the save (#307).
+      const targetGen = syncGenRef.current;
+      // The exact body we are about to save, captured at call time so the resync
+      // path can advance the baseline to it without re-reading state that the
+      // re-anchor may have moved.
+      const saved: SavedRow = {
+        document: doc,
+        // Read published from local state, not the React Query cache — the
+        // cache lags a just-completed Publish/Unpublish PUT, so reading from
+        // `serverPublished` here would silently revert it.
+        published: lastSyncedPublished,
+        label: lastSyncedLabel,
+      };
       saveLanguage.mutate(
         {
           name: selectedLanguage,
           // Org pinned at call time — see handleSetDefault.
           org: contextOrg,
-          body: {
-            label: lastSyncedLabel,
-            document: doc,
-            // Read published from local state, not the React Query cache —
-            // the cache lags a just-completed Publish/Unpublish PUT, so
-            // reading from `serverPublished` here would silently revert it.
-            published: lastSyncedPublished,
-          },
+          body: saved,
         },
         {
           onSuccess: () => {
-            if (!stillOwnsSelection(target, liveSelectionTarget())) return;
+            const action = classifyMutationSettle(
+              target,
+              liveSelectionTarget(),
+              targetGen,
+              syncGenRef.current
+            );
+            // resync: locals were re-anchored mid-flight; advance the baseline
+            // to what we saved (keeping a post-re-entry draft) rather than
+            // stamping `doc` onto locals whose `draft` no longer matches it,
+            // which would leave the row dirty and autosave the stale draft.
+            if (action === "resync") return reconcileAfterReentry(saved);
+            if (action === "skip") return;
             setLastSyncedDoc(doc);
             setLastFailedDoc(null);
           },
           onError: () => {
-            if (!stillOwnsSelection(target, liveSelectionTarget())) return;
+            // Only pause autosave on the failed doc if we still own the pair
+            // AND never left it — no server write happened, so there is nothing
+            // to reconcile on a re-anchor; treat resync like skip.
+            if (
+              classifyMutationSettle(
+                target,
+                liveSelectionTarget(),
+                targetGen,
+                syncGenRef.current
+              ) !== "apply"
+            )
+              return;
             setLastFailedDoc(doc);
           },
         }
@@ -270,6 +351,7 @@ export function LanguagesPage() {
     },
     [
       contextOrg,
+      reconcileAfterReentry,
       lastSyncedPublished,
       saveLanguage,
       selectedLanguage,
@@ -442,6 +524,11 @@ export function LanguagesPage() {
           new Error("The language template isn't loaded yet — try again.")
         );
       }
+      // Pinned before the PUT — see performSave/handleSetPublished. If the user
+      // leaves and returns to the row being created while this write is in
+      // flight, the generation moves and the re-entry install below defers to a
+      // cache reload instead of stamping the scaffold over a re-anchor (#307).
+      const targetGen = syncGenRef.current;
       // Returned so the selector's overwrite confirmation can await the write
       // and render failures inline (grok F2 / #102).
       return saveLanguage
@@ -472,6 +559,21 @@ export function LanguagesPage() {
           // written (grok rd-2 F2). Leave the selection put; the new language is
           // in the dropdown either way.
           if (name !== liveSelection && liveSelection !== null) return;
+          // Re-entry of the open row during the create PUT: the locals were
+          // re-anchored (generation moved). Advance the baseline to the created
+          // row rather than stamping the scaffold we captured, which could sit
+          // stale under a draft the return re-anchored (#307). Only for the
+          // overwrite path (name === live); the empty-editor landing
+          // (live === null) keeps selecting the new slug below, which drives the
+          // sync effect to adopt the cache.
+          if (name === liveSelection && targetGen !== syncGenRef.current) {
+            reconcileAfterReentry({
+              document: scaffold.document,
+              published: false,
+              label: label || undefined,
+            });
+            return;
+          }
           // Otherwise we are landing on `name` — replacing the language being
           // VIEWED, or selecting the freshly written one from an empty editor.
           // Install the scaffold state locally and PIN syncedNameRef so the sync
@@ -487,10 +589,22 @@ export function LanguagesPage() {
           setLastFailedDoc(null);
           syncedNameRef.current = name;
           setSyncedName(name);
+          // This install re-anchors the locals just like the sync effect, so
+          // move the generation too — otherwise a mutation captured before the
+          // install would wrongly "apply" over the scaffold (grok P3: the third
+          // re-anchor path). Unreachable via the UI today (create/save/publish
+          // share one pending mutation), but the invariant now holds uniformly.
+          syncGenRef.current += 1;
           if (name !== liveSelection) setSelectedLanguage(name);
         });
     },
-    [contextOrg, saveLanguage, scaffoldQuery.data, setSelectedLanguage]
+    [
+      contextOrg,
+      reconcileAfterReentry,
+      saveLanguage,
+      scaffoldQuery.data,
+      setSelectedLanguage,
+    ]
   );
 
   const handleSetPublished = useCallback(
@@ -505,18 +619,40 @@ export function LanguagesPage() {
       // await + render inline errors (#102).
       const isSelected = name === selectedLanguage;
       const doc = isSelected ? draft : (languageQuery.data?.document ?? "");
+      // Capture the target AND the generation BEFORE the await — `name`/
+      // `contextOrg` are call-time values, and the generation pins "this exact
+      // visit" so a leave-and-return to the same pair mid-PUT resyncs rather
+      // than stamps (#307; the pre-await capture also closes the #305 P3 where
+      // the target was read after the await).
+      const target: SelectionTarget = { org: contextOrg, language: name };
+      const targetGen = syncGenRef.current;
       await saveLanguage.mutateAsync({
         name,
         org: contextOrg,
         body: { label: lastSyncedLabel, document: doc, published },
       });
       // Only bookkeep locals if we're STILL on the (org, language) this toggle
-      // targeted — a discard-and-switch, or an org switch to a namespace that
-      // has the same slug, would otherwise stamp this row's published flag and
-      // document onto the newly selected language, which the next autosave then
-      // PUTs (grok rd-6). Same unified gate as performSave (#303).
-      const target: SelectionTarget = { org: contextOrg, language: name };
-      if (stillOwnsSelection(target, liveSelectionTarget())) {
+      // targeted AND haven't left-and-returned since — a discard-and-switch, an
+      // org switch to a same-slug namespace, or a re-entry would otherwise stamp
+      // this row's published flag and document onto the current selection, which
+      // the next autosave then PUTs (grok rd-6 + re-entry #307). Same unified
+      // gate as performSave (#303).
+      const action = classifyMutationSettle(
+        target,
+        liveSelectionTarget(),
+        targetGen,
+        syncGenRef.current
+      );
+      if (action === "resync") {
+        // The publish PUT succeeded; advance the baseline to the new flag so a
+        // post-re-entry autosave can't revert it, keeping any draft the user
+        // typed after returning (codex P1 / grok P2).
+        reconcileAfterReentry({
+          document: doc,
+          published,
+          label: lastSyncedLabel,
+        });
+      } else if (action === "apply") {
         setLastSyncedDoc(doc);
         setLastSyncedPublished(published);
       }
@@ -524,6 +660,7 @@ export function LanguagesPage() {
     [
       contextOrg,
       draft,
+      reconcileAfterReentry,
       languageQuery.data,
       saveLanguage,
       selectedLanguage,
