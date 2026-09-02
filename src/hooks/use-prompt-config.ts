@@ -116,10 +116,15 @@ export interface ModeSaveTarget {
    * releases (codex+grok #315 rd-1). A seed done from the mutate-level
    * callback lands too late.
    *
+   * Also set by the label-sync PUT (#308): the label is not a page-local
+   * tracker — every editor PUT re-asserts `serverLabel` from the per-mode
+   * cache — so that cache must carry the new label before `isPending` drops
+   * or the next save reverts it.
+   *
    * Absent for the editor's ordinary saves (autosave, flag toggles, priority
-   * apply, label sync): those target the SELECTED mode, whose trackers are
-   * advanced from the response by the page, and #306 deliberately kept the
-   * shared save path free of cache seeding.
+   * apply): those target the SELECTED mode, whose trackers are advanced from
+   * the response by the page, and #306 deliberately kept the shared save
+   * path free of cache seeding.
    */
   seed?: true;
 }

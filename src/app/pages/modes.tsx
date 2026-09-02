@@ -534,8 +534,9 @@ export function ModesPage() {
   // create path and the overwrite-confirm dialog. Participates in the same
   // synchronous save lock as every other save path (#209 serialization), and
   // sends the always-explicit published/requires_group pair the worker needs
-  // (it has no partial update). Carries `seed: { org }` so the hook seeds the
-  // imported mode's own per-mode + list caches from the authoritative PUT
+  // (it has no partial update). Carries `seed: true` (org in the variables)
+  // so the hook seeds the imported mode's own per-mode + list caches from the
+  // authoritative PUT
   // response INSIDE its awaited onSuccess — i.e. before the lock below is
   // released and before `saveMode.isPending` drops. Without the seed a later
   // select of an overwritten-but-inactive mode hydrates the pre-import cache
@@ -608,7 +609,7 @@ export function ModesPage() {
   const finishImport = useCallback(
     (mode: ParsedModeImport, saved: PromptMode, importOrg: string | null) => {
       // The imported mode's own per-mode + list caches were seeded by the
-      // save hook (`seed: { org }` in runImport) before the PUT settled, so by
+      // save hook (`seed: true` in runImport) before the PUT settled, so by
       // here the live list already classifies this slug as `existing`.
 
       // #308 — a rename's "Update the display name too?" prompt holds the
@@ -1315,6 +1316,14 @@ export function ModesPage() {
           const saved = await saveMode.mutateAsync({
             name: target.name,
             org,
+            // The label is NOT a local tracker — every other PUT re-asserts
+            // `serverLabel` straight from the per-mode cache — so seed the
+            // cache from this response before `isPending` drops. Otherwise
+            // the next autosave / flag toggle / Apply would send the stale
+            // pre-rename label and silently undo this update until the
+            // invalidate refetch landed (grok #315 rd-3). The list upsert
+            // also repaints the dropdown with the new name at once.
+            seed: true,
             body: {
               label: nextLabel,
               description: target.description,
