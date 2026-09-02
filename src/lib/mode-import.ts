@@ -190,7 +190,9 @@ interface ParsedFrontmatter {
 }
 
 function parseFrontmatter(frontmatterLines: string[]): ParsedFrontmatter {
-  const scalars: Record<string, string> = {};
+  // Null-prototype so an untrusted key like `__proto__` or `constructor` is
+  // an ordinary own property, never a prototype write or an inherited read.
+  const scalars: Record<string, string> = Object.create(null);
   const aliases: string[] = [];
 
   for (let i = 0; i < frontmatterLines.length; i++) {

@@ -299,6 +299,27 @@ describe("parseModeImport — document body edge cases", () => {
 // #308 P3 — the "never throws" contract. The parser body is pure string work
 // with no reachable throw through its public inputs, so the only way to
 // exercise the wrapper is to make a host primitive fail underneath it.
+describe("parseModeImport — hostile frontmatter keys", () => {
+  it("treats __proto__ / constructor as ordinary ignored keys", () => {
+    const raw = [
+      "---",
+      "__proto__: polluted",
+      "constructor: x",
+      "name: safe",
+      "export_version: 1",
+      "---",
+      "",
+      "doc",
+    ].join("\n");
+    const result = parseModeImport(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode.name).toBe("safe");
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call({}, "polluted")).toBe(false);
+  });
+});
+
 describe("parseModeImport — never throws", () => {
   afterEach(() => {
     vi.restoreAllMocks();

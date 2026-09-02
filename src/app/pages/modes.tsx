@@ -52,7 +52,6 @@ import {
   useRenameMode,
   useRetireMode,
   useSaveMode,
-  useSeedSavedMode,
 } from "@/hooks/use-prompt-config";
 import type { MarkdownHeading } from "@/types/markdown";
 import type { PromptMode } from "@/types/prompt-override";
@@ -119,7 +118,6 @@ export function ModesPage() {
   const modesQuery = useModes(contextOrg);
   const modeQuery = useMode(selectedMode, contextOrg);
   const saveMode = useSaveMode(contextOrg);
-  const seedSavedMode = useSeedSavedMode();
   const readModeList = useReadModeList();
   const deleteMode = useDeleteMode(contextOrg);
   const renameMode = useRenameMode(contextOrg);
@@ -525,7 +523,13 @@ export function ModesPage() {
   // create path and the overwrite-confirm dialog. Participates in the same
   // synchronous save lock as every other save path (#209 serialization), and
   // sends the always-explicit published/requires_group pair the worker needs
-  // (it has no partial update).
+  // (it has no partial update). Carries `seed: { org }` so the hook seeds the
+  // imported mode's own per-mode + list caches from the authoritative PUT
+  // response INSIDE its awaited onSuccess — i.e. before the lock below is
+  // released and before `saveMode.isPending` drops. Without the seed a later
+  // select of an overwritten-but-inactive mode hydrates the pre-import cache
+  // and the next save reverts the import, and a same-slug re-import before
+  // the list refetch lands would classify as a create (grok #306 rd-4/5).
   const runImport = useCallback(
     (mode: ParsedModeImport, org: string | null) => {
       // A GATE, not just a counter (#209 contract, mirrors handleSetPublished).
@@ -562,6 +566,7 @@ export function ModesPage() {
             published: mode.published,
             requires_group: mode.requires_group,
           },
+          seed: { org },
         })
         .finally(() => {
           inFlightSavesRef.current -= 1;
@@ -571,26 +576,18 @@ export function ModesPage() {
   );
 
   const finishImport = useCallback(
-    async (
-      mode: ParsedModeImport,
-      saved: PromptMode,
-      importOrg: string | null
-    ) => {
-      // Seed the imported mode's OWN per-mode cache with the authoritative PUT
-      // response, org pinned to the org the import targeted. `useSaveMode` only
-      // invalidates (active-refetch), so without this a later select of an
-      // overwritten-but-inactive mode hydrates the pre-import cache and the next
-      // save reverts the import; and the same-mode server-label read would stay
-      // stale until a refetch (grok #306 rd-4). Seeded by the paths that name
-      // their own target (import, create) — never on the shared save hook.
-      await seedSavedMode(mode.name, importOrg, saved);
+    (mode: ParsedModeImport, saved: PromptMode, importOrg: string | null) => {
+      // The imported mode's own per-mode + list caches were seeded by the
+      // save hook (`seed: { org }` in runImport) before the PUT settled, so by
+      // here the live list already classifies this slug as `existing`.
 
       // #308 — a rename's "Update the display name too?" prompt holds the
       // rename response as a pre-import snapshot of this slug's document;
       // confirming it after the import would PUT that snapshot over what was
       // just imported. The import is the later, stronger intent: retire the
-      // prompt for this slug. Functional update, because this runs in an
-      // async continuation where the render closure's `labelSync` can be
+      // prompt for this slug — FIRST, before anything else in this
+      // continuation yields (grok #315 rd-1). Functional update, because this
+      // runs after an await, where the render closure's `labelSync` can be
       // stale. (The dialog re-initializes its value/error on every open, so
       // only the gate needs clearing.) Name equality suffices: the prompt
       // always belongs to the live org — the org-change effect clears it —
@@ -647,7 +644,7 @@ export function ModesPage() {
         `Imported “${mode.name}” — select it from the mode list to edit.${aliasNote}`
       );
     },
-    [applyLastSyncedFlags, seedSavedMode]
+    [applyLastSyncedFlags]
   );
 
   const handleImportFileChange = useCallback(
@@ -736,7 +733,7 @@ export function ModesPage() {
       // opened, enforced above), so finishImport can refuse cross-org hydration.
       try {
         const saved = await runImport(result.mode, startOrg);
-        await finishImport(result.mode, saved, startOrg);
+        finishImport(result.mode, saved, startOrg);
       } catch (err) {
         setImportError(err instanceof Error ? err.message : "Import failed.");
       }
@@ -785,7 +782,7 @@ export function ModesPage() {
           throw new Error(decision.reason);
         }
         const saved = await runImport(mode, org);
-        await finishImport(mode, saved, org);
+        finishImport(mode, saved, org);
       },
       setImportConfirmError,
       () => setPendingImport(null),
@@ -868,6 +865,15 @@ export function ModesPage() {
       saveMode.mutate(
         {
           name,
+          // #308 — seed the per-mode AND list caches from the PUT response, as
+          // clone/rename/retire/import already do. Done by the hook INSIDE its
+          // awaited onSuccess, so the row is in the live list BEFORE the lock
+          // below releases and before `isPending` re-enables Import: a
+          // same-slug import in that gap would otherwise classify as a create
+          // and clobber the new mode with no confirm (codex+grok #315 rd-1).
+          // It also keeps the stale-selection guard from nulling the slug
+          // selected below before the list refetch lands.
+          seed: { org },
           body: {
             label: label || undefined,
             description: description || undefined,
@@ -881,21 +887,12 @@ export function ModesPage() {
           },
         },
         {
-          onSuccess: (saved) => {
-            // #308 — seed the per-mode AND list caches from the PUT response
-            // before selecting, as clone/rename/retire/import already do.
-            // Two reasons: the import gate classifies from the live list, so
-            // a just-created slug must be `existing` immediately (a same-slug
-            // import before the refetch lands would otherwise take the create
-            // path and clobber it with no confirm); and the stale-selection
-            // guard nulls a selection the list does not carry, so selecting
-            // before the seed lands races the refetch. Selection is skipped if
-            // the org moved on mid-PUT — the slug would name a different org's
-            // mode (or nothing).
-            void seedSavedMode(name, org, saved).then(() => {
-              if (useUiStore.getState().contextOrg !== org) return;
-              setSelectedMode(name);
-            });
+          onSuccess: () => {
+            // Runs after the hook's seed has landed. Selection is skipped if
+            // the org moved on mid-PUT — the slug would name a different
+            // org's mode (or nothing).
+            if (useUiStore.getState().contextOrg !== org) return;
+            setSelectedMode(name);
           },
           onSettled: () => {
             inFlightSavesRef.current -= 1;
@@ -903,7 +900,7 @@ export function ModesPage() {
         }
       );
     },
-    [contextOrg, saveMode, seedSavedMode, setSelectedMode]
+    [contextOrg, saveMode, setSelectedMode]
   );
 
   const handleSetPublished = useCallback(
@@ -1255,7 +1252,14 @@ export function ModesPage() {
     return runConfirmedAction(
       async () => {
         // Participates in the same synchronous lock as every other save
-        // path, so an in-flight PUT is visible to them all.
+        // path, so an in-flight PUT is visible to them all — and REFUSES
+        // while one is held (#308, grok #315 rd-1): this PUT carries the
+        // rename-time snapshot of the whole document, so landing it over an
+        // in-flight import/autosave of the same slug would revert that write.
+        // Surfaces inline in the dialog via runConfirmedAction.
+        if (inFlightSavesRef.current > 0) {
+          throw new Error("Another save is in flight. Try again in a moment.");
+        }
         inFlightSavesRef.current += 1;
         try {
           return await saveMode.mutateAsync({
