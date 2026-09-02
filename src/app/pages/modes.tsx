@@ -28,6 +28,8 @@ import {
 import { type ParsedModeImport, parseModeImport } from "@/lib/mode-import";
 import { classifyModeImport } from "@/lib/mode-import-gate";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
+import { downloadBlob } from "@/lib/download-blob";
+import { isModeShareOpen } from "@/lib/mode-share-link";
 import { humanizeModeSlug, slugifyModeName } from "@/lib/mode-slug";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import {
@@ -226,15 +228,12 @@ export function ModesPage() {
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
-  // #311 — the WhatsApp QR dialog. Plain open/closed; the panel derives
-  // everything else from the selected mode and the flag trackers.
-  const [shareOpen, setShareOpen] = useState(false);
-  // A selection change (including the stale-mode and rights-drop effects
-  // clearing it) closes the dialog: it describes ONE mode, and a leftover
-  // `true` would remount the next selection's panel already open.
-  useEffect(() => {
-    setShareOpen(false);
-  }, [selectedMode]);
+  // #311 — the WhatsApp QR dialog: the mode the QR button was pressed for. Open state is DERIVED from
+  // this against the live selection (`isModeShareOpen`), so any selection
+  // change closes the dialog in the same render — no effect lag, no frame
+  // of mode B under mode A's flags, no unmount while open.
+  const [shareFor, setShareFor] = useState<string | null>(null);
+  const shareOpen = isModeShareOpen(shareFor, selectedMode);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
 
@@ -429,15 +428,7 @@ export function ModesPage() {
       { name: selectedMode, document: draft },
       ctx
     );
-    const blob = new Blob([content], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(new Blob([content], { type: "text/markdown" }), filename);
   }, [draft, effectiveOrg, lastSyncedFlags, modeQuery.data, selectedMode]);
 
   // #198 — import a mode from a file produced by Export. The hidden input is
@@ -1565,10 +1556,12 @@ export function ModesPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setShareOpen(true)}
+                onClick={() => setShareFor(selectedMode)}
                 disabled={!effectiveOrg}
                 title={shareHelp}
                 aria-describedby="mode-share-help"
+                aria-haspopup="dialog"
+                aria-expanded={shareOpen}
               >
                 <QrCode className="mr-1.5 size-3.5" />
                 QR code
@@ -1579,18 +1572,6 @@ export function ModesPage() {
               <span id="mode-share-help" className="sr-only">
                 {shareHelp}
               </span>
-              {/* Mounted whenever there is a selection so the dialog closes
-                  through Radix's own state (`open` flips false in the same
-                  render the selection clears) instead of unmounting while
-                  open, which can leave `pointer-events: none` on body. */}
-              <ModeSharePanel
-                open={shareOpen && selectedMode !== null}
-                onOpenChange={setShareOpen}
-                modeName={selectedMode ?? ""}
-                modeLabel={serverLabel}
-                org={effectiveOrg}
-                flags={lastSyncedFlags}
-              />
               <Button
                 size="sm"
                 variant="outline"
@@ -1930,6 +1911,23 @@ export function ModesPage() {
         isSaving={isSaving}
         onApply={handleApplyResourcePriorities}
         applyError={priorityApplyError}
+      />
+
+      {/* #311 — WhatsApp QR + share link. Mounted at page level like the
+          priorities panel, never inside `hasSelection`: a cleared selection
+          must close the dialog through Radix's own `open` (same render, via
+          `isModeShareOpen`), not unmount it while open — which can leave
+          `pointer-events: none` on body. Reads the server-truth flag pair
+          so a failed Publish can't show a "ready" code. */}
+      <ModeSharePanel
+        open={shareOpen}
+        onOpenChange={(open) => {
+          if (!open) setShareFor(null);
+        }}
+        modeName={shareFor ?? ""}
+        modeLabel={serverLabel}
+        org={effectiveOrg}
+        flags={lastSyncedFlags}
       />
     </div>
   );

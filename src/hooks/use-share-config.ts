@@ -12,5 +12,9 @@ export function useShareConfig(enabled = true) {
     enabled,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
+    // 404/501 resolve (unsupported); what throws is 401/500, and three
+    // retries with backoff would pin the panel on "Checking…" for a dead
+    // session. Same reasoning as useOrgDefaultLanguage.
+    retry: false,
   });
 }

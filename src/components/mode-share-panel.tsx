@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, Download, ExternalLink, QrCode } from "lucide-react";
 
+import { downloadBlob } from "@/lib/download-blob";
 import type { ModeFlags } from "@/lib/mode-flags";
 import {
   buildModeShareFilename,
@@ -8,6 +9,8 @@ import {
   type ModeSharePanelState,
 } from "@/lib/mode-share-link";
 import {
+  QR_DARK,
+  QR_LIGHT,
   buildQrMatrix,
   buildQrSvg,
   qrPathData,
@@ -91,14 +94,26 @@ export function ModeSharePanel({
     !shareConfig.isError &&
     !(shareConfig.data?.supported && shareConfig.data.config.whatsappNumber);
 
+  const title = modeLabel?.trim() || humanizeModeSlug(modeName);
+  const trigger = `#${modeName}`;
+
   const ready = state.kind === "ready";
   const matrix = useMemo(
     () => (state.kind === "ready" ? buildQrMatrix(state.url) : null),
     [state]
   );
-
-  const title = modeLabel?.trim() || humanizeModeSlug(modeName);
-  const trigger = `#${modeName}`;
+  // Built on click, not per render: the on-screen code is React markup and
+  // only a download needs the standalone document.
+  const buildDownloadSvg = useCallback(
+    () =>
+      matrix
+        ? buildQrSvg(matrix, {
+            sizePx: PNG_SIZE_PX,
+            title: `${title} — BT Servant on WhatsApp (${trigger})`,
+          })
+        : null,
+    [matrix, title, trigger]
+  );
 
   // --- copy / download feedback --------------------------------------
   const [copied, setCopied] = useState(false);
@@ -129,29 +144,25 @@ export function ModeSharePanel({
   }, [state]);
 
   // --- download -------------------------------------------------------
-  const svgDocument = useMemo(
-    () =>
-      matrix
-        ? buildQrSvg(matrix, {
-            sizePx: PNG_SIZE_PX,
-            title: `${title} — BT Servant on WhatsApp (${trigger})`,
-          })
-        : null,
-    [matrix, title, trigger]
-  );
-
   const handleDownloadSvg = useCallback(() => {
-    if (!svgDocument) return;
+    const svg = buildDownloadSvg();
+    if (!svg) return;
     downloadBlob(
-      new Blob([svgDocument], { type: "image/svg+xml" }),
+      new Blob([svg], { type: "image/svg+xml" }),
       buildModeShareFilename(org ?? "org", modeName, "svg")
     );
-  }, [modeName, org, svgDocument]);
+  }, [buildDownloadSvg, modeName, org]);
 
-  // The in-flight rasterisation, so an unmount (or a second click) can
-  // detach the old image's callbacks instead of letting them fire into a
-  // gone component.
-  const pngJobRef = useRef<{ img: HTMLImageElement; url: string } | null>(null);
+  // The in-flight rasterisation. A generation counter, not just the <img>:
+  // `canvas.toBlob` is itself async, so its callback has to check it still
+  // belongs to the live job before it downloads or reports anything. Closing
+  // the dialog, unmounting, or clicking again all retire the current job.
+  const pngJobRef = useRef<{
+    id: number;
+    img: HTMLImageElement;
+    url: string;
+  } | null>(null);
+  const pngGenRef = useRef(0);
   const cancelPngJob = useCallback(() => {
     const job = pngJobRef.current;
     if (!job) return;
@@ -159,22 +170,27 @@ export function ModeSharePanel({
     job.img.onerror = null;
     URL.revokeObjectURL(job.url);
     pngJobRef.current = null;
+    pngGenRef.current += 1;
   }, []);
   useEffect(() => cancelPngJob, [cancelPngJob]);
+  useEffect(() => {
+    if (!open) cancelPngJob();
+  }, [cancelPngJob, open]);
 
   const handleDownloadPng = useCallback(() => {
-    if (!svgDocument) return;
+    const svg = buildDownloadSvg();
+    if (!svg) return;
     setDownloadError(null);
     cancelPngJob();
     // Rasterise through an <img> so the PNG is the same document as the
     // SVG download — one renderer, one geometry, no drift between formats.
-    const url = URL.createObjectURL(
-      new Blob([svgDocument], { type: "image/svg+xml" })
-    );
+    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
     const img = new Image();
-    pngJobRef.current = { img, url };
+    const id = ++pngGenRef.current;
+    pngJobRef.current = { id, img, url };
+    const isLive = () => pngJobRef.current?.id === id;
     const finish = () => {
-      if (pngJobRef.current?.img === img) pngJobRef.current = null;
+      if (isLive()) pngJobRef.current = null;
       URL.revokeObjectURL(url);
     };
     img.onload = () => {
@@ -186,6 +202,9 @@ export function ModeSharePanel({
         if (!ctx) throw new Error("no 2d context");
         ctx.drawImage(img, 0, 0, PNG_SIZE_PX, PNG_SIZE_PX);
         canvas.toBlob((blob) => {
+          // Retired by a close, unmount, or a newer click: say nothing.
+          if (pngGenRef.current !== id) return;
+          pngJobRef.current = null;
           if (!blob) {
             setDownloadError(PNG_FAIL);
             return;
@@ -198,7 +217,9 @@ export function ModeSharePanel({
       } catch {
         setDownloadError(PNG_FAIL);
       } finally {
-        finish();
+        // The blob URL is consumed once drawImage has run; the job itself
+        // stays live until toBlob reports back.
+        URL.revokeObjectURL(url);
       }
     };
     img.onerror = () => {
@@ -206,23 +227,29 @@ export function ModeSharePanel({
       finish();
     };
     img.src = url;
-  }, [cancelPngJob, modeName, org, svgDocument]);
+  }, [buildDownloadSvg, cancelPngJob, modeName, org]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Share on WhatsApp</DialogTitle>
-          {/* Live: the description changes when the settings load and when
-              the code appears, and `aria-describedby` alone is read only
-              once, on open. */}
-          <DialogDescription
-            aria-live="polite"
-            aria-busy={state.kind === "loading"}
-          >
-            {describe(state, org, trigger)}
+          {/* Stable description (Radix reads it once, on open). What changes
+              — settings loaded, code ready, or why not — lives in the status
+              region below, same split as the priorities panel. */}
+          <DialogDescription>
+            A QR code and link that open this mode in WhatsApp.
           </DialogDescription>
         </DialogHeader>
+
+        <p
+          role="status"
+          aria-live="polite"
+          aria-busy={state.kind === "loading"}
+          className="text-muted-foreground -mt-2 text-sm"
+        >
+          {describe(state, org, trigger)}
+        </p>
 
         {/* The card. Always white, in dark mode too: it is the thing that
             gets printed and scanned, and a scanner wants black on white. The
@@ -242,7 +269,7 @@ export function ModeSharePanel({
           </div>
           <div className="px-5 py-4">
             <div className="aspect-square w-full">
-              {matrix && ready ? (
+              {matrix ? (
                 <QrSvg
                   matrix={matrix}
                   label={`QR code that opens WhatsApp with ${trigger} ready to send`}
@@ -382,8 +409,8 @@ function QrSvg({
       aria-label={label}
       shapeRendering="crispEdges"
     >
-      <rect width={box} height={box} fill="#ffffff" />
-      <path d={d} fill="#000000" />
+      <rect width={box} height={box} fill={QR_LIGHT} />
+      <path d={d} fill={QR_DARK} />
     </svg>
   );
 }
@@ -403,7 +430,9 @@ function describe(
     case "number-invalid":
       return "The configured WhatsApp number isn't a valid E.164 number. Check WHATSAPP_NUMBER for this environment.";
     case "slug-invalid":
-      return `This mode's name can't be encoded as a trigger. Rename it to lowercase letters, digits, hyphens, or underscores to share it by QR.`;
+      return "This mode's name can't be encoded as a trigger. Rename it to lowercase letters, digits, and hyphens to share it by QR.";
+    case "slug-reserved":
+      return `“${trigger}” is reserved — WhatsApp users type it to leave a mode, so a code for it would switch them off instead of on. Rename the mode to share it by QR.`;
     case "org-mismatch":
       return `Not reachable from WhatsApp. BT Servant's WhatsApp number is connected to the ${state.whatsappOrg} org; this mode belongs to ${org ?? "another org"}.`;
     case "group-only":
@@ -422,9 +451,11 @@ function placeholderLabel(state: ModeSharePanelState): string {
     case "error":
       return "Unavailable";
     case "unconfigured":
-    case "number-invalid":
       return "Number not configured";
+    case "number-invalid":
+      return "Number invalid";
     case "slug-invalid":
+    case "slug-reserved":
       return "Can't encode this name";
     case "org-mismatch":
       return "Not reachable";
@@ -435,20 +466,4 @@ function placeholderLabel(state: ModeSharePanelState): string {
     case "ready":
       return "";
   }
-}
-
-// Revocation is deferred: Firefox and Safari can begin the download after
-// `click()` returns, and a URL revoked in the same task yields an empty
-// file (codex round 1).
-const REVOKE_DELAY_MS = 1000;
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
 }

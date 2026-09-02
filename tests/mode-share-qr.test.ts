@@ -80,13 +80,6 @@ describe("buildQrSvg", () => {
     expect(svg.endsWith("</svg>")).toBe(true);
   });
 
-  it("escapes the colours too — the helper is public", () => {
-    const svg = buildQrSvg(tiny, { dark: '#000"/><script>', light: "<x>" });
-    expect(svg).not.toContain("<script>");
-    expect(svg).toContain('fill="#000&quot;/&gt;&lt;script&gt;"');
-    expect(svg).toContain('fill="&lt;x&gt;"');
-  });
-
   it("escapes the title so a mode label cannot break the document", () => {
     const svg = buildQrSvg(tiny, { title: 'Kids <"&"> Mode' });
     expect(svg).toContain("<title>Kids &lt;&quot;&amp;&quot;&gt; Mode</title>");

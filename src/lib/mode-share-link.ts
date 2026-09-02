@@ -15,7 +15,7 @@
 // var (typo-prone), the slug is user-authored config. Nothing reaches the
 // URL without passing the shape check.
 
-import { slugifyModeName } from "@/lib/mode-slug";
+import { sanitizeFilenamePart } from "@/lib/mode-export";
 
 export const WA_ME_ORIGIN = "https://wa.me";
 
@@ -23,6 +23,23 @@ export const WA_ME_ORIGIN = "https://wa.me";
 // bound is a typo guard — no live country-code + subscriber number is
 // shorter — not a formal E.164 minimum.
 const E164_DIGITS = /^[1-9][0-9]{6,14}$/;
+
+// The worker's `MODE_NAME_PATTERN` (bt-servant-worker
+// src/types/prompt-overrides.ts): lowercase alphanumerics and inner
+// hyphens, 1–64 chars, no underscores. Stricter than the portal's
+// `slugifyModeName` (which keeps `_`), and the one the worker enforces on
+// every mode route — so it is the one a trigger has to satisfy.
+const MODE_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+
+// Reserved by the worker's classifier as "clear the active mode"
+// (`CLEAR_TOKENS`, src/services/classifier/index.ts). Checked BEFORE mode
+// matching there, so `#default` can never reach a mode named `default`;
+// a QR for one would silently deactivate whatever mode the user had.
+const RESERVED_TRIGGERS: ReadonlySet<string> = new Set([
+  "default",
+  "none",
+  "clear",
+]);
 
 /**
  * Reduce an operator-entered WhatsApp number to the digit string `wa.me`
@@ -46,15 +63,21 @@ export function modeShareTrigger(slug: string): string {
   return `#${slug}`;
 }
 
+export type ModeShareLinkFailure =
+  | "number-missing"
+  | "number-invalid"
+  | "slug-invalid"
+  | "slug-reserved";
+
 export type ModeShareLinkResult =
   | { ok: true; url: string; digits: string; trigger: string }
-  | { ok: false; reason: "number-missing" | "number-invalid" | "slug-invalid" };
+  | { ok: false; reason: ModeShareLinkFailure };
 
 /**
  * Build the share link, or say why it cannot be built. The slug must
- * already be canonical (what `slugifyModeName` would produce): anything
- * else is refused rather than silently rewritten, because a rewritten slug
- * would encode a trigger that targets a different mode.
+ * already match the worker's mode-name pattern: anything else is refused
+ * rather than rewritten, because a rewritten slug would encode a trigger
+ * that targets a different mode. Reserved clear-tokens are refused too.
  */
 export function buildModeShareLink(
   rawNumber: string | null | undefined,
@@ -65,12 +88,15 @@ export function buildModeShareLink(
   }
   const digits = normalizeWhatsAppNumber(rawNumber);
   if (!digits) return { ok: false, reason: "number-invalid" };
-  if (!slug || slugifyModeName(slug) !== slug) {
+  if (!MODE_NAME_PATTERN.test(slug)) {
     return { ok: false, reason: "slug-invalid" };
+  }
+  if (RESERVED_TRIGGERS.has(slug)) {
+    return { ok: false, reason: "slug-reserved" };
   }
   const trigger = modeShareTrigger(slug);
   // `encodeURIComponent` turns the `#` into `%23`; the slug's own alphabet
-  // ([a-z0-9-_]) is untouched by it, which is what keeps the link legible.
+  // ([a-z0-9-]) is untouched by it, which is what keeps the link legible.
   const url = `${WA_ME_ORIGIN}/${digits}?text=${encodeURIComponent(trigger)}`;
   return { ok: true, url, digits, trigger };
 }
@@ -85,6 +111,7 @@ export type ModeShareState = "ready" | "org-mismatch" | "group-only" | "draft";
  *   (`ENGINE_ORG` in the gateway's wrangler.toml). A mode under any other
  *   org is unreachable from WhatsApp no matter what else is toggled.
  *   Skipped when either org is unknown — an unset var must not block.
+ *   Compared trimmed: legacy stored orgs can carry padding (#247/#253).
  * - `group-only`: `requires_group` modes are hidden from WhatsApp DMs by
  *   design (#209 / worker#270).
  * - `draft`: the worker masks unpublished modes for non-admin callers, so
@@ -95,7 +122,9 @@ export function modeShareState(
   modeOrg: string | null | undefined,
   whatsappOrg: string | null | undefined
 ): ModeShareState {
-  if (modeOrg && whatsappOrg && modeOrg !== whatsappOrg) return "org-mismatch";
+  const a = modeOrg?.trim();
+  const b = whatsappOrg?.trim();
+  if (a && b && a !== b) return "org-mismatch";
   if (flags.requires_group === true) return "group-only";
   if (flags.published !== true) return "draft";
   return "ready";
@@ -107,16 +136,21 @@ export function buildModeShareFilename(
   slug: string,
   ext: "svg" | "png"
 ): string {
-  return `${sanitize(org)}-mode-${sanitize(slug)}-whatsapp-qr.${ext}`;
+  return `${sanitizeFilenamePart(org)}-mode-${sanitizeFilenamePart(slug)}-whatsapp-qr.${ext}`;
 }
 
-function sanitize(s: string): string {
-  // Leading dots are stripped too: `..` or `.hidden` as an org would
-  // otherwise produce a dot-file or a traversal-shaped download name.
-  const cleaned = s
-    .replace(/[^A-Za-z0-9._-]/g, "_")
-    .replace(/^[_.]+|[_.]+$/g, "");
-  return cleaned || "untitled";
+/**
+ * Whether the share dialog is open. Derived from identity, not a lagged
+ * boolean: `shareFor` is the mode the QR button was pressed for, so any
+ * selection change (a switch, a cleared stale mode, a rights drop, an org
+ * switch) closes the dialog in the SAME render — never a frame of mode B
+ * under mode A's flags, and never an unmount while open.
+ */
+export function isModeShareOpen(
+  shareFor: string | null,
+  selectedMode: string | null
+): boolean {
+  return shareFor !== null && shareFor === selectedMode;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,10 +174,11 @@ export type ModeSharePanelState =
   | { kind: "unconfigured" }
   | { kind: "number-invalid" }
   | { kind: "slug-invalid" }
+  | { kind: "slug-reserved" }
   | { kind: "org-mismatch"; whatsappOrg: string }
   | { kind: "group-only" }
   | { kind: "draft" }
-  | { kind: "ready"; url: string; trigger: string; orgUnverified: boolean };
+  | { kind: "ready"; url: string; orgUnverified: boolean };
 
 /**
  * Resolve what the panel shows. Order of precedence:
@@ -152,7 +187,8 @@ export type ModeSharePanelState =
  * 2. eligibility, via `modeShareState` — org mismatch, then group-only,
  *    then draft (the hardest constraint first, so the copy names the one
  *    thing that has to change);
- * 3. the link itself — number missing / invalid, or a non-canonical slug.
+ * 3. the link itself — number missing / invalid, or a slug the worker's
+ *    trigger cannot carry (non-canonical or reserved).
  *
  * A missing BFF route (`supported === false`) reads as "not configured":
  * an older portal deploy has no number to give, and that is the truthful
@@ -177,12 +213,7 @@ export function resolveModeSharePanelState(
   if (eligibility !== "ready") return { kind: eligibility };
   const link = buildModeShareLink(whatsappNumber, modeName);
   if (link.ok) {
-    return {
-      kind: "ready",
-      url: link.url,
-      trigger: link.trigger,
-      orgUnverified: !whatsappOrg,
-    };
+    return { kind: "ready", url: link.url, orgUnverified: !whatsappOrg };
   }
   switch (link.reason) {
     case "number-missing":
@@ -191,5 +222,7 @@ export function resolveModeSharePanelState(
       return { kind: "number-invalid" };
     case "slug-invalid":
       return { kind: "slug-invalid" };
+    case "slug-reserved":
+      return { kind: "slug-reserved" };
   }
 }

@@ -30,8 +30,9 @@ export const QR_QUIET_ZONE = 4;
 
 /**
  * One SVG path covering every dark module, in module units, offset by the
- * quiet zone. One path (not one rect per module) keeps a version-5 symbol
- * to a few hundred bytes of DOM.
+ * quiet zone. One path element instead of one <rect> per module: a wa.me
+ * link at ECC M is a version-4 symbol with ~550 dark modules, so this is
+ * one node with a ~7 KB `d` attribute rather than ~550 nodes.
  */
 export function qrPathData(
   matrix: QrMatrix,
@@ -67,31 +68,31 @@ export function qrViewBoxSize(
 export interface QrSvgOptions {
   /** Rendered side in CSS px (the SVG is scalable; this sets the default). */
   sizePx?: number;
-  dark?: string;
-  light?: string;
   /** Accessible name; emitted as `<title>` so the file is self-describing. */
   title?: string;
 }
 
+/** Colours are fixed: a printed or shared code has to scan on paper. */
+export const QR_DARK = "#000000";
+export const QR_LIGHT = "#ffffff";
+
 /**
  * Standalone SVG document for download. Plain black on white regardless of
- * the portal theme: a printed or shared code has to scan on paper.
+ * the portal theme. The only free-text input, `title`, is XML-escaped.
  */
 export function buildQrSvg(
   matrix: QrMatrix,
   options: QrSvgOptions = {}
 ): string {
-  const { sizePx = 1024, dark = "#000000", light = "#ffffff", title } = options;
+  const { sizePx = 1024, title } = options;
   const box = qrViewBoxSize(matrix);
   const titleEl = title ? `<title>${escapeXml(title)}</title>` : "";
-  // Every string input is escaped, colours included — callers pass
-  // literals today, but this is a public lib helper.
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${box} ${box}" ` +
     `width="${sizePx}" height="${sizePx}" shape-rendering="crispEdges">` +
     titleEl +
-    `<rect width="${box}" height="${box}" fill="${escapeXml(light)}"/>` +
-    `<path d="${qrPathData(matrix)}" fill="${escapeXml(dark)}"/>` +
+    `<rect width="${box}" height="${box}" fill="${QR_LIGHT}"/>` +
+    `<path d="${qrPathData(matrix)}" fill="${QR_DARK}"/>` +
     `</svg>`
   );
 }

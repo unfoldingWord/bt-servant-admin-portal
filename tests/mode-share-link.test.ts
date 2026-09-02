@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildModeShareFilename,
   buildModeShareLink,
+  isModeShareOpen,
   modeShareState,
   modeShareTrigger,
   normalizeWhatsAppNumber,
@@ -72,11 +73,13 @@ describe("buildModeShareLink", () => {
     });
   });
 
-  it("keeps underscores and digits in the slug legible", () => {
-    const result = buildModeShareLink("15550100100", "kids_mode2");
+  it("keeps digits and hyphens in the slug legible", () => {
+    const result = buildModeShareLink("15550100100", "kids-mode2");
     expect(result.ok && result.url).toBe(
-      "https://wa.me/15550100100?text=%23kids_mode2"
+      "https://wa.me/15550100100?text=%23kids-mode2"
     );
+    const single = buildModeShareLink("15550100100", "x");
+    expect(single.ok && single.url).toBe("https://wa.me/15550100100?text=%23x");
   });
 
   it("distinguishes a missing number from an invalid one", () => {
@@ -98,22 +101,41 @@ describe("buildModeShareLink", () => {
     });
   });
 
-  it("refuses a slug that is not already canonical instead of rewriting it", () => {
-    // A rewritten slug would encode a trigger for a DIFFERENT mode.
+  it("refuses a slug the worker's MODE_NAME_PATTERN would reject instead of rewriting it", () => {
+    // A rewritten slug would encode a trigger for a DIFFERENT mode. The
+    // worker pattern has no underscore (the portal's slugify keeps it) and
+    // caps at 64 chars.
+    const tooLong = "a".repeat(65);
     for (const bad of [
       "",
       "Fia Mode",
       "fia mode",
       "fia-mode?x=1",
       "-fia-",
+      "fia-",
       "a/b",
       "#fia",
+      "kids_mode2",
+      tooLong,
     ]) {
-      expect(buildModeShareLink("15550100100", bad)).toEqual({
+      expect(buildModeShareLink("15550100100", bad), bad).toEqual({
         ok: false,
         reason: "slug-invalid",
       });
     }
+    expect(buildModeShareLink("15550100100", "a".repeat(64)).ok).toBe(true);
+  });
+
+  it("refuses the worker's reserved clear-mode tokens", () => {
+    // `#default` / `#none` / `#clear` deactivate the current mode in the
+    // classifier before any mode matching runs.
+    for (const reserved of ["default", "none", "clear"]) {
+      expect(buildModeShareLink("15550100100", reserved)).toEqual({
+        ok: false,
+        reason: "slug-reserved",
+      });
+    }
+    expect(buildModeShareLink("15550100100", "default-mode").ok).toBe(true);
   });
 
   it("never lets a hostile slug reach the URL unencoded", () => {
@@ -165,10 +187,15 @@ describe("modeShareState", () => {
     expect(modeShareState(ready, undefined, undefined)).toBe("ready");
   });
 
-  it("compares orgs exactly, matching the worker's KV key", () => {
+  it("compares orgs exactly (case-sensitive, like the worker's KV key) but trimmed", () => {
     expect(modeShareState(ready, "unfoldingword", "unfoldingWord")).toBe(
       "org-mismatch"
     );
+    // Legacy stored orgs can carry whitespace padding (#247/#253).
+    expect(modeShareState(ready, " unfoldingWord", "unfoldingWord")).toBe(
+      "ready"
+    );
+    expect(modeShareState(ready, "acme", "   ")).toBe("ready");
   });
 });
 
@@ -228,7 +255,6 @@ describe("resolveModeSharePanelState", () => {
     expect(resolveModeSharePanelState(loaded, ready, "acme", "fia")).toEqual({
       kind: "ready",
       url: "https://wa.me/573001234567?text=%23fia",
-      trigger: "#fia",
       orgUnverified: false,
     });
   });
@@ -283,6 +309,9 @@ describe("resolveModeSharePanelState", () => {
     expect(
       resolveModeSharePanelState(loaded, ready, "acme", "Fia Mode")
     ).toEqual({ kind: "slug-invalid" });
+    expect(
+      resolveModeSharePanelState(loaded, ready, "acme", "default")
+    ).toEqual({ kind: "slug-reserved" });
   });
 
   it("treats an absent BFF route as not configured, not as an error", () => {
@@ -300,5 +329,20 @@ describe("resolveModeSharePanelState", () => {
     expect(resolveModeSharePanelState(unsupported, {}, "acme", "fia")).toEqual({
       kind: "draft",
     });
+  });
+});
+
+describe("isModeShareOpen", () => {
+  it("is open only while the selection is the mode the button was pressed for", () => {
+    expect(isModeShareOpen("fia", "fia")).toBe(true);
+    expect(isModeShareOpen(null, "fia")).toBe(false);
+    expect(isModeShareOpen(null, null)).toBe(false);
+  });
+
+  it("closes in the same render when the selection clears or moves", () => {
+    // Stale-mode / rights-drop effects null the selection.
+    expect(isModeShareOpen("fia", null)).toBe(false);
+    // A → B: never a frame of B's name under A's flags.
+    expect(isModeShareOpen("fia", "mast")).toBe(false);
   });
 });

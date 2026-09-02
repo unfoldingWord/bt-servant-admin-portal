@@ -79,7 +79,7 @@ jobs:
             c.name = 'bt-servant-admin-portal-staging';
             c.kv_namespaces = [{ binding: 'AUTH_KV', id: '76b77b269f7c48b481f3448955950b57' }];
             c.services = [{ binding: 'BARUCH', service: 'baruch-staging' }];
-            c.vars = { ENGINE_BASE_URL: 'https://staging-api.btservant.ai', BARUCH_BASE_URL: 'https://staging-baruch.btservant.ai' };
+            c.vars = { ENGINE_BASE_URL: 'https://staging-api.btservant.ai', BARUCH_BASE_URL: 'https://staging-baruch.btservant.ai', WHATSAPP_NUMBER: process.env.WHATSAPP_NUMBER || '', WHATSAPP_ORG: 'unfoldingWord' };
             fs.writeFileSync(p, JSON.stringify(c));
             console.log('Patched:', JSON.stringify({ name: c.name, services: c.services, kv: c.kv_namespaces, vars: c.vars }));
           "

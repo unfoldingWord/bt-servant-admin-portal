@@ -76,7 +76,17 @@ function yamlScalar(value: string): string {
   return `"${escaped}"`;
 }
 
-function sanitize(s: string): string {
-  const cleaned = s.replace(/[^A-Za-z0-9._-]/g, "_").replace(/^_+|_+$/g, "");
+/**
+ * Filename-safe form of a user/operator string (org, slug). Shared with the
+ * #311 QR download so both features name files the same way. Leading and
+ * trailing dots go too: `..` or `.hidden` as an org would otherwise yield a
+ * dot-file or a traversal-shaped name.
+ */
+export function sanitizeFilenamePart(s: string): string {
+  const cleaned = s
+    .replace(/[^A-Za-z0-9._-]/g, "_")
+    .replace(/^[_.]+|[_.]+$/g, "");
   return cleaned || "untitled";
 }
+
+const sanitize = sanitizeFilenamePart;

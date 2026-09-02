@@ -7,8 +7,8 @@ import { jsonResponse } from "./helpers";
 //   WHATSAPP_NUMBER — the BT Servant WhatsApp number (E.164). Empty by
 //                     default; the portal renders "not configured" until it
 //                     is set. The worker's first-contact message (issue #311
-//                     part 2) mirrors the SAME var name in its wrangler.toml;
-//                     change both together.
+//                     part 2) will read the SAME var name from its
+//                     wrangler.toml; when it lands, change both together.
 //   WHATSAPP_ORG    — the org the WhatsApp gateway is pinned to
 //                     (`ENGINE_ORG` in the gateway's wrangler.toml). Lets
 //                     the portal say when a mode is unreachable from

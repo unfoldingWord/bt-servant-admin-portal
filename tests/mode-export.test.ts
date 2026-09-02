@@ -4,6 +4,7 @@ import {
   MODE_EXPORT_VERSION,
   buildModeExportContent,
   buildModeExportFilename,
+  sanitizeFilenamePart,
 } from "../src/lib/mode-export";
 import type { PromptMode } from "../src/types/prompt-override";
 
@@ -274,5 +275,15 @@ describe("buildModeExportFilename", () => {
       exportedAt: new Date("2026-05-28T15:30:01.000Z"),
     });
     expect(earlier < later).toBe(true);
+  });
+});
+
+describe("sanitizeFilenamePart", () => {
+  it("keeps [A-Za-z0-9._-], replaces the rest, and never yields a dot-file", () => {
+    expect(sanitizeFilenamePart("unfoldingWord")).toBe("unfoldingWord");
+    expect(sanitizeFilenamePart("acme co/ltd")).toBe("acme_co_ltd");
+    expect(sanitizeFilenamePart("")).toBe("untitled");
+    expect(sanitizeFilenamePart("..")).toBe("untitled");
+    expect(sanitizeFilenamePart(".hidden.")).toBe("hidden");
   });
 });
