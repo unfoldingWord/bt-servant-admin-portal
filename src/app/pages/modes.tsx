@@ -8,7 +8,7 @@ import {
 } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Download, ListOrdered, Save, Upload } from "lucide-react";
+import { Download, ListOrdered, QrCode, Save, Upload } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { shouldAutoSaveDraft } from "@/lib/autosave-gate";
@@ -75,6 +75,7 @@ import {
 } from "@/components/markdown-editor";
 import { MarkdownToc } from "@/components/markdown-toc";
 import { ModeSelector } from "@/components/mode-selector";
+import { ModeSharePanel } from "@/components/mode-share-panel";
 import { PageHeader } from "@/components/page-header";
 import { ResourcePriorityPanel } from "@/components/resource-priority-panel";
 
@@ -225,6 +226,9 @@ export function ModesPage() {
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
+  // #311 — the WhatsApp QR dialog. Plain open/closed; the panel derives
+  // everything else from the selected mode and the flag trackers.
+  const [shareOpen, setShareOpen] = useState(false);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
 
@@ -1543,6 +1547,31 @@ export function ModesPage() {
               <span id="mode-resource-priorities-help" className="sr-only">
                 {resourcePrioritiesHelp}
               </span>
+              {/* #311 — WhatsApp QR + share link. Opens for any selected
+                  mode; the panel itself says when the code would not work
+                  yet (draft, group-only, other org, no number). Reads the
+                  server-truth flag pair so a failed Publish can't show a
+                  "ready" code. */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShareOpen(true)}
+                disabled={!effectiveOrg}
+                title="QR code and link that open this mode on WhatsApp"
+              >
+                <QrCode className="mr-1.5 size-3.5" />
+                QR code
+              </Button>
+              {selectedMode && (
+                <ModeSharePanel
+                  open={shareOpen}
+                  onOpenChange={setShareOpen}
+                  modeName={selectedMode}
+                  modeLabel={serverLabel}
+                  org={effectiveOrg}
+                  flags={lastSyncedFlags}
+                />
+              )}
               <Button
                 size="sm"
                 variant="outline"

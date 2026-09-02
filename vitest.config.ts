@@ -15,6 +15,10 @@ export default defineConfig({
           ENGINE_API_KEY: "test-engine-key",
           BARUCH_BASE_URL: "https://baruch.example.test",
           BARUCH_API_KEY: "test-baruch-key",
+          // #311 — share-config route. Raw on purpose: the BFF passes the
+          // var through untouched and the client lib normalises it.
+          WHATSAPP_NUMBER: "+1 (555) 010-0100",
+          WHATSAPP_ORG: "acme",
         },
         kvNamespaces: ["AUTH_KV"],
       },

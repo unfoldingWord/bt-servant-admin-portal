@@ -14,6 +14,14 @@
   "vars": {
     "ENGINE_BASE_URL": "https://api.btservant.ai",
     "BARUCH_BASE_URL": "https://baruch.btservant.ai",
+    // #311 — BT Servant's WhatsApp number in E.164 (e.g. "+573001234567").
+    // Empty = the Modes page shows "WhatsApp number not configured". The
+    // worker's wrangler.toml carries the same var name for its first-contact
+    // message; change both together. Set per environment — `vars` blocks
+    // do not inherit.
+    "WHATSAPP_NUMBER": "",
+    // Org the WhatsApp gateway is pinned to (gateway wrangler.toml ENGINE_ORG).
+    "WHATSAPP_ORG": "unfoldingWord",
   },
   "services": [
     {
@@ -33,6 +41,8 @@
       "vars": {
         "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
         "BARUCH_BASE_URL": "https://baruch-dev.unfoldingword.workers.dev",
+        "WHATSAPP_NUMBER": "",
+        "WHATSAPP_ORG": "unfoldingWord",
       },
       "services": [
         {
@@ -52,6 +62,8 @@
       "vars": {
         "ENGINE_BASE_URL": "https://staging-api.btservant.ai",
         "BARUCH_BASE_URL": "https://staging-baruch.btservant.ai",
+        "WHATSAPP_NUMBER": "",
+        "WHATSAPP_ORG": "unfoldingWord",
       },
       "services": [
         {
