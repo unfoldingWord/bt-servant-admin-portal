@@ -40,8 +40,27 @@ const FRONTMATTER_FENCE = "---";
 /**
  * Parse an exported mode file. Returns a discriminated result rather than
  * throwing so the caller can render the message inline.
+ *
+ * NEVER throws (#308 P3): the body is pure string work, but a host-level
+ * failure (an OOM on a pathological file, a runtime bug in an edge case the
+ * tests missed) would otherwise escape the `{ ok: false }` contract and
+ * surface as an unhandled rejection in the page's async file handler instead
+ * of the inline banner.
  */
 export function parseModeImport(raw: string): ModeImportResult {
+  try {
+    return parseModeImportUnsafe(raw);
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Could not parse the file${
+        err instanceof Error && err.message ? `: ${err.message}` : "."
+      }`,
+    };
+  }
+}
+
+function parseModeImportUnsafe(raw: string): ModeImportResult {
   if (typeof raw !== "string" || raw.trim() === "") {
     return { ok: false, error: "The file is empty." };
   }

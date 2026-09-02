@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 
 import * as configApi from "@/lib/config-api";
 import type {
@@ -95,33 +96,59 @@ export function useSaveMode(org?: string | null) {
   });
 }
 
-// Import-local cache seed (#198). After an import PUT succeeds, write the
-// authoritative response into the TARGET mode's per-mode cache so a later
-// select (overwrite of a mode viewed earlier this session) or the same-mode
-// server-label read cannot resurrect a stale INACTIVE cache — `useSaveMode`'s
-// invalidate refetches ACTIVE queries only, and the imported mode is usually
-// inactive. Deliberately kept OUT of `useSaveMode`: only the import writes its
-// own target here (org pinned by the caller, captured when the import started),
-// so it never touches the shared save-cache machinery on every mode save.
-// Cancels a late in-flight GET first (TanStack optimistic-update order) so it
-// can't overwrite the seed with the pre-import document.
-export function useSeedImportedMode() {
+// Read the cached org mode list SYNCHRONOUSLY, outside the render cycle
+// (#308). The import flow decides create-vs-overwrite and alias collisions
+// from this list at two points — after the OS file picker returns, and again
+// on overwrite-confirm — and both run in async continuations where the render
+// closure's `modesQuery.data` can predate a mutation that has since seeded or
+// refetched the cache. `getQueryData` is the live cache: every seed below
+// (`setQueryData`) and every settled refetch is visible to it in the same
+// tick. Returns `undefined` when nothing is cached for that org so the caller
+// can fail closed.
+export function useReadModeList() {
   const qc = useQueryClient();
-  return async (name: string, org: string | null, mode: PromptMode) => {
-    const key = normalize(org);
-    await qc.cancelQueries({ queryKey: keys.mode(name, key) });
-    qc.setQueryData(keys.mode(name, key), mode);
-    // Upsert the LIST too, in the same tick, so a just-created slug is
-    // immediately present in the dropdown AND classified `existing` on a
-    // re-import — otherwise a user who re-picks the file before the list
-    // refetch lands takes the create path again and clobbers the first write
-    // with no overwrite confirm (grok #306 rd-5 / languages rd-5). Cancel the
-    // in-flight list GET first so a pre-create response can't drop the row.
-    await qc.cancelQueries({ queryKey: keys.modes(key) });
-    qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
-      applyCloneToModeList(prev, mode)
-    );
-  };
+  return useCallback(
+    (org: string | null): OrgModes | undefined =>
+      qc.getQueryData<OrgModes>(keys.modes(normalize(org))),
+    [qc]
+  );
+}
+
+// Cache seed for a PUT that targets a mode the editor is NOT (necessarily)
+// showing — import (#198) and create (#308). Writes the authoritative PUT
+// response into the TARGET mode's per-mode cache so a later select (overwrite
+// of a mode viewed earlier this session) or the same-mode server-label read
+// cannot resurrect a stale INACTIVE cache — `useSaveMode`'s invalidate
+// refetches ACTIVE queries only, and the target is usually inactive.
+// Deliberately kept OUT of `useSaveMode`: only paths that name their own target
+// and pin their org (captured when the action started) call this, so it never
+// touches the shared save-cache machinery on every editor autosave. Cancels a
+// late in-flight GET first (TanStack optimistic-update order) so it can't
+// overwrite the seed with the pre-write document.
+export function useSeedSavedMode() {
+  const qc = useQueryClient();
+  return useCallback(
+    async (name: string, org: string | null, mode: PromptMode) => {
+      const key = normalize(org);
+      await qc.cancelQueries({ queryKey: keys.mode(name, key) });
+      qc.setQueryData(keys.mode(name, key), mode);
+      // Upsert the LIST too, in the same tick, so a just-created slug is
+      // immediately present in the dropdown AND classified `existing` on a
+      // re-import — otherwise a user who re-picks the file before the list
+      // refetch lands takes the create path again and clobbers the first
+      // write with no overwrite confirm (grok #306 rd-5 / languages rd-5).
+      // For create it is also what keeps the page's stale-selection guard
+      // from nulling the just-selected slug in the render gap before the
+      // refetch lands (the same gap clone/rename/retire close in their
+      // onSuccess). Cancel the in-flight list GET first so a pre-write
+      // response can't drop the row.
+      await qc.cancelQueries({ queryKey: keys.modes(key) });
+      qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
+        applyCloneToModeList(prev, mode)
+      );
+    },
+    [qc]
+  );
 }
 
 // Note: publish/unpublish flows through useSaveMode with the full body

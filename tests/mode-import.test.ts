@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   MODE_EXPORT_VERSION,
@@ -293,5 +293,39 @@ describe("parseModeImport — document body edge cases", () => {
       'has"quote',
       "back\\slash",
     ]);
+  });
+});
+
+// #308 P3 — the "never throws" contract. The parser body is pure string work
+// with no reachable throw through its public inputs, so the only way to
+// exercise the wrapper is to make a host primitive fail underneath it.
+describe("parseModeImport — never throws", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("converts a host-level throw into { ok: false } instead of escaping", () => {
+    vi.spyOn(String.prototype, "split").mockImplementationOnce(() => {
+      throw new RangeError("boom");
+    });
+    expect(parseModeImport(exported({ name: "m", document: "d" }))).toEqual({
+      ok: false,
+      error: "Could not parse the file: boom",
+    });
+  });
+
+  it("uses a plain message when the thrown value is not an Error", () => {
+    vi.spyOn(String.prototype, "split").mockImplementationOnce(() => {
+      throw "not-an-error";
+    });
+    const result = parseModeImport(exported({ name: "m", document: "d" }));
+    expect(result).toEqual({ ok: false, error: "Could not parse the file." });
+  });
+
+  it("returns a non-string input as a rejection, not a TypeError", () => {
+    expect(parseModeImport(undefined as unknown as string)).toEqual({
+      ok: false,
+      error: "The file is empty.",
+    });
   });
 });
