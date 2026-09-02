@@ -6,6 +6,8 @@ import {
   modeShareState,
   modeShareTrigger,
   normalizeWhatsAppNumber,
+  resolveModeSharePanelState,
+  type ShareConfigSnapshot,
 } from "../src/lib/mode-share-link";
 
 // #311 — the wa.me deep link the per-mode QR encodes. Number and slug are
@@ -35,6 +37,24 @@ describe("normalizeWhatsAppNumber", () => {
     expect(normalizeWhatsAppNumber("++573001234567")).toBeNull();
     expect(normalizeWhatsAppNumber("573001234567?text=hi")).toBeNull();
     expect(normalizeWhatsAppNumber("573001234567/../x")).toBeNull();
+    expect(normalizeWhatsAppNumber("15550100100&text=x")).toBeNull();
+    expect(normalizeWhatsAppNumber("15550100100@evil")).toBeNull();
+    expect(normalizeWhatsAppNumber("https://wa.me/15550100100")).toBeNull();
+    expect(normalizeWhatsAppNumber("+")).toBeNull();
+  });
+
+  it("tolerates whitespace, including a pasted CR/LF, but only digits ever survive", () => {
+    // Whitespace is stripped like any other contact-card separator; what
+    // matters for the URL is that the output alphabet is digits only.
+    for (const raw of [
+      "15550100100\r\n",
+      "1555\n0100100",
+      "\t+1 555 010 0100 ",
+    ]) {
+      const out = normalizeWhatsAppNumber(raw);
+      expect(out).toBe("15550100100");
+      expect(out).toMatch(/^[0-9]+$/);
+    }
   });
 });
 
@@ -123,10 +143,19 @@ describe("modeShareState", () => {
   });
 
   it("reports the hardest constraint first: org, then group-only, then draft", () => {
+    const groupOnlyPublished = { published: true, requires_group: true };
+    // Org beats everything, including a published group-only mode.
     expect(modeShareState({}, "acme", "unfoldingWord")).toBe("org-mismatch");
+    expect(modeShareState(groupOnlyPublished, "acme", "unfoldingWord")).toBe(
+      "org-mismatch"
+    );
+    // Group-only beats draft, and applies to published modes too.
     expect(
       modeShareState({ published: false, requires_group: true }, "acme", "acme")
     ).toBe("group-only");
+    expect(modeShareState(groupOnlyPublished, "acme", "acme")).toBe(
+      "group-only"
+    );
     expect(modeShareState({ published: false }, "acme", "acme")).toBe("draft");
   });
 
@@ -151,5 +180,125 @@ describe("buildModeShareFilename", () => {
     expect(buildModeShareFilename("acme co/ltd", "x", "png")).toBe(
       "acme_co_ltd-mode-x-whatsapp-qr.png"
     );
+  });
+
+  it("never yields a dot-file or traversal-shaped name", () => {
+    expect(buildModeShareFilename("", "x", "svg")).toBe(
+      "untitled-mode-x-whatsapp-qr.svg"
+    );
+    expect(buildModeShareFilename("..", "x", "svg")).toBe(
+      "untitled-mode-x-whatsapp-qr.svg"
+    );
+    expect(buildModeShareFilename(".hidden", "x", "svg")).toBe(
+      "hidden-mode-x-whatsapp-qr.svg"
+    );
+  });
+});
+
+describe("resolveModeSharePanelState", () => {
+  const loaded: ShareConfigSnapshot = {
+    pending: false,
+    error: false,
+    supported: true,
+    whatsappNumber: "+57 300 123 4567",
+    whatsappOrg: "acme",
+  };
+  const ready = { published: true, requires_group: false };
+
+  it("follows the query lifecycle before anything else", () => {
+    expect(
+      resolveModeSharePanelState(
+        { ...loaded, pending: true },
+        ready,
+        "acme",
+        "fia"
+      )
+    ).toEqual({ kind: "loading" });
+    expect(
+      resolveModeSharePanelState(
+        { ...loaded, error: true },
+        ready,
+        "acme",
+        "fia"
+      )
+    ).toEqual({ kind: "error" });
+  });
+
+  it("is ready with the built link when everything lines up", () => {
+    expect(resolveModeSharePanelState(loaded, ready, "acme", "fia")).toEqual({
+      kind: "ready",
+      url: "https://wa.me/573001234567?text=%23fia",
+      trigger: "#fia",
+      orgUnverified: false,
+    });
+  });
+
+  it("flags a ready result whose org check was skipped", () => {
+    expect(
+      resolveModeSharePanelState(
+        { ...loaded, whatsappOrg: null },
+        ready,
+        "acme",
+        "fia"
+      )
+    ).toMatchObject({ kind: "ready", orgUnverified: true });
+  });
+
+  it("puts eligibility ahead of the number", () => {
+    const noNumber = { ...loaded, whatsappNumber: null };
+    expect(resolveModeSharePanelState(noNumber, {}, "acme", "fia")).toEqual({
+      kind: "draft",
+    });
+    expect(
+      resolveModeSharePanelState(
+        noNumber,
+        { requires_group: true },
+        "acme",
+        "fia"
+      )
+    ).toEqual({ kind: "group-only" });
+    expect(resolveModeSharePanelState(noNumber, ready, "other", "fia")).toEqual(
+      { kind: "org-mismatch", whatsappOrg: "acme" }
+    );
+  });
+
+  it("names each link failure distinctly", () => {
+    expect(
+      resolveModeSharePanelState(
+        { ...loaded, whatsappNumber: null },
+        ready,
+        "acme",
+        "fia"
+      )
+    ).toEqual({ kind: "unconfigured" });
+    expect(
+      resolveModeSharePanelState(
+        { ...loaded, whatsappNumber: "nope" },
+        ready,
+        "acme",
+        "fia"
+      )
+    ).toEqual({ kind: "number-invalid" });
+    // A non-canonical name is the author's to fix, not an env problem.
+    expect(
+      resolveModeSharePanelState(loaded, ready, "acme", "Fia Mode")
+    ).toEqual({ kind: "slug-invalid" });
+  });
+
+  it("treats an absent BFF route as not configured, not as an error", () => {
+    const unsupported: ShareConfigSnapshot = {
+      pending: false,
+      error: false,
+      supported: false,
+      whatsappNumber: null,
+      whatsappOrg: null,
+    };
+    expect(
+      resolveModeSharePanelState(unsupported, ready, "acme", "fia")
+    ).toEqual({ kind: "unconfigured" });
+    // ...and it cannot block on an org it does not know.
+    expect(resolveModeSharePanelState(unsupported, {}, "acme", "fia")).toEqual({
+      kind: "draft",
+    });
   });
 });

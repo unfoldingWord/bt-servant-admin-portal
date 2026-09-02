@@ -50,6 +50,15 @@ describe("qrPathData", () => {
     );
   });
 
+  it("refuses a matrix whose rows do not match its size", () => {
+    expect(() => qrPathData({ size: 2, modules: [[true, false]] })).toThrow(
+      /row count/
+    );
+    expect(() =>
+      qrPathData({ size: 2, modules: [[true, false], [true]] })
+    ).toThrow(/row 1/);
+  });
+
   it("sizes the view box to the symbol plus the quiet zone on both sides", () => {
     expect(qrViewBoxSize(tiny)).toBe(2 + QR_QUIET_ZONE * 2);
     expect(qrViewBoxSize(tiny, 0)).toBe(2);
@@ -69,6 +78,13 @@ describe("buildQrSvg", () => {
     expect(svg).toContain('fill="#ffffff"');
     expect(svg).toContain('<path d="M4 4h1v1h-1z" fill="#000000"/>');
     expect(svg.endsWith("</svg>")).toBe(true);
+  });
+
+  it("escapes the colours too — the helper is public", () => {
+    const svg = buildQrSvg(tiny, { dark: '#000"/><script>', light: "<x>" });
+    expect(svg).not.toContain("<script>");
+    expect(svg).toContain('fill="#000&quot;/&gt;&lt;script&gt;"');
+    expect(svg).toContain('fill="&lt;x&gt;"');
   });
 
   it("escapes the title so a mode label cannot break the document", () => {

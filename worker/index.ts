@@ -128,12 +128,12 @@ export default {
     if (url.pathname === "/api/share-config") {
       const blocked = requireSameOrigin(request);
       if (blocked) return blocked;
-      if (request.method !== "GET") {
-        return errorResponse("Method not allowed", 405);
-      }
       const session = await validateSession(request, env);
       if (!session) {
         return errorResponse("Unauthorized", 401);
+      }
+      if (request.method !== "GET") {
+        return errorResponse("Method not allowed", 405);
       }
       return handleShareConfig(env);
     }

@@ -229,6 +229,12 @@ export function ModesPage() {
   // #311 — the WhatsApp QR dialog. Plain open/closed; the panel derives
   // everything else from the selected mode and the flag trackers.
   const [shareOpen, setShareOpen] = useState(false);
+  // A selection change (including the stale-mode and rights-drop effects
+  // clearing it) closes the dialog: it describes ONE mode, and a leftover
+  // `true` would remount the next selection's panel already open.
+  useEffect(() => {
+    setShareOpen(false);
+  }, [selectedMode]);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
 
@@ -1388,6 +1394,10 @@ export function ModesPage() {
     ? RESOURCE_PRIORITIES_HELP
     : `${RESOURCE_PRIORITIES_HELP} ${NO_EDIT_RIGHTS_REASON}`;
 
+  const shareHelp = effectiveOrg
+    ? "QR code and link that open this mode on WhatsApp."
+    : "Choose an organization before generating a WhatsApp QR code.";
+
   const saveStatus = useMemo(() => {
     if (isSaving) return "Saving…";
     if (isDirty) return "Unsaved changes";
@@ -1557,21 +1567,30 @@ export function ModesPage() {
                 variant="outline"
                 onClick={() => setShareOpen(true)}
                 disabled={!effectiveOrg}
-                title="QR code and link that open this mode on WhatsApp"
+                title={shareHelp}
+                aria-describedby="mode-share-help"
               >
                 <QrCode className="mr-1.5 size-3.5" />
                 QR code
               </Button>
-              {selectedMode && (
-                <ModeSharePanel
-                  open={shareOpen}
-                  onOpenChange={setShareOpen}
-                  modeName={selectedMode}
-                  modeLabel={serverLabel}
-                  org={effectiveOrg}
-                  flags={lastSyncedFlags}
-                />
-              )}
+              {/* Same rule as the switch and the priorities button: a
+                  disabled control is out of the tab order, so its reason
+                  has to live in the accessibility tree. */}
+              <span id="mode-share-help" className="sr-only">
+                {shareHelp}
+              </span>
+              {/* Mounted whenever there is a selection so the dialog closes
+                  through Radix's own state (`open` flips false in the same
+                  render the selection clears) instead of unmounting while
+                  open, which can leave `pointer-events: none` on body. */}
+              <ModeSharePanel
+                open={shareOpen && selectedMode !== null}
+                onOpenChange={setShareOpen}
+                modeName={selectedMode ?? ""}
+                modeLabel={serverLabel}
+                org={effectiveOrg}
+                flags={lastSyncedFlags}
+              />
               <Button
                 size="sm"
                 variant="outline"

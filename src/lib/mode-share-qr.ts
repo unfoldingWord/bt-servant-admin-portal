@@ -37,10 +37,16 @@ export function qrPathData(
   matrix: QrMatrix,
   quietZone: number = QR_QUIET_ZONE
 ): string {
+  if (matrix.modules.length !== matrix.size) {
+    throw new Error("QR matrix row count does not match its size");
+  }
   const parts: string[] = [];
   for (let y = 0; y < matrix.size; y++) {
     const row = matrix.modules[y];
-    if (!row) continue;
+    if (!row || row.length !== matrix.size) {
+      // A short row would silently emit a symbol that scans to nothing.
+      throw new Error(`QR matrix row ${y} does not match its size`);
+    }
     for (let x = 0; x < matrix.size; x++) {
       if (row[x]) {
         parts.push(`M${x + quietZone} ${y + quietZone}h1v1h-1z`);
@@ -78,12 +84,14 @@ export function buildQrSvg(
   const { sizePx = 1024, dark = "#000000", light = "#ffffff", title } = options;
   const box = qrViewBoxSize(matrix);
   const titleEl = title ? `<title>${escapeXml(title)}</title>` : "";
+  // Every string input is escaped, colours included — callers pass
+  // literals today, but this is a public lib helper.
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${box} ${box}" ` +
     `width="${sizePx}" height="${sizePx}" shape-rendering="crispEdges">` +
     titleEl +
-    `<rect width="${box}" height="${box}" fill="${light}"/>` +
-    `<path d="${qrPathData(matrix)}" fill="${dark}"/>` +
+    `<rect width="${box}" height="${box}" fill="${escapeXml(light)}"/>` +
+    `<path d="${qrPathData(matrix)}" fill="${escapeXml(dark)}"/>` +
     `</svg>`
   );
 }

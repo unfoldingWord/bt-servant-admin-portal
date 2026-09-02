@@ -111,6 +111,85 @@ export function buildModeShareFilename(
 }
 
 function sanitize(s: string): string {
-  const cleaned = s.replace(/[^A-Za-z0-9._-]/g, "_").replace(/^_+|_+$/g, "");
+  // Leading dots are stripped too: `..` or `.hidden` as an org would
+  // otherwise produce a dot-file or a traversal-shaped download name.
+  const cleaned = s
+    .replace(/[^A-Za-z0-9._-]/g, "_")
+    .replace(/^[_.]+|[_.]+$/g, "");
   return cleaned || "untitled";
+}
+
+// ---------------------------------------------------------------------------
+// Panel state machine (#311). Pure so every branch is unit-testable; the
+// component only renders what this returns.
+// ---------------------------------------------------------------------------
+
+/** What the share-config query currently knows. */
+export interface ShareConfigSnapshot {
+  pending: boolean;
+  error: boolean;
+  /** `false` when the BFF route is absent (older deploy). */
+  supported: boolean;
+  whatsappNumber: string | null;
+  whatsappOrg: string | null;
+}
+
+export type ModeSharePanelState =
+  | { kind: "loading" }
+  | { kind: "error" }
+  | { kind: "unconfigured" }
+  | { kind: "number-invalid" }
+  | { kind: "slug-invalid" }
+  | { kind: "org-mismatch"; whatsappOrg: string }
+  | { kind: "group-only" }
+  | { kind: "draft" }
+  | { kind: "ready"; url: string; trigger: string; orgUnverified: boolean };
+
+/**
+ * Resolve what the panel shows. Order of precedence:
+ *
+ * 1. query lifecycle (loading, error);
+ * 2. eligibility, via `modeShareState` — org mismatch, then group-only,
+ *    then draft (the hardest constraint first, so the copy names the one
+ *    thing that has to change);
+ * 3. the link itself — number missing / invalid, or a non-canonical slug.
+ *
+ * A missing BFF route (`supported === false`) reads as "not configured":
+ * an older portal deploy has no number to give, and that is the truthful
+ * operator-facing message. `orgUnverified` is set on a ready result when
+ * the gateway org is unknown, so the card can say the org check was
+ * skipped rather than silently looking ready.
+ */
+export function resolveModeSharePanelState(
+  snapshot: ShareConfigSnapshot,
+  flags: { published?: boolean; requires_group?: boolean },
+  modeOrg: string | null | undefined,
+  modeName: string
+): ModeSharePanelState {
+  if (snapshot.pending) return { kind: "loading" };
+  if (snapshot.error) return { kind: "error" };
+  const whatsappOrg = snapshot.supported ? snapshot.whatsappOrg : null;
+  const whatsappNumber = snapshot.supported ? snapshot.whatsappNumber : null;
+  const eligibility = modeShareState(flags, modeOrg, whatsappOrg);
+  if (eligibility === "org-mismatch") {
+    return { kind: "org-mismatch", whatsappOrg: whatsappOrg ?? "" };
+  }
+  if (eligibility !== "ready") return { kind: eligibility };
+  const link = buildModeShareLink(whatsappNumber, modeName);
+  if (link.ok) {
+    return {
+      kind: "ready",
+      url: link.url,
+      trigger: link.trigger,
+      orgUnverified: !whatsappOrg,
+    };
+  }
+  switch (link.reason) {
+    case "number-missing":
+      return { kind: "unconfigured" };
+    case "number-invalid":
+      return { kind: "number-invalid" };
+    case "slug-invalid":
+      return { kind: "slug-invalid" };
+  }
 }

@@ -55,13 +55,31 @@ describe("GET /api/share-config — gates", () => {
     expect(res.status).toBe(401);
   });
 
-  it("405 for anything but GET, even with a session", async () => {
-    const sessionId = await seedSession();
+  it("401 with a junk session cookie", async () => {
+    const res = await worker.fetch(request({}, "not-a-session"), env);
+    expect(res.status).toBe(401);
+  });
+
+  it("authenticates before checking the method: POST without a session is 401", async () => {
     const res = await worker.fetch(
-      request({ method: "POST", body: "{}" }, sessionId),
+      request({ method: "POST", body: "{}" }),
       env
     );
-    expect(res.status).toBe(405);
+    expect(res.status).toBe(401);
+  });
+
+  it("405 for anything but GET once authenticated", async () => {
+    const sessionId = await seedSession();
+    for (const method of ["POST", "PUT", "DELETE", "HEAD"]) {
+      const res = await worker.fetch(
+        request(
+          { method, body: method === "HEAD" ? undefined : "{}" },
+          sessionId
+        ),
+        env
+      );
+      expect(res.status, method).toBe(405);
+    }
   });
 });
 
@@ -70,7 +88,13 @@ describe("GET /api/share-config — shape", () => {
     const sessionId = await seedSession();
     const res = await worker.fetch(request({}, sessionId), env);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as Record<string, unknown>;
+    // Exactly these two keys — no other env binding may leak through.
+    expect(Object.keys(body).sort()).toEqual([
+      "whatsapp_number",
+      "whatsapp_org",
+    ]);
+    expect(body).toEqual({
       whatsapp_number: "+1 (555) 010-0100",
       whatsapp_org: "acme",
     });
