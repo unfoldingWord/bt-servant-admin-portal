@@ -71,6 +71,12 @@ jobs:
         run: npm run build
 
       - name: Patch wrangler config for staging environment
+        # #311 — the WhatsApp number is a GitHub Actions *variable* (public
+        # by design: it is what the QR encodes). Unset → "" → the Modes page
+        # shows "WhatsApp number not configured". Settings → Secrets and
+        # variables → Actions → Variables → WHATSAPP_NUMBER (E.164).
+        env:
+          WHATSAPP_NUMBER: ${{ vars.WHATSAPP_NUMBER }}
         run: |
           node -e "
             const fs = require('fs');

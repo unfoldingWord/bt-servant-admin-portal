@@ -63,6 +63,20 @@ export function modeShareTrigger(slug: string): string {
   return `#${slug}`;
 }
 
+export type ModeShareSlugVerdict = "ok" | "slug-invalid" | "slug-reserved";
+
+/**
+ * Can this slug be carried by a `#` trigger at all? Independent of the
+ * number and of publish state — it is about the mode's identity, so the
+ * panel reports it before eligibility (a draft named `default` should hear
+ * "rename", not "publish").
+ */
+export function validateModeShareSlug(slug: string): ModeShareSlugVerdict {
+  if (!MODE_NAME_PATTERN.test(slug)) return "slug-invalid";
+  if (RESERVED_TRIGGERS.has(slug)) return "slug-reserved";
+  return "ok";
+}
+
 export type ModeShareLinkFailure =
   | "number-missing"
   | "number-invalid"
@@ -88,12 +102,8 @@ export function buildModeShareLink(
   }
   const digits = normalizeWhatsAppNumber(rawNumber);
   if (!digits) return { ok: false, reason: "number-invalid" };
-  if (!MODE_NAME_PATTERN.test(slug)) {
-    return { ok: false, reason: "slug-invalid" };
-  }
-  if (RESERVED_TRIGGERS.has(slug)) {
-    return { ok: false, reason: "slug-reserved" };
-  }
+  const slugVerdict = validateModeShareSlug(slug);
+  if (slugVerdict !== "ok") return { ok: false, reason: slugVerdict };
   const trigger = modeShareTrigger(slug);
   // `encodeURIComponent` turns the `#` into `%23`; the slug's own alphabet
   // ([a-z0-9-]) is untouched by it, which is what keeps the link legible.
@@ -184,11 +194,13 @@ export type ModeSharePanelState =
  * Resolve what the panel shows. Order of precedence:
  *
  * 1. query lifecycle (loading, error);
- * 2. eligibility, via `modeShareState` — org mismatch, then group-only,
+ * 2. the mode's identity — a slug the worker's trigger cannot carry
+ *    (non-canonical or reserved). Nothing else can fix that, so it is
+ *    named before any publish/org advice;
+ * 3. eligibility, via `modeShareState` — org mismatch, then group-only,
  *    then draft (the hardest constraint first, so the copy names the one
  *    thing that has to change);
- * 3. the link itself — number missing / invalid, or a slug the worker's
- *    trigger cannot carry (non-canonical or reserved).
+ * 4. the number — missing or invalid.
  *
  * A missing BFF route (`supported === false`) reads as "not configured":
  * an older portal deploy has no number to give, and that is the truthful
@@ -204,6 +216,8 @@ export function resolveModeSharePanelState(
 ): ModeSharePanelState {
   if (snapshot.pending) return { kind: "loading" };
   if (snapshot.error) return { kind: "error" };
+  const slugVerdict = validateModeShareSlug(modeName);
+  if (slugVerdict !== "ok") return { kind: slugVerdict };
   const whatsappOrg = snapshot.supported ? snapshot.whatsappOrg : null;
   const whatsappNumber = snapshot.supported ? snapshot.whatsappNumber : null;
   const eligibility = modeShareState(flags, modeOrg, whatsappOrg);
@@ -220,9 +234,9 @@ export function resolveModeSharePanelState(
       return { kind: "unconfigured" };
     case "number-invalid":
       return { kind: "number-invalid" };
+    // Already ruled out above; kept so the switch stays exhaustive.
     case "slug-invalid":
-      return { kind: "slug-invalid" };
     case "slug-reserved":
-      return { kind: "slug-reserved" };
+      return { kind: slugVerdict === "ok" ? "slug-invalid" : slugVerdict };
   }
 }

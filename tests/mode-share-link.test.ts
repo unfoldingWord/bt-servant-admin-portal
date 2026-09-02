@@ -8,6 +8,7 @@ import {
   modeShareTrigger,
   normalizeWhatsAppNumber,
   resolveModeSharePanelState,
+  validateModeShareSlug,
   type ShareConfigSnapshot,
 } from "../src/lib/mode-share-link";
 
@@ -314,6 +315,26 @@ describe("resolveModeSharePanelState", () => {
     ).toEqual({ kind: "slug-reserved" });
   });
 
+  it("names an identity problem before any publish/org advice", () => {
+    // A draft named `default` should hear "rename", not "publish": publishing
+    // would not make the QR work, and the reserved token is the real block.
+    expect(resolveModeSharePanelState(loaded, {}, "acme", "default")).toEqual({
+      kind: "slug-reserved",
+    });
+    expect(resolveModeSharePanelState(loaded, {}, "other", "Fia Mode")).toEqual(
+      { kind: "slug-invalid" }
+    );
+    // ...but never ahead of the query lifecycle.
+    expect(
+      resolveModeSharePanelState(
+        { ...loaded, pending: true },
+        {},
+        "acme",
+        "default"
+      )
+    ).toEqual({ kind: "loading" });
+  });
+
   it("treats an absent BFF route as not configured, not as an error", () => {
     const unsupported: ShareConfigSnapshot = {
       pending: false,
@@ -344,5 +365,16 @@ describe("isModeShareOpen", () => {
     expect(isModeShareOpen("fia", null)).toBe(false);
     // A → B: never a frame of B's name under A's flags.
     expect(isModeShareOpen("fia", "mast")).toBe(false);
+  });
+});
+
+describe("validateModeShareSlug", () => {
+  it("mirrors the worker's name pattern and reserved tokens", () => {
+    expect(validateModeShareSlug("fia-mode")).toBe("ok");
+    expect(validateModeShareSlug("kids_mode")).toBe("slug-invalid");
+    expect(validateModeShareSlug("")).toBe("slug-invalid");
+    for (const r of ["default", "none", "clear"]) {
+      expect(validateModeShareSlug(r)).toBe("slug-reserved");
+    }
   });
 });

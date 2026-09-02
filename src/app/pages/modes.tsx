@@ -77,7 +77,10 @@ import {
 } from "@/components/markdown-editor";
 import { MarkdownToc } from "@/components/markdown-toc";
 import { ModeSelector } from "@/components/mode-selector";
-import { ModeSharePanel } from "@/components/mode-share-panel";
+import {
+  MODE_SHARE_DIALOG_ID,
+  ModeSharePanel,
+} from "@/components/mode-share-panel";
 import { PageHeader } from "@/components/page-header";
 import { ResourcePriorityPanel } from "@/components/resource-priority-panel";
 
@@ -234,6 +237,14 @@ export function ModesPage() {
   // of mode B under mode A's flags, no unmount while open.
   const [shareFor, setShareFor] = useState<string | null>(null);
   const shareOpen = isModeShareOpen(shareFor, selectedMode);
+  // The derived `open` closes in the same render; this clears the latch so
+  // re-selecting the same mode later does not reopen the dialog unasked
+  // (Radix only reports onOpenChange for user dismissals, not for a
+  // parent-driven close). Same shape as the priorities sheet's reset.
+  useEffect(() => {
+    setShareFor(null);
+  }, [selectedMode]);
+  const shareButtonRef = useRef<HTMLButtonElement | null>(null);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
 
@@ -1554,6 +1565,7 @@ export function ModesPage() {
                   server-truth flag pair so a failed Publish can't show a
                   "ready" code. */}
               <Button
+                ref={shareButtonRef}
                 size="sm"
                 variant="outline"
                 onClick={() => setShareFor(selectedMode)}
@@ -1562,6 +1574,7 @@ export function ModesPage() {
                 aria-describedby="mode-share-help"
                 aria-haspopup="dialog"
                 aria-expanded={shareOpen}
+                aria-controls={MODE_SHARE_DIALOG_ID}
               >
                 <QrCode className="mr-1.5 size-3.5" />
                 QR code
@@ -1928,6 +1941,7 @@ export function ModesPage() {
         modeLabel={serverLabel}
         org={effectiveOrg}
         flags={lastSyncedFlags}
+        returnFocusTo={shareButtonRef}
       />
     </div>
   );

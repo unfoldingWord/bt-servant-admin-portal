@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Check, Copy, Download, ExternalLink, QrCode } from "lucide-react";
 
 import { downloadBlob } from "@/lib/download-blob";
@@ -37,9 +44,18 @@ import { Input } from "@/components/ui/input";
 // or to say plainly why it would not work yet. Which of those it is comes
 // from `resolveModeSharePanelState` (pure, unit-tested); this file renders.
 
+/** Content id, so the page's opener can point `aria-controls` at it. */
+export const MODE_SHARE_DIALOG_ID = "mode-share-dialog";
+
 interface ModeSharePanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * The control that opened the dialog. It lives outside the Dialog tree
+   * (a plain header button, not DialogTrigger), so Radix has no trigger
+   * to return focus to on close; we do it ourselves.
+   */
+  returnFocusTo?: RefObject<HTMLElement | null>;
   modeName: string;
   modeLabel?: string;
   /** Effective org of the mode being viewed (cross-org aware). */
@@ -58,6 +74,7 @@ export function ModeSharePanel({
   modeLabel,
   org,
   flags,
+  returnFocusTo,
 }: ModeSharePanelProps) {
   // Fetch only once the panel has been opened; the result is cached for
   // the session, so later opens are instant.
@@ -231,7 +248,18 @@ export function ModeSharePanel({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent
+        id={MODE_SHARE_DIALOG_ID}
+        className="sm:max-w-md"
+        onCloseAutoFocus={(event) => {
+          const target = returnFocusTo?.current;
+          // Null when the opener has unmounted (selection cleared); let
+          // Radix fall through to its default rather than focus nothing.
+          if (!target) return;
+          event.preventDefault();
+          target.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Share on WhatsApp</DialogTitle>
           {/* Stable description (Radix reads it once, on open). What changes
