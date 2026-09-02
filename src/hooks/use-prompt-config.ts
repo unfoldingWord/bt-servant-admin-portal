@@ -90,46 +90,57 @@ export interface ModeSaveTarget {
     requires_group?: boolean;
   };
   /**
+   * The org the PUT targets, pinned by the CALLER at the moment the action
+   * started — same rule as `languageSaveMutationOptions` (#286). TanStack
+   * replaces a live mutation's options on every re-render, so a closure-read
+   * org would hand the settled callbacks whatever org is ambient when the
+   * PUT lands. The org-context dialog offers "Discard and switch" WHILE a
+   * save is in flight, so that is a reachable path, not a theoretical one:
+   * org A's completed save would invalidate org B and leave A's cache
+   * holding the pre-save document. Used for the PUT, the seed, AND the
+   * invalidation, so the three can never name different orgs (codex+grok
+   * #315 rd-2).
+   */
+  org: string | null;
+  /**
    * Opt-in cache seed for a PUT that targets a mode the editor is NOT
-   * (necessarily) showing — import (#198) and create (#308). When present,
-   * the PUT response is written into the TARGET mode's per-mode cache AND
-   * upserted into the list cache for `seed.org` INSIDE this hook's
-   * `onSuccess`, which TanStack awaits BEFORE it flips `isPending` and
-   * before any mutate-level `onSuccess`/`onSettled` runs
-   * (`@tanstack/query-core` mutation.ts: `await this.options.onSuccess`,
-   * then `dispatch({type:'success'})`). That ordering is the point: the
-   * page's save lock and the Import button's busy gate both release on
-   * settle, and the import gate classifies from the live list — so the row
-   * must already be in the cache when either releases (codex+grok #315
-   * rd-1). A seed done from the mutate-level callback lands too late.
-   *
-   * Org pinned by the CALLER at the moment the action started, not read
-   * from this hook's ambient `org`: TanStack updates a live mutation's
-   * options on every re-render, so an org-context switch made while the PUT
-   * is in flight would hand the settled callback the NEW org's key.
+   * (necessarily) showing — import (#198) and create (#308). When set, the
+   * PUT response is written into the TARGET mode's per-mode cache AND
+   * upserted into the list cache INSIDE this hook's `onSuccess`, which
+   * TanStack awaits BEFORE it flips `isPending` and before any mutate-level
+   * `onSuccess`/`onSettled` runs (`@tanstack/query-core` mutation.ts:
+   * `await this.options.onSuccess`, then `dispatch({type:'success'})`). That
+   * ordering is the point: the page's save lock and the Import button's
+   * busy gate both release on settle, and the import gate classifies from
+   * the live list — so the row must already be in the cache when either
+   * releases (codex+grok #315 rd-1). A seed done from the mutate-level
+   * callback lands too late.
    *
    * Absent for the editor's ordinary saves (autosave, flag toggles, priority
    * apply, label sync): those target the SELECTED mode, whose trackers are
    * advanced from the response by the page, and #306 deliberately kept the
    * shared save path free of cache seeding.
    */
-  seed?: { org: string | null };
+  seed?: true;
 }
 
 // Exported so the cache effects can be tested against a real QueryClient
 // without React (same shape as `languageSaveMutationOptions`).
-export function saveModeMutationOptions(qc: QueryClient, key: string | null) {
+export function saveModeMutationOptions(qc: QueryClient) {
   return {
-    mutationFn: ({ name, body }: ModeSaveTarget) =>
-      configApi.putMode(name, body, undefined, key),
-    onSuccess: async (saved: PromptMode, { name, seed }: ModeSaveTarget) => {
+    mutationFn: ({ name, body, org }: ModeSaveTarget) =>
+      configApi.putMode(name, body, undefined, org),
+    onSuccess: async (
+      saved: PromptMode,
+      { name, org, seed }: ModeSaveTarget
+    ) => {
+      const key = normalize(org);
       if (seed) {
-        const seedKey = normalize(seed.org);
         // AWAIT the cancel before seeding (TanStack's optimistic-update
         // order): an in-flight GET that settles AFTER setQueryData would
         // write the pre-save row straight back into the cache.
-        await qc.cancelQueries({ queryKey: keys.mode(name, seedKey) });
-        qc.setQueryData(keys.mode(name, seedKey), saved);
+        await qc.cancelQueries({ queryKey: keys.mode(name, key) });
+        qc.setQueryData(keys.mode(name, key), saved);
         // Upsert the LIST too, so a just-created slug is immediately present
         // in the dropdown AND classified `existing` by the import gate —
         // otherwise a same-slug import before the list refetch lands takes
@@ -139,23 +150,23 @@ export function saveModeMutationOptions(qc: QueryClient, key: string | null) {
         // in the render gap before the refetch lands (the gap
         // clone/rename/retire close in their onSuccess). Cancel the list GET
         // first so a pre-write response can't drop the row.
-        await qc.cancelQueries({ queryKey: keys.modes(seedKey) });
-        qc.setQueryData<OrgModes>(keys.modes(seedKey), (prev) =>
+        await qc.cancelQueries({ queryKey: keys.modes(key) });
+        qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
           applyCloneToModeList(prev, saved)
         );
       }
-      // Invalidate AFTER any seed: a refetch started here captures the
-      // seeded state as its revert baseline, and reconciles the optimistic
-      // rows with server truth (e.g. fresh `aliases`).
+      // Invalidate AFTER any seed, and for the SAME pinned org: a refetch
+      // started here captures the seeded state as its revert baseline, and
+      // reconciles the optimistic rows with server truth (e.g. fresh
+      // `aliases`).
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
     },
   };
 }
 
-export function useSaveMode(org?: string | null) {
-  const qc = useQueryClient();
-  return useMutation(saveModeMutationOptions(qc, normalize(org)));
+export function useSaveMode() {
+  return useMutation(saveModeMutationOptions(useQueryClient()));
 }
 
 // Read the cached org mode list SYNCHRONOUSLY, outside the render cycle

@@ -235,8 +235,9 @@ describe("classifyModeImport — re-validation across a concurrent mutation", ()
       classifyModeImport({ mode: parsed(), modes: atPick.modes, ...rights })
     ).toEqual({ kind: "create" });
 
-    // handleCreateMode / a same-slug import seeds the list from the PUT
-    // response (useSeedSavedMode → applyCloneToModeList).
+    // handleCreateMode / a same-slug import seed the list from the PUT
+    // response inside the save hook's onSuccess (saveModeMutationOptions →
+    // applyCloneToModeList).
     const created: PromptMode = { name: "spoken", document: "fresh" };
     const atConfirm = applyCloneToModeList(atPick, created)!;
     expect(

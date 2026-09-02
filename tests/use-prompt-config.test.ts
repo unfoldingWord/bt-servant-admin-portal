@@ -243,9 +243,10 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     const setSpy = vi.spyOn(qc, "setQueryData");
     const cancelSpy = vi.spyOn(qc, "cancelQueries");
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
-    await saveModeMutationOptions(qc, null).onSuccess(saved, {
+    await saveModeMutationOptions(qc).onSuccess(saved, {
       name: "spoken",
       body: { document: "fresh" },
+      org: null,
     });
     expect(setSpy).not.toHaveBeenCalled();
     expect(cancelSpy).not.toHaveBeenCalled();
@@ -263,10 +264,11 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     qc.setQueryData<OrgModes>(modeQueryKeys.modes(null), {
       modes: [{ name: "written", document: "w" }],
     });
-    await saveModeMutationOptions(qc, null).onSuccess(saved, {
+    await saveModeMutationOptions(qc).onSuccess(saved, {
       name: "spoken",
       body: { document: "fresh" },
-      seed: { org: null },
+      org: null,
+      seed: true,
     });
     expect(qc.getQueryData(modeQueryKeys.mode("spoken", null))).toEqual(saved);
     const names = qc
@@ -290,10 +292,11 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     vi.spyOn(qc, "invalidateQueries").mockImplementation(async (f) => {
       order.push(`invalidate:${JSON.stringify(f?.queryKey)}`);
     });
-    await saveModeMutationOptions(qc, null).onSuccess(saved, {
+    await saveModeMutationOptions(qc).onSuccess(saved, {
       name: "spoken",
       body: { document: "fresh" },
-      seed: { org: null },
+      org: null,
+      seed: true,
     });
     expect(order).toEqual([
       `cancel:${JSON.stringify(modeQueryKeys.mode("spoken", null))}`,
@@ -305,18 +308,41 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     ]);
   });
 
-  it("seeds the org pinned in `seed`, not the hook's ambient key", async () => {
+  it("sends the PUT to the org named in the variables", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ mode: { name: "spoken", document: "x" } })
+        )
+      );
+    await saveModeMutationOptions(makeClient()).mutationFn({
+      name: "spoken",
+      body: { document: "x" },
+      org: "alpha",
+    });
+    expect(String(spy.mock.calls[0]![0])).toBe(
+      "/api/config/modes/spoken?org=alpha"
+    );
+  });
+
+  it("seed AND invalidation follow the org in the variables, never another org", async () => {
     // The org-context switch dialog offers "Discard and switch" while a save
-    // is in flight, and TanStack hands a settled mutation the LATEST
-    // options — so the ambient key can already be org B when org A's PUT
-    // settles. The seed must follow the org the caller pinned.
+    // is in flight, and TanStack hands a settled mutation the LATEST options
+    // — so any org read from a hook closure could already be org B when org
+    // A's PUT settles. Everything the settle does must follow the pinned org
+    // (codex+grok #315 rd-2: the first cut seeded A but invalidated B, so A
+    // never reconciled and B refetched for nothing).
     const qc = makeClient();
     qc.setQueryData<OrgModes>(modeQueryKeys.modes("alpha"), { modes: [] });
     qc.setQueryData<OrgModes>(modeQueryKeys.modes("beta"), { modes: [] });
-    await saveModeMutationOptions(qc, "beta").onSuccess(saved, {
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    const cancelSpy = vi.spyOn(qc, "cancelQueries");
+    await saveModeMutationOptions(qc).onSuccess(saved, {
       name: "spoken",
       body: { document: "fresh" },
-      seed: { org: "alpha" },
+      org: "alpha",
+      seed: true,
     });
     expect(
       qc.getQueryData<OrgModes>(modeQueryKeys.modes("alpha"))?.modes
@@ -330,6 +356,13 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     expect(
       qc.getQueryData(modeQueryKeys.mode("spoken", "beta"))
     ).toBeUndefined();
+    expect(invalidateSpy.mock.calls.map((c) => c[0]?.queryKey)).toEqual([
+      modeQueryKeys.modes("alpha"),
+      modeQueryKeys.mode("spoken", "alpha"),
+    ]);
+    for (const call of cancelSpy.mock.calls) {
+      expect(call[0]?.queryKey).toContain("alpha");
+    }
   });
 
   it("an in-flight list GET that settles after the seed cannot drop the row", async () => {
@@ -347,10 +380,11 @@ describe("saveModeMutationOptions — opt-in seed", () => {
         }),
       staleTime: 0,
     });
-    await saveModeMutationOptions(qc, null).onSuccess(saved, {
+    await saveModeMutationOptions(qc).onSuccess(saved, {
       name: "spoken",
       body: { document: "fresh" },
-      seed: { org: null },
+      org: null,
+      seed: true,
     });
     resolveFetch({ modes: [] });
     await pending.catch(() => undefined);
@@ -362,10 +396,11 @@ describe("saveModeMutationOptions — opt-in seed", () => {
 
   it("does not fabricate a list when nothing is cached for the seed org", async () => {
     const qc = makeClient();
-    await saveModeMutationOptions(qc, null).onSuccess(saved, {
+    await saveModeMutationOptions(qc).onSuccess(saved, {
       name: "spoken",
       body: { document: "fresh" },
-      seed: { org: null },
+      org: null,
+      seed: true,
     });
     expect(qc.getQueryData(modeQueryKeys.modes(null))).toBeUndefined();
     expect(qc.getQueryData(modeQueryKeys.mode("spoken", null))).toEqual(saved);

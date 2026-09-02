@@ -23,8 +23,8 @@
 import type { LanguageRights } from "@/types/auth";
 import type { PromptMode } from "@/types/prompt-override";
 
-import type { ParsedModeImport } from "./mode-import";
-import { hasRights } from "./permissions";
+import type { ParsedModeImport } from "@/lib/mode-import";
+import { hasRights } from "@/lib/permissions";
 
 export interface ModeImportGateInput {
   /** The parsed, validated file. */
