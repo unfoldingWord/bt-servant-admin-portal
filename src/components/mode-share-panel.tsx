@@ -70,12 +70,40 @@ const PNG_FAIL = "Couldn't render the PNG. Download the SVG instead.";
 export function ModeSharePanel({
   open,
   onOpenChange,
-  modeName,
-  modeLabel,
-  org,
-  flags,
+  modeName: liveModeName,
+  modeLabel: liveModeLabel,
+  org: liveOrg,
+  flags: liveFlags,
   returnFocusTo,
 }: ModeSharePanelProps) {
+  // While closing, Radix keeps the content mounted for its exit animation
+  // but the page has already dropped the latch (`modeName` is "" and the
+  // label/flags may belong to the next selection). Freeze what was shown
+  // at the last open render so the status region and card do not flicker
+  // through "can't encode this name" on the way out.
+  const frozenRef = useRef({
+    modeName: liveModeName,
+    modeLabel: liveModeLabel,
+    org: liveOrg,
+    flags: liveFlags,
+  });
+  if (open) {
+    frozenRef.current = {
+      modeName: liveModeName,
+      modeLabel: liveModeLabel,
+      org: liveOrg,
+      flags: liveFlags,
+    };
+  }
+  const { modeName, modeLabel, org, flags } = open
+    ? {
+        modeName: liveModeName,
+        modeLabel: liveModeLabel,
+        org: liveOrg,
+        flags: liveFlags,
+      }
+    : frozenRef.current;
+
   // Fetch only once the panel has been opened; the result is cached for
   // the session, so later opens are instant.
   const shareConfig = useShareConfig(open);

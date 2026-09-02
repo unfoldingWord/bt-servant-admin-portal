@@ -18,9 +18,11 @@
     // Empty = the Modes page shows "WhatsApp number not configured". The
     // worker's first-contact message (#311 part 2) will read a var of the
     // same name from its wrangler.toml; when it lands, change both together.
-    // NOTE: the CI deploy workflows (deploy-pr.yml, deploy-staging.yml)
-    // rewrite `vars` wholesale on the built config — keep their lists in
-    // step with this one. Local `--env` blocks below mirror it too.
+    // The CI workflows source the number from the GitHub Actions variable
+    // WHATSAPP_NUMBER: deploy-pr.yml / deploy-staging.yml rewrite `vars`
+    // wholesale on the built config (keep their lists in step with this
+    // one); deploy-prod.yml injects it with `--var`, which wins over this
+    // value. Local `--env` blocks below mirror the keys.
     "WHATSAPP_NUMBER": "",
     // Org the WhatsApp gateway is pinned to (gateway wrangler.toml ENGINE_ORG).
     "WHATSAPP_ORG": "unfoldingWord",

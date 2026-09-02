@@ -241,9 +241,11 @@ export function ModesPage() {
   // re-selecting the same mode later does not reopen the dialog unasked
   // (Radix only reports onOpenChange for user dismissals, not for a
   // parent-driven close). Same shape as the priorities sheet's reset.
+  // `contextOrg` is listed too: `setContextOrg` already nulls the selection
+  // (ui-store), so this is belt-and-suspenders for the documented intent.
   useEffect(() => {
     setShareFor(null);
-  }, [selectedMode]);
+  }, [selectedMode, contextOrg]);
   const shareButtonRef = useRef<HTMLButtonElement | null>(null);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
