@@ -26,6 +26,7 @@ import {
   type ModeFlags,
 } from "@/lib/mode-flags";
 import { type ParsedModeImport, parseModeImport } from "@/lib/mode-import";
+import { classifyModeImport } from "@/lib/mode-import-gate";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { humanizeModeSlug, slugifyModeName } from "@/lib/mode-slug";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
@@ -47,10 +48,10 @@ import {
   useDeleteMode,
   useMode,
   useModes,
+  useReadModeList,
   useRenameMode,
   useRetireMode,
   useSaveMode,
-  useSeedImportedMode,
 } from "@/hooks/use-prompt-config";
 import type { MarkdownHeading } from "@/types/markdown";
 import type { PromptMode } from "@/types/prompt-override";
@@ -116,8 +117,10 @@ export function ModesPage() {
 
   const modesQuery = useModes(contextOrg);
   const modeQuery = useMode(selectedMode, contextOrg);
-  const saveMode = useSaveMode(contextOrg);
-  const seedImportedMode = useSeedImportedMode();
+  // Org travels in the mutation VARIABLES (every call site pins `contextOrg`
+  // at call time), not as a hook argument — see `ModeSaveTarget.org`.
+  const saveMode = useSaveMode();
+  const readModeList = useReadModeList();
   const deleteMode = useDeleteMode(contextOrg);
   const renameMode = useRenameMode(contextOrg);
   const cloneMode = useCloneMode(contextOrg);
@@ -309,6 +312,7 @@ export function ModesPage() {
       saveMode.mutate(
         {
           name: target,
+          org: contextOrg,
           body: {
             label: serverLabel,
             description: serverDescription,
@@ -339,6 +343,7 @@ export function ModesPage() {
     },
     [
       applyLastSyncedFlags,
+      contextOrg,
       saveMode,
       selectedMode,
       serverDescription,
@@ -470,6 +475,14 @@ export function ModesPage() {
   const [priorityApplyError, setPriorityApplyError] = useState<string | null>(
     null
   );
+  // The one way to put the panel back to "nothing open, nothing reported".
+  // Used by every site that must behave like a selection change (the
+  // selection effect below, a successful Apply, and an import that re-hydrates
+  // the open mode in place) so they cannot drift apart as panel state grows.
+  const resetPrioritiesPanel = useCallback(() => {
+    setPrioritiesOpen(false);
+    setPriorityApplyError(null);
+  }, []);
 
   // A stale apply failure — and an open panel — are about another mode's
   // draft the moment the selection moves (rights revocation and org-context
@@ -477,9 +490,8 @@ export function ModesPage() {
   // the prior mode's unsaved state is already reported by the ordinary
   // save-status machinery.
   useEffect(() => {
-    setPrioritiesOpen(false);
-    setPriorityApplyError(null);
-  }, [selectedMode]);
+    resetPrioritiesPanel();
+  }, [resetPrioritiesPanel, selectedMode]);
 
   // The apply error is a claim about ONE document — the failed apply's
   // `nextDocument`, which is exactly what `lastFailedDoc` holds after the
@@ -514,17 +526,43 @@ export function ModesPage() {
     [isDirty, isSaving, selectedMode, setSelectedMode]
   );
 
-  // #198 — import handlers. Defined here, AFTER handleSelectMode, because
-  // finishImport routes a post-import switch through it (the fix for the
-  // dirty-switch-guard bypass below).
+  // #198 — import handlers. finishImport never moves the selection (see its
+  // "do NOT auto-switch" note): the import's only contact with the editor is
+  // the same-mode in-place re-hydrate, so no switch-guard routing is needed.
 
   // The create-or-overwrite PUT for an imported mode, shared by the direct
   // create path and the overwrite-confirm dialog. Participates in the same
   // synchronous save lock as every other save path (#209 serialization), and
   // sends the always-explicit published/requires_group pair the worker needs
-  // (it has no partial update).
+  // (it has no partial update). Carries `seed: true` (org in the variables)
+  // so the hook seeds the imported mode's own per-mode + list caches from the
+  // authoritative PUT
+  // response INSIDE its awaited onSuccess — i.e. before the lock below is
+  // released and before `saveMode.isPending` drops. Without the seed a later
+  // select of an overwritten-but-inactive mode hydrates the pre-import cache
+  // and the next save reverts the import, and a same-slug re-import before
+  // the list refetch lands would classify as a create (grok #306 rd-4/5).
+  // ONE input builder for the two decision points #308 requires to share
+  // semantics (file-pick and overwrite-confirm), so neither can drift to the
+  // rights-filtered `authorizedModesData` or a different rights pair. Reads
+  // the LIVE list from the query client rather than the render closure's
+  // `modesQuery.data`: both callers run in async continuations by which time
+  // a create/rename/retire (ours, or another admin's via refetch) can have
+  // landed in the cache without the closure seeing it. Fails closed when no
+  // list is cached for the target org.
+  const classifyImport = useCallback(
+    (mode: ParsedModeImport, org: string | null) =>
+      classifyModeImport({
+        mode,
+        modes: readModeList(org)?.modes,
+        editRights: modeEditRights,
+        publishRights: modePublishRights,
+      }),
+    [readModeList, modeEditRights, modePublishRights]
+  );
+
   const runImport = useCallback(
-    (mode: ParsedModeImport) => {
+    (mode: ParsedModeImport, org: string | null) => {
       // A GATE, not just a counter (#209 contract, mirrors handleSetPublished).
       // The file-pick lock check is stale by the time we get here: `await
       // file.text()` yields, and the overwrite dialog holds no lock for an
@@ -534,6 +572,17 @@ export function ModesPage() {
       if (inFlightSavesRef.current > 0) {
         throw new Error(
           "A save is already in progress — try again in a moment."
+        );
+      }
+      // The PUT, seed, and invalidation all follow the pinned `org` (it
+      // travels in the mutation variables), so this is not about WHERE the
+      // write lands — it refuses to write into an org the user has since
+      // left. The org-change effect below clears a pending import so the two
+      // cannot normally diverge; this makes that a CHECKED invariant rather
+      // than an incidental one (#308 P3).
+      if (useUiStore.getState().contextOrg !== org) {
+        throw new Error(
+          "The org context changed — reopen Import for the current org."
         );
       }
       inFlightSavesRef.current += 1;
@@ -547,6 +596,8 @@ export function ModesPage() {
             published: mode.published,
             requires_group: mode.requires_group,
           },
+          org,
+          seed: true,
         })
         .finally(() => {
           inFlightSavesRef.current -= 1;
@@ -556,19 +607,27 @@ export function ModesPage() {
   );
 
   const finishImport = useCallback(
-    async (
-      mode: ParsedModeImport,
-      saved: PromptMode,
-      importOrg: string | null
-    ) => {
-      // Seed the imported mode's OWN per-mode cache with the authoritative PUT
-      // response, org pinned to the org the import targeted. `useSaveMode` only
-      // invalidates (active-refetch), so without this a later select of an
-      // overwritten-but-inactive mode hydrates the pre-import cache and the next
-      // save reverts the import; and the same-mode server-label read would stay
-      // stale until a refetch (grok #306 rd-4). Import-local — never on the
-      // shared save hook.
-      await seedImportedMode(mode.name, importOrg, saved);
+    (mode: ParsedModeImport, saved: PromptMode, importOrg: string | null) => {
+      // The imported mode's own per-mode + list caches were seeded by the
+      // save hook (`seed: true` in runImport) before the PUT settled, so by
+      // here the live list already classifies this slug as `existing`.
+
+      // #308 — a rename's "Update the display name too?" prompt holds the
+      // rename response as a pre-import snapshot of this slug's document;
+      // confirming it after the import would PUT that snapshot over what was
+      // just imported. The import is the later, stronger intent: retire the
+      // prompt for this slug — FIRST, before anything else in this
+      // continuation yields (grok #315 rd-1). Functional update, because this
+      // runs after an await, where the render closure's `labelSync` can be
+      // stale. (The dialog re-initializes its value/error on every open, so
+      // only the gate needs clearing.) Name-only matching is enough because
+      // the org-change effect below clears `labelSync` whenever the org moves,
+      // so a prompt alive here belongs to the live org; the worst residual is
+      // dismissing a same-slug prompt installed in a new org during the PUT
+      // window — a lost prompt, never a wrong write.
+      setLabelSync((prev) =>
+        prev !== null && prev.name === mode.name ? null : prev
+      );
 
       // Read the LIVE (org, selection) — finishImport runs in an async
       // continuation (after file.text() + the PUT), during which the user may
@@ -598,6 +657,10 @@ export function ModesPage() {
         );
         setLastFailedDoc(null);
         syncedNameRef.current = mode.name;
+        // #308 P3 — an open priority panel's unapplied local ranking was built
+        // from the pre-import draft; close and reset it exactly as a selection
+        // change does, so it cannot Apply into the imported document.
+        resetPrioritiesPanel();
         setImportNotice(
           aliasNote ? `Imported “${mode.name}”.${aliasNote}` : null
         );
@@ -613,7 +676,7 @@ export function ModesPage() {
         `Imported “${mode.name}” — select it from the mode list to edit.${aliasNote}`
       );
     },
-    [applyLastSyncedFlags, seedImportedMode]
+    [applyLastSyncedFlags, resetPrioritiesPanel]
   );
 
   const handleImportFileChange = useCallback(
@@ -657,71 +720,22 @@ export function ModesPage() {
         );
         return;
       }
-      // Fail CLOSED when the mode list has not loaded: without it the collision
-      // check below would see an empty list, treat an existing mode as new, and
-      // overwrite it with no confirmation.
-      if (!modesQuery.data) {
-        setImportError(
-          "The mode list is still loading — try again in a moment."
-        );
-        return;
-      }
-
       const result = parseModeImport(text);
       if (!result.ok) {
         setImportError(result.error);
         return;
       }
 
-      const name = result.mode.name;
-      // Resolve against the FULL org mode list by canonical name AND aliases.
-      // The engine resolves alias slugs on PUT (findModeBySlug honors aliases),
-      // so a PUT addressed to an alias mutates the aliased-TO mode. An import
-      // whose name is a stale/retired slug would therefore silently overwrite a
-      // DIFFERENT canonical mode with no confirmation — refuse and point the
-      // user at the canonical slug rather than clobber it (codex+grok rd-2).
-      // (Full list, not authorized subset: a hidden collision must still be
-      // caught. The list is guaranteed loaded by the fail-closed guard above.)
-      const collision = modesQuery.data.modes.find(
-        (m) => m.name === name || m.aliases?.includes(name)
-      );
-      if (collision && collision.name !== name) {
-        setImportError(
-          `“${name}” is an alias of “${collision.name}” — import against the canonical slug.`
-        );
-        return;
-      }
-      const exists = collision !== undefined;
-
-      // Edit rights on the TARGET slug are required whether creating or
-      // overwriting: the worker early-denies any caller with no rights on the
-      // exact name (admins and cross-org carry "*"), so `canCreate` — "has a
-      // right on SOME mode" — is not sufficient for a new slug (codex rd-2).
-      if (!canEditModeName(name)) {
-        setImportError(
-          exists
-            ? `You don't have permission to overwrite the “${name}” mode.`
-            : `You don't have permission to create the “${name}” mode. Creating a new mode needs edit rights on that slug (admin or a wildcard grant).`
-        );
-        return;
-      }
-      // Publishing additionally needs publish rights — the worker's diff gate
-      // requires the `publish` verb when creating a published mode OR flipping
-      // an existing one's flag, so a user without it would hit a bare 403 after
-      // confirming (codex+grok rd-2/3). Compute whether this import publishes:
-      // a create sets published from false→its value; an overwrite is a change
-      // only when the flag differs.
-      const publishChanges = exists
-        ? result.mode.published !== (collision?.published ?? false)
-        : result.mode.published;
-      if (publishChanges && !hasRights(modePublishRights, name)) {
-        setImportError(
-          `This import changes the published state of “${name}”, which needs publish rights you don't have on it.`
-        );
+      // Collision (canonical + alias), edit rights on the exact slug, and the
+      // publish diff all live in `classifyModeImport` (#308) — one pure gate,
+      // run here and AGAIN at overwrite-confirm through the same builder.
+      const decision = classifyImport(result.mode, startOrg);
+      if (decision.kind === "blocked") {
+        setImportError(decision.reason);
         return;
       }
 
-      if (exists) {
+      if (decision.kind === "overwrite") {
         setImportConfirmError(null);
         // Pin the validated org onto the pending import. The overwrite dialog
         // can sit open across an org switch; confirming must target the org
@@ -739,27 +753,24 @@ export function ModesPage() {
       // startOrg is the validated + PUT-target org (unchanged since the picker
       // opened, enforced above), so finishImport can refuse cross-org hydration.
       try {
-        const saved = await runImport(result.mode);
-        await finishImport(result.mode, saved, startOrg);
+        const saved = await runImport(result.mode, startOrg);
+        finishImport(result.mode, saved, startOrg);
       } catch (err) {
         setImportError(err instanceof Error ? err.message : "Import failed.");
       }
     },
-    [
-      modesQuery.data,
-      canEditModeName,
-      modePublishRights,
-      contextOrg,
-      runImport,
-      finishImport,
-    ]
+    [classifyImport, contextOrg, runImport, finishImport]
   );
 
   // Discard a pending overwrite when the org context changes — its collision
   // and permission checks were validated against the previous org (codex rd-5).
+  // The rename label-sync prompt goes with it (#308): its PUT rides the live
+  // hook org, so confirming it after an org switch would write the previous
+  // org's rename snapshot into the new org.
   useEffect(() => {
     setPendingImport(null);
     setImportConfirmError(null);
+    setLabelSync(null);
   }, [contextOrg]);
 
   const confirmImport = useCallback(() => {
@@ -767,14 +778,35 @@ export function ModesPage() {
     const { mode, org } = pendingImport;
     return runConfirmedAction(
       async () => {
-        const saved = await runImport(mode);
-        await finishImport(mode, saved, org);
+        // #308 — re-validate EVERY file-pick precondition before writing;
+        // the decision made then is a snapshot and the dialog holds no lock.
+        // Clean editor first: a same-slug overwrite re-hydrates the open
+        // editor in place, so a draft dirtied meanwhile would be discarded
+        // (the dialog is modal, so this is defence in depth alongside the
+        // dismiss gate on the dialog itself). Then the gate: a mutation
+        // completing while the dialog was open can turn the slug into an
+        // alias (rename/retire → the PUT would land on a DIFFERENT canonical
+        // mode) or change the publish diff / rights answer. A refusal renders
+        // inline in the dialog via runConfirmedAction. A "create" answer here
+        // means the mode was deleted meanwhile — the user consented to the
+        // stronger action (overwrite), so creating it is within that consent.
+        if (isDirtyRef.current) {
+          throw new Error(
+            "Save or discard your current changes before importing."
+          );
+        }
+        const decision = classifyImport(mode, org);
+        if (decision.kind === "blocked") {
+          throw new Error(decision.reason);
+        }
+        const saved = await runImport(mode, org);
+        finishImport(mode, saved, org);
       },
       setImportConfirmError,
       () => setPendingImport(null),
       "Import failed."
     );
-  }, [pendingImport, runImport, finishImport]);
+  }, [pendingImport, classifyImport, runImport, finishImport]);
 
   const confirmSwitch = useCallback(() => {
     setSelectedMode(pendingSwitch);
@@ -836,10 +868,24 @@ export function ModesPage() {
       // Nor can it corrupt the trackers — it targets a brand-new slug and
       // only moves the selection. It still counts, so the paths that do
       // need serialization can see it.
+      //
+      // Pin the org the PUT targets: the dialog closes on click, so the user
+      // can switch org context while the create is in flight.
+      const org = contextOrg;
       inFlightSavesRef.current += 1;
       saveMode.mutate(
         {
           name,
+          // #308 — seed the per-mode AND list caches from the PUT response, as
+          // clone/rename/retire/import already do. Done by the hook INSIDE its
+          // awaited onSuccess, so the row is in the live list BEFORE the lock
+          // below releases and before `isPending` re-enables Import: a
+          // same-slug import in that gap would otherwise classify as a create
+          // and clobber the new mode with no confirm (codex+grok #315 rd-1).
+          // It also keeps the stale-selection guard from nulling the slug
+          // selected below before the list refetch lands.
+          org,
+          seed: true,
           body: {
             label: label || undefined,
             description: description || undefined,
@@ -853,14 +899,33 @@ export function ModesPage() {
           },
         },
         {
-          onSuccess: () => setSelectedMode(name),
+          onSuccess: () => {
+            // Runs after the hook's seed has landed. Selection is skipped if
+            // the org moved on mid-PUT — the slug would name a different
+            // org's mode (or nothing).
+            if (useUiStore.getState().contextOrg !== org) return;
+            // Dirty guard, via the committed ref rather than handleSelectMode
+            // (whose render closure is stale inside a mutation callback). The
+            // New Mode card is inline, not modal, so the open editor stays
+            // typeable during the PUT; selecting the new slug over a dirty
+            // draft would re-target that draft's next autosave at the new
+            // mode. Before the list was seeded the stale-selection guard
+            // happened to null the selection first and hide this; now the
+            // draft gets the same "Switch mode?" prompt clone/retire get
+            // (code-review on #315).
+            if (isDirtyRef.current) {
+              setPendingSwitch(name);
+              return;
+            }
+            setSelectedMode(name);
+          },
           onSettled: () => {
             inFlightSavesRef.current -= 1;
           },
         }
       );
     },
-    [saveMode, setSelectedMode]
+    [contextOrg, saveMode, setSelectedMode]
   );
 
   const handleSetPublished = useCallback(
@@ -884,6 +949,7 @@ export function ModesPage() {
       try {
         const saved = await saveMode.mutateAsync({
           name,
+          org: contextOrg,
           body: {
             label: serverLabel,
             description: serverDescription,
@@ -901,6 +967,7 @@ export function ModesPage() {
     },
     [
       applyLastSyncedFlags,
+      contextOrg,
       draft,
       saveMode,
       selectedMode,
@@ -933,6 +1000,7 @@ export function ModesPage() {
       try {
         const saved = await saveMode.mutateAsync({
           name: target,
+          org: contextOrg,
           body: {
             label: serverLabel,
             description: serverDescription,
@@ -950,6 +1018,7 @@ export function ModesPage() {
     },
     [
       applyLastSyncedFlags,
+      contextOrg,
       draft,
       saveMode,
       selectedMode,
@@ -988,6 +1057,7 @@ export function ModesPage() {
       try {
         const saved = await saveMode.mutateAsync({
           name: target,
+          org: contextOrg,
           body: {
             label: serverLabel,
             description: serverDescription,
@@ -1007,8 +1077,7 @@ export function ModesPage() {
           // the sheet. Both stay ownership-gated so a save that outlives the
           // selection can't close (or repaint) a panel now showing another
           // mode; the selection-change effect already reset panel state.
-          setPriorityApplyError(null);
-          setPrioritiesOpen(false);
+          resetPrioritiesPanel();
         }
       } catch (err) {
         // Unlike the flag toggles, this path CHANGED the draft. Without
@@ -1036,6 +1105,8 @@ export function ModesPage() {
     [
       applyLastSyncedFlags,
       canEditSelected,
+      contextOrg,
+      resetPrioritiesPanel,
       saveMode,
       selectedMode,
       serverDescription,
@@ -1196,12 +1267,22 @@ export function ModesPage() {
     [renameMode, selectedMode, setSelectedMode, setUser]
   );
 
-  // #260 — confirm handler for the display-name sync prompt. The PUT
-  // body comes from the rename response held in `labelSync`: the worker
-  // contract has no partial update (every PUT carries the full
-  // document), and the response is server truth that cannot be dirtied
-  // while the modal is open. Same inline-error/manual-close dialog
-  // contract as the selector's destructive confirms (#102).
+  // #260 — confirm handler for the display-name sync prompt. The worker
+  // contract has no partial update (every PUT carries the full document), so
+  // the label ride-along must re-assert document + flags. Same inline-error/
+  // manual-close dialog contract as the selector's destructive confirms
+  // (#102).
+  //
+  // WHICH document (#308): when the editor has re-anchored on the renamed
+  // slug (`trackersOwn`), the body is built from the LIVE trackers —
+  // `draftRef` + `lastSyncedFlagsRef` — exactly as handleSetPublished does,
+  // and the trackers advance from the response. That way a focus-leaked
+  // keystroke made while the prompt was open, or any write that landed on the
+  // slug after the rename, is carried forward rather than reverted by a
+  // rename-time snapshot. Only while the editor has NOT yet re-anchored
+  // (hydration of the new slug still in flight) or shows another mode does
+  // the rename response stand in — it is then still the freshest server truth
+  // we hold, and no local tracker describes this slug.
   const handleConfirmLabelSync = useCallback(() => {
     if (!labelSync) return;
     const nextLabel = labelSyncValue.trim();
@@ -1209,22 +1290,55 @@ export function ModesPage() {
       setLabelSyncError("Enter a display name, or keep the current one.");
       return;
     }
+    const target = labelSync;
+    const org = contextOrg;
     return runConfirmedAction(
       async () => {
         // Participates in the same synchronous lock as every other save
-        // path, so an in-flight PUT is visible to them all.
+        // path, so an in-flight PUT is visible to them all — and REFUSES
+        // while one is held (#308, grok #315 rd-1): this PUT carries the
+        // whole document, so landing it over an in-flight import/autosave of
+        // the same slug would revert that write. Surfaces inline in the
+        // dialog via runConfirmedAction.
+        if (inFlightSavesRef.current > 0) {
+          throw new Error("Another save is in flight. Try again in a moment.");
+        }
+        const live = trackersOwn(target.name);
+        const sent: ModeFlags = live
+          ? lastSyncedFlagsRef.current
+          : {
+              published: target.published ?? false,
+              requires_group: target.requires_group ?? false,
+            };
+        const document = live ? draftRef.current : target.document;
         inFlightSavesRef.current += 1;
         try {
-          return await saveMode.mutateAsync({
-            name: labelSync.name,
+          const saved = await saveMode.mutateAsync({
+            name: target.name,
+            org,
+            // The label is NOT a local tracker — every other PUT re-asserts
+            // `serverLabel` straight from the per-mode cache — so seed the
+            // cache from this response before `isPending` drops. Otherwise
+            // the next autosave / flag toggle / Apply would send the stale
+            // pre-rename label and silently undo this update until the
+            // invalidate refetch landed (grok #315 rd-3). The list upsert
+            // also repaints the dropdown with the new name at once.
+            seed: true,
             body: {
               label: nextLabel,
-              description: labelSync.description,
-              document: labelSync.document,
-              published: labelSync.published ?? false,
-              requires_group: labelSync.requires_group ?? false,
+              description: target.description,
+              document,
+              ...sent,
             },
           });
+          // Advance the trackers only if this PUT was built from them AND
+          // they still describe this slug (a switch can outlive the PUT).
+          if (live && trackersOwn(target.name)) {
+            setLastSyncedDoc(document);
+            setLastFailedDoc(null);
+            setPriorityApplyError(null);
+            applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+          }
         } finally {
           inFlightSavesRef.current -= 1;
         }
@@ -1236,7 +1350,14 @@ export function ModesPage() {
       },
       "Failed to update the display name."
     );
-  }, [labelSync, labelSyncValue, saveMode]);
+  }, [
+    applyLastSyncedFlags,
+    contextOrg,
+    labelSync,
+    labelSyncValue,
+    saveMode,
+    trackersOwn,
+  ]);
 
   const handleJumpToLine = useCallback((line: number) => {
     editorRef.current?.jumpToLine(line);
@@ -1689,6 +1810,12 @@ export function ModesPage() {
       <AlertDialog
         open={pendingImport !== null}
         onOpenChange={(open) => {
+          // Escape / overlay-click must keep the same promise the disabled
+          // Cancel button makes while the PUT is in flight (#308): dismissing
+          // mid-PUT would hand the editor back while the same-slug overwrite
+          // is about to re-hydrate it in place, discarding anything typed in
+          // between. Same rule as the priority panel below.
+          if (!open && saveMode.isPending) return;
           if (!open) {
             setPendingImport(null);
             setImportConfirmError(null);

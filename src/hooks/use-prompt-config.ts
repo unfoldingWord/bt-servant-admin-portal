@@ -1,4 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useCallback } from "react";
 
 import * as configApi from "@/lib/config-api";
 import type {
@@ -21,6 +27,9 @@ const keys = {
   modes: (org: string | null) => ["modes", org] as const,
   mode: (name: string, org: string | null) => ["modes", name, org] as const,
 };
+
+// Exported for unit tests that assert cache effects by key.
+export const modeQueryKeys = keys;
 
 function normalize(org?: string | null): string | null {
   return org ?? null;
@@ -71,57 +80,116 @@ export function useUpdateOrgOverrides(org?: string | null) {
   });
 }
 
-export function useSaveMode(org?: string | null) {
-  const qc = useQueryClient();
-  const key = normalize(org);
-  return useMutation({
-    mutationFn: ({
-      name,
-      body,
-    }: {
-      name: string;
-      body: {
-        label?: string;
-        description?: string;
-        document: string;
-        published?: boolean;
-        requires_group?: boolean;
-      };
-    }) => configApi.putMode(name, body, undefined, key),
-    onSuccess: (_data, { name }) => {
+export interface ModeSaveTarget {
+  name: string;
+  body: {
+    label?: string;
+    description?: string;
+    document: string;
+    published?: boolean;
+    requires_group?: boolean;
+  };
+  /**
+   * The org the PUT targets, pinned by the CALLER at the moment the action
+   * started — same rule as `languageSaveMutationOptions` (#286). TanStack
+   * replaces a live mutation's options on every re-render, so a closure-read
+   * org would hand the settled callbacks whatever org is ambient when the
+   * PUT lands. The org-context dialog offers "Discard and switch" WHILE a
+   * save is in flight, so that is a reachable path, not a theoretical one:
+   * org A's completed save would invalidate org B and leave A's cache
+   * holding the pre-save document. Used for the PUT, the seed, AND the
+   * invalidation, so the three can never name different orgs (codex+grok
+   * #315 rd-2).
+   */
+  org: string | null;
+  /**
+   * Opt-in cache seed for a PUT that targets a mode the editor is NOT
+   * (necessarily) showing — import (#198) and create (#308). When set, the
+   * PUT response is written into the TARGET mode's per-mode cache AND
+   * upserted into the list cache INSIDE this hook's `onSuccess`, which
+   * TanStack awaits BEFORE it flips `isPending` and before any mutate-level
+   * `onSuccess`/`onSettled` runs (`@tanstack/query-core` mutation.ts:
+   * `await this.options.onSuccess`, then `dispatch({type:'success'})`). That
+   * ordering is the point: the page's save lock and the Import button's
+   * busy gate both release on settle, and the import gate classifies from
+   * the live list — so the row must already be in the cache when either
+   * releases (codex+grok #315 rd-1). A seed done from the mutate-level
+   * callback lands too late.
+   *
+   * Also set by the label-sync PUT (#308): the label is not a page-local
+   * tracker — every editor PUT re-asserts `serverLabel` from the per-mode
+   * cache — so that cache must carry the new label before `isPending` drops
+   * or the next save reverts it.
+   *
+   * Absent for the editor's ordinary saves (autosave, flag toggles, priority
+   * apply): those target the SELECTED mode, whose trackers are advanced from
+   * the response by the page, and #306 deliberately kept the shared save
+   * path free of cache seeding.
+   */
+  seed?: true;
+}
+
+// Exported so the cache effects can be tested against a real QueryClient
+// without React (same shape as `languageSaveMutationOptions`).
+export function saveModeMutationOptions(qc: QueryClient) {
+  return {
+    mutationFn: ({ name, body, org }: ModeSaveTarget) =>
+      configApi.putMode(name, body, undefined, org),
+    onSuccess: async (
+      saved: PromptMode,
+      { name, org, seed }: ModeSaveTarget
+    ) => {
+      const key = normalize(org);
+      if (seed) {
+        // AWAIT the cancel before seeding (TanStack's optimistic-update
+        // order): an in-flight GET that settles AFTER setQueryData would
+        // write the pre-save row straight back into the cache.
+        await qc.cancelQueries({ queryKey: keys.mode(name, key) });
+        qc.setQueryData(keys.mode(name, key), saved);
+        // Upsert the LIST too, so a just-created slug is immediately present
+        // in the dropdown AND classified `existing` by the import gate —
+        // otherwise a same-slug import before the list refetch lands takes
+        // the create path and clobbers the first write with no overwrite
+        // confirm (grok #306 rd-5). For create it is also what keeps the
+        // page's stale-selection guard from nulling the just-selected slug
+        // in the render gap before the refetch lands (the gap
+        // clone/rename/retire close in their onSuccess). Cancel the list GET
+        // first so a pre-write response can't drop the row.
+        await qc.cancelQueries({ queryKey: keys.modes(key) });
+        qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
+          applyCloneToModeList(prev, saved)
+        );
+      }
+      // Invalidate AFTER any seed, and for the SAME pinned org: a refetch
+      // started here captures the seeded state as its revert baseline, and
+      // reconciles the optimistic rows with server truth (e.g. fresh
+      // `aliases`).
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
     },
-  });
+  };
 }
 
-// Import-local cache seed (#198). After an import PUT succeeds, write the
-// authoritative response into the TARGET mode's per-mode cache so a later
-// select (overwrite of a mode viewed earlier this session) or the same-mode
-// server-label read cannot resurrect a stale INACTIVE cache — `useSaveMode`'s
-// invalidate refetches ACTIVE queries only, and the imported mode is usually
-// inactive. Deliberately kept OUT of `useSaveMode`: only the import writes its
-// own target here (org pinned by the caller, captured when the import started),
-// so it never touches the shared save-cache machinery on every mode save.
-// Cancels a late in-flight GET first (TanStack optimistic-update order) so it
-// can't overwrite the seed with the pre-import document.
-export function useSeedImportedMode() {
+export function useSaveMode() {
+  return useMutation(saveModeMutationOptions(useQueryClient()));
+}
+
+// Read the cached org mode list SYNCHRONOUSLY, outside the render cycle
+// (#308). The import flow decides create-vs-overwrite and alias collisions
+// from this list at two points — after the OS file picker returns, and again
+// on overwrite-confirm — and both run in async continuations where the render
+// closure's `modesQuery.data` can predate a mutation that has since seeded or
+// refetched the cache. `getQueryData` is the live cache: every seed below
+// (`setQueryData`) and every settled refetch is visible to it in the same
+// tick. Returns `undefined` when nothing is cached for that org so the caller
+// can fail closed.
+export function useReadModeList() {
   const qc = useQueryClient();
-  return async (name: string, org: string | null, mode: PromptMode) => {
-    const key = normalize(org);
-    await qc.cancelQueries({ queryKey: keys.mode(name, key) });
-    qc.setQueryData(keys.mode(name, key), mode);
-    // Upsert the LIST too, in the same tick, so a just-created slug is
-    // immediately present in the dropdown AND classified `existing` on a
-    // re-import — otherwise a user who re-picks the file before the list
-    // refetch lands takes the create path again and clobbers the first write
-    // with no overwrite confirm (grok #306 rd-5 / languages rd-5). Cancel the
-    // in-flight list GET first so a pre-create response can't drop the row.
-    await qc.cancelQueries({ queryKey: keys.modes(key) });
-    qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
-      applyCloneToModeList(prev, mode)
-    );
-  };
+  return useCallback(
+    (org: string | null): OrgModes | undefined =>
+      qc.getQueryData<OrgModes>(keys.modes(normalize(org))),
+    [qc]
+  );
 }
 
 // Note: publish/unpublish flows through useSaveMode with the full body
