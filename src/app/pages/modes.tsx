@@ -8,7 +8,7 @@ import {
 } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Download, ListOrdered, Save, Upload } from "lucide-react";
+import { Download, ListOrdered, QrCode, Save, Upload } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { shouldAutoSaveDraft } from "@/lib/autosave-gate";
@@ -28,6 +28,8 @@ import {
 import { type ParsedModeImport, parseModeImport } from "@/lib/mode-import";
 import { classifyModeImport } from "@/lib/mode-import-gate";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
+import { downloadBlob } from "@/lib/download-blob";
+import { isModeShareOpen } from "@/lib/mode-share-link";
 import { humanizeModeSlug, slugifyModeName } from "@/lib/mode-slug";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
 import {
@@ -75,6 +77,10 @@ import {
 } from "@/components/markdown-editor";
 import { MarkdownToc } from "@/components/markdown-toc";
 import { ModeSelector } from "@/components/mode-selector";
+import {
+  MODE_SHARE_DIALOG_ID,
+  ModeSharePanel,
+} from "@/components/mode-share-panel";
 import { PageHeader } from "@/components/page-header";
 import { ResourcePriorityPanel } from "@/components/resource-priority-panel";
 
@@ -225,6 +231,22 @@ export function ModesPage() {
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
+  // #311 — the WhatsApp QR dialog: the mode the QR button was pressed for. Open state is DERIVED from
+  // this against the live selection (`isModeShareOpen`), so any selection
+  // change closes the dialog in the same render — no effect lag, no frame
+  // of mode B under mode A's flags, no unmount while open.
+  const [shareFor, setShareFor] = useState<string | null>(null);
+  const shareOpen = isModeShareOpen(shareFor, selectedMode);
+  // The derived `open` closes in the same render; this clears the latch so
+  // re-selecting the same mode later does not reopen the dialog unasked
+  // (Radix only reports onOpenChange for user dismissals, not for a
+  // parent-driven close). Same shape as the priorities sheet's reset.
+  // `contextOrg` is listed too: `setContextOrg` already nulls the selection
+  // (ui-store), so this is belt-and-suspenders for the documented intent.
+  useEffect(() => {
+    setShareFor(null);
+  }, [selectedMode, contextOrg]);
+  const shareButtonRef = useRef<HTMLButtonElement | null>(null);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
 
@@ -419,15 +441,7 @@ export function ModesPage() {
       { name: selectedMode, document: draft },
       ctx
     );
-    const blob = new Blob([content], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(new Blob([content], { type: "text/markdown" }), filename);
   }, [draft, effectiveOrg, lastSyncedFlags, modeQuery.data, selectedMode]);
 
   // #198 — import a mode from a file produced by Export. The hidden input is
@@ -1384,6 +1398,10 @@ export function ModesPage() {
     ? RESOURCE_PRIORITIES_HELP
     : `${RESOURCE_PRIORITIES_HELP} ${NO_EDIT_RIGHTS_REASON}`;
 
+  const shareHelp = effectiveOrg
+    ? "QR code and link that open this mode on WhatsApp."
+    : "Choose an organization before generating a WhatsApp QR code.";
+
   const saveStatus = useMemo(() => {
     if (isSaving) return "Saving…";
     if (isDirty) return "Unsaved changes";
@@ -1542,6 +1560,32 @@ export function ModesPage() {
                   denial has to exist in the accessibility tree too. */}
               <span id="mode-resource-priorities-help" className="sr-only">
                 {resourcePrioritiesHelp}
+              </span>
+              {/* #311 — WhatsApp QR + share link. Opens for any selected
+                  mode; the panel itself says when the code would not work
+                  yet (draft, group-only, other org, no number). Reads the
+                  server-truth flag pair so a failed Publish can't show a
+                  "ready" code. */}
+              <Button
+                ref={shareButtonRef}
+                size="sm"
+                variant="outline"
+                onClick={() => setShareFor(selectedMode)}
+                disabled={!effectiveOrg}
+                title={shareHelp}
+                aria-describedby="mode-share-help"
+                aria-haspopup="dialog"
+                aria-expanded={shareOpen}
+                aria-controls={MODE_SHARE_DIALOG_ID}
+              >
+                <QrCode className="mr-1.5 size-3.5" />
+                QR code
+              </Button>
+              {/* Same rule as the switch and the priorities button: a
+                  disabled control is out of the tab order, so its reason
+                  has to live in the accessibility tree. */}
+              <span id="mode-share-help" className="sr-only">
+                {shareHelp}
               </span>
               <Button
                 size="sm"
@@ -1882,6 +1926,24 @@ export function ModesPage() {
         isSaving={isSaving}
         onApply={handleApplyResourcePriorities}
         applyError={priorityApplyError}
+      />
+
+      {/* #311 — WhatsApp QR + share link. Mounted at page level like the
+          priorities panel, never inside `hasSelection`: a cleared selection
+          must close the dialog through Radix's own `open` (same render, via
+          `isModeShareOpen`), not unmount it while open — which can leave
+          `pointer-events: none` on body. Reads the server-truth flag pair
+          so a failed Publish can't show a "ready" code. */}
+      <ModeSharePanel
+        open={shareOpen}
+        onOpenChange={(open) => {
+          if (!open) setShareFor(null);
+        }}
+        modeName={shareFor ?? ""}
+        modeLabel={serverLabel}
+        org={effectiveOrg}
+        flags={lastSyncedFlags}
+        returnFocusTo={shareButtonRef}
       />
     </div>
   );

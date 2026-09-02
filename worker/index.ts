@@ -21,6 +21,7 @@ import {
 import { handleConfig } from "./config";
 import type { Env } from "./helpers";
 import { errorResponse, requireSameOrigin } from "./helpers";
+import { handleShareConfig } from "./share-config";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -120,6 +121,21 @@ export default {
         return handleBaruchDeleteHistory(request, env, session);
       }
       return handleBaruchHistory(request, env, session);
+    }
+
+    // #311 — share config (WhatsApp number + gateway org). Read-only,
+    // session-gated like every other API route; nothing goes upstream.
+    if (url.pathname === "/api/share-config") {
+      const blocked = requireSameOrigin(request);
+      if (blocked) return blocked;
+      const session = await validateSession(request, env);
+      if (!session) {
+        return errorResponse("Unauthorized", 401);
+      }
+      if (request.method !== "GET") {
+        return errorResponse("Method not allowed", 405);
+      }
+      return handleShareConfig(env);
     }
 
     if (url.pathname.startsWith("/api/")) {

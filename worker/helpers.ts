@@ -6,6 +6,10 @@ export interface Env {
   BARUCH?: Fetcher;
   AUTH_KV: KVNamespace;
   ADMIN_SECRET: string;
+  // #311 — optional so a deploy without the vars degrades to "not
+  // configured" instead of a type error; see worker/share-config.ts.
+  WHATSAPP_NUMBER?: string;
+  WHATSAPP_ORG?: string;
 }
 
 export function jsonResponse(data: unknown, status = 200): Response {
