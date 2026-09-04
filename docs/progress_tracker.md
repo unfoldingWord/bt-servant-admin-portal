@@ -176,7 +176,7 @@ Also merged: worker #387 (fast-uri override, v2.43.1) which cleared `main`'s red
 
 1. **worker#408 → web-client#58** — both fully specified; restores browser-language detection. Then Frances can tell Mindy to just open it.
 2. **Clear the portal backlog** — bump #312 to 1.13.1 and merge, merge #317, close #314 (subsumed), retarget and merge #319.
-3. **Set `WHATSAPP_NUMBER`** from Seth's hand and re-run the portal deploy — #311's acceptance check has been waiting on this alone.
+3. **Review #311 end to end with Seth** — set `WHATSAPP_NUMBER` from his hand, re-run the portal deploy, run the acceptance check (scan the QR, land in WhatsApp with the mode prefilled), and confirm the two part-2 decisions posted on 2026-09-03 (per-mode `mode_welcomed:<slug>`; text-only V1) before building on them. Then the post-create QR pointer, now unblocked by #308.
 4. **#153 contract** — post `$CLAUDE_JOB_DIR/tmp/lanes/G0-153-contract.md` once Seth settles its three decisions (draft coalescing, `FROZEN` 409, best-effort audit); then G1a + PB1 start. This is the real critical path.
 5. **If there is room:** read the staging `translation Coach` document to settle worker#366 + #281 at once; #278 lane M2 copy sites; the staging `__global__` KV write.
 
