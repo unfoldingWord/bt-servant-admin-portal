@@ -246,7 +246,7 @@ export function ResourcesPage() {
       <PageHeader
         variant="resources"
         title="Resources"
-        subtitle="Everything BT Servant can draw on for answers, grouped by category and resolved per language across your org's connected servers."
+        subtitle="Everything BT Servant can draw on for answers, grouped by category and resolved per content language across the shared library of connected MCP servers."
       />
 
       <div className="bg-card flex flex-wrap items-end gap-3 border-b p-4 sm:p-6">
@@ -351,11 +351,11 @@ export function ResourcesPage() {
               {servers.length === 0 ? (
                 <div className="bg-card rounded-xl border px-6 py-10 text-center">
                   <p className="text-foreground text-sm font-medium">
-                    No servers are connected for this org
+                    No MCP servers are connected yet
                   </p>
                   <p className="text-muted-foreground mx-auto mt-2 max-w-md text-xs leading-relaxed">
-                    Resource listings come from the org&rsquo;s MCP servers, and
-                    none are configured yet.
+                    Resource listings come from the shared library of MCP
+                    servers, and none are configured yet.
                   </p>
                 </div>
               ) : view === "map" ? (
@@ -363,8 +363,7 @@ export function ResourcesPage() {
               ) : noneListable ? (
                 <div className="bg-card rounded-xl border px-6 py-10 text-center">
                   <p className="text-foreground text-sm font-medium">
-                    This org&rsquo;s servers don&rsquo;t support resource
-                    listing
+                    The connected servers don&rsquo;t support resource listing
                   </p>
                   <p className="text-muted-foreground mx-auto mt-2 max-w-md text-xs leading-relaxed">
                     None of the connected servers expose a resource catalog, so
