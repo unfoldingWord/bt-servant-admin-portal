@@ -11,11 +11,12 @@ import type {
   ResourceServerStatus,
 } from "@/types/resources";
 
-// Auto-generated map of the org's MCP-server topology (#261): org → servers →
-// subject leaves, projected from the same aggregated response the list view
-// renders — no extra fetching, so the map is current by construction. All
-// geometry and label text comes from the pure layout helper; this component
-// only draws.
+// Auto-generated topology map (#261): the selected org, the shared pool of MCP
+// servers (a global library, not the org's — admin-portal#278), and their
+// subject leaves — org → servers → subject leaves, projected from the same
+// aggregated response the list view renders — no extra fetching, so the map is
+// current by construction. All geometry and label text comes from the pure
+// layout helper; this component only draws.
 //
 // The signature encoding: branch strokes carry link health. A solid amber
 // branch means the server is listing resources; a dashed branch means the
@@ -97,8 +98,8 @@ export function ResourceServerMap({
           nodes below; both read from the same layout. */}
       <div className="sr-only">
         <h3>
-          MCP server map for org {layout.orgName} &mdash; content language
-          &ldquo;{data.language}&rdquo;
+          Shared MCP server pool &mdash; org context {layout.orgName}, content
+          language &ldquo;{data.language}&rdquo;
         </h3>
         <p>
           {servers.length} {servers.length === 1 ? "server" : "servers"}:{" "}
