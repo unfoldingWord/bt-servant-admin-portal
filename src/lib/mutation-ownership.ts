@@ -61,8 +61,10 @@ export function stillOwnsSelection(
  *                captured would either revert the save or, worse, leave locals
  *                stale relative to the row we just wrote — the next autosave
  *                then PUTs the stale document/flag back over the good save
- *                (#307). Instead, force the editor to reload from the
- *                authoritative post-PUT cache row.
+ *                (#307). Instead, re-anchor the editor's baseline to the row
+ *                just written to the server — the client-captured `SavedRow`,
+ *                since the React Query cache lags a just-settled PUT (see the
+ *                `published`-from-local-state note at the `performSave` call).
  */
 export type MutationSettleAction = "apply" | "skip" | "resync";
 
@@ -99,7 +101,7 @@ export function classifyMutationSettle(
   return capturedGen === liveGen ? "apply" : "resync";
 }
 
-/** The authoritative post-PUT row a mutation just wrote to the server. */
+/** The row a mutation just wrote to the server (client-captured body — the cache lags the PUT). */
 export interface SavedRow {
   document: string;
   published: boolean;

@@ -229,9 +229,22 @@ export function LanguagesPage() {
     setLastSyncedPublished(r.nextPublished);
     setLastSyncedLabel(r.nextLabel);
     setLastFailedDoc(null);
+    // This re-anchors the baseline (and possibly the draft), so move the
+    // generation like every other re-anchor site (the sync effect's reset and
+    // re-anchor branches, and the create-install path) — otherwise a mutation
+    // captured before this reconcile would wrongly "apply" over it. Unreachable
+    // today (create/save/publish share one pending mutation), kept so the
+    // invariant holds uniformly.
+    syncGenRef.current += 1;
   }, []);
   useEffect(() => {
     if (!selectedLanguage) {
+      // Only reset on the actual transition into "no selection". While nothing
+      // is selected, a background refetch re-runs this effect (dep:
+      // languageQuery.data) and would otherwise re-fire the setters and churn
+      // the generation on every refetch. syncedNameRef === null ⟺ the locals
+      // are already cleared, so there is nothing to reset.
+      if (syncedNameRef.current === null) return;
       syncedNameRef.current = null;
       setSyncedName(null);
       setDraft("");
