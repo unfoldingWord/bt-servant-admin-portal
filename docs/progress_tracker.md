@@ -111,6 +111,22 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ## Session Log
 
+### 2026-09-04 — pt-BR regression fixed + shipped to staging (3-repo parallel batch); portal backlog cleared; first-turn blank-screen race root-caused
+
+**Portal backlog cleared (morning).** Fixed the botched web-client#53 plan-of-attack comment (edited in place, same comment id so Elsy's notification link held — it had posted as the literal `@/tmp/newbody.md`). Merged the stale docs PRs #317 (09-01 + 09-02 tracker entries) and #319 (09-03 entry; rebased `--onto` main to drop commits already squashed via #317, then prettier-fixed the format gate); #314 auto-closed as subsumed. Merged **#312** — the #307 languages-editor leave-and-return-during-save race fix — after bumping to **v1.13.1**, resolving 3 code-review findings (docstring accuracy, a missing `syncGenRef` bump for invariant uniformity, and reset-branch churn), and a clean re-review. Closed #307.
+
+**pt-BR regression batch (3 parallel subagent lanes, all merged + on staging).** The v1.11.0 localization shipped 2026-09-03 had a regression: a pt-BR browser on a never-chosen account rendered English, because GET /preferences couldn't express "no language chosen". Fixed cross-repo, worker-first:
+
+- **worker#408 → PR #409 (v2.47.0, tagged):** `response_language_explicit` (set only by `handleUpdatePreferences`, never the first-interaction flip); GET and the PUT response report the language only when explicit, else `null`. Internal reply-language unchanged. codex caught one real P2 (empty `PUT {}` echoed `en` while GET returned `null`) — fixed to mirror GET, +2 regression tests; codex+grok re-review clean. 1356 tests.
+- **web-client#58 → PR #59 (v1.12.0):** treat `null`/absent as nothing-stored → seed from the browser. The runtime null-handling was already correct (falsy gate); the change is type-widening + tests + comments. codex+grok clean.
+- **portal#278 M2 → PR #320 (v1.13.2):** Resources/server-map copy reworded to the global MCP pool (premise verified: the endpoint reads the global pool and resolves by content language, not org). claude-code-review clean.
+
+All three built by parallel `general-purpose` subagents in isolated worktrees, reviewed through the codex(frank)+grok(george) loop, merged worker→client→portal, and confirmed on staging (worker Deploy Staging + web-client Deploy Staging both green). Elsy signed off on the BR-PT visuals on staging and asked to promote to prod.
+
+**Blocker before prod: first-turn blank-screen race (Ian root-caused).** On a fresh profile, sending the first message (e.g. a suggestion chip) before the mount-time history GET resolves lets `use-chat-runtime.ts`'s `setMessages(historyMessages)` **replace** (not merge) the list and wipe the just-added user message → thread flips empty → no bubble, no 'Pensando…', blank until the first response chunk (~20s). **Locale is incidental** — a pre-existing history-vs-send race, not caused by the localization work; surfaced only under fresh-profile testing (Elsy's established account can't hit it). Fix is small: merge, don't replace, + a regression test. Not yet filed as its own issue (Ian writing it up).
+
+**Next steps:** (1) file + land the blank-screen fix (web-client, ~v1.12.1, merge-not-replace + test, codex/grok loop); (2) re-verify a fresh pt-BR profile on staging; (3) prod-promotion decision — note it ships the full staging backlog (analytics #54, per-turn telemetry #402, MCP global pool #386, input-language #404), not just localization; (4) provide Frances a firm date once the blocker clears. Housekeeping: several merged feature worktrees remain for cleanup (portal `fix-307`, `eod-2026-09-03`, `feat-278-m2-copy`; worker `feat-408`; web-client `fix-58`).
+
 ### 2026-09-03 — New lane, delivered same day: pt-BR interface for BT Servant, five PRs merged to staging (client v1.11.0, worker v2.46.0)
 
 **SOD:** portal + worker clean; worker `main` CI red from the #386 merge (fast-uri advisories); PRs #312/#314/#317 still open awaiting merge. Elsy filed 16 worker issues overnight (#388–#403, Fluent integration epic #391 + V3 architecture); none assigned here.
