@@ -198,7 +198,10 @@ export function McpServersPage() {
                     <td className="px-6 py-3">{server.priority}</td>
                     <td className="px-6 py-3">
                       <Badge variant="outline" className="text-xs">
-                        {server.ownerOrg ?? "unfoldingWord"}
+                        {/* Undefined only with a pre-2.51 worker; show it as
+                            un-attributed to match the super-admin-only gate,
+                            not as a concrete org. */}
+                        {server.ownerOrg ?? "—"}
                       </Badge>
                     </td>
                     <td className="px-6 py-3">

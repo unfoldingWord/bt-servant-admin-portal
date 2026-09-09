@@ -65,19 +65,12 @@ async function throwForStatus(res: Response): Promise<never> {
   throw new McpServersRequestError(res.status, body.error);
 }
 
-// `org` targets a specific org via `?org=` (super-admins only, for cross-org
-// viewing). Omitted, the BFF resolves to the caller's own org. The pool itself
-// is global, so `org` only affects logging and which org owns servers added in
-// this session.
-function withOrg(path: string, org?: string): string {
-  return org ? `${path}?org=${encodeURIComponent(org)}` : path;
-}
-
+// Every request targets the caller's own org — the BFF resolves that from the
+// session. The pool is global, so there's no org to pass from the client.
 export async function getMcpServers(
-  org?: string,
   signal?: AbortSignal
 ): Promise<McpServerPoolResponse> {
-  const res = await fetch(withOrg("/api/config/mcp-servers", org), {
+  const res = await fetch("/api/config/mcp-servers", {
     headers: SAME_ORIGIN_HEADERS,
     signal,
   });
@@ -89,10 +82,9 @@ export async function getMcpServers(
 // existing id replaces in place (token and owner preserved unless changed).
 export async function upsertMcpServer(
   body: McpServerWrite,
-  org?: string,
   signal?: AbortSignal
 ): Promise<McpServer[]> {
-  const res = await fetch(withOrg("/api/config/mcp-servers", org), {
+  const res = await fetch("/api/config/mcp-servers", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
     body: JSON.stringify(body),
@@ -105,13 +97,13 @@ export async function upsertMcpServer(
 
 export async function deleteMcpServer(
   id: string,
-  org?: string,
   signal?: AbortSignal
 ): Promise<McpServer[]> {
-  const res = await fetch(
-    withOrg(`/api/config/mcp-servers/${encodeURIComponent(id)}`, org),
-    { method: "DELETE", headers: SAME_ORIGIN_HEADERS, signal }
-  );
+  const res = await fetch(`/api/config/mcp-servers/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: SAME_ORIGIN_HEADERS,
+    signal,
+  });
   if (!res.ok) await throwForStatus(res);
   const data = (await res.json()) as { servers: McpServer[] };
   return data.servers;

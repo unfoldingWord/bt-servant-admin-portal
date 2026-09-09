@@ -187,6 +187,36 @@ describe("config — /api/config/mcp-servers (#292): owner-scoped edit", () => {
     expect(res.status).toBe(502);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("fails closed: a 200 owner read with no servers array → 502, no write", async () => {
+    // A well-formed 200 that isn't the expected shape must not be read as an
+    // empty pool (which would let an edit slip through as an add).
+    const fetchSpy = mockFetch(
+      () => new Response(JSON.stringify({ org: "acme" }), { status: 200 })
+    );
+    const res = await handleConfig(
+      makeRequest("POST", MCP, write),
+      env,
+      admin(),
+      MCP
+    );
+    expect(res.status).toBe(502);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards the trimmed id, so the verified key equals the written key", async () => {
+    const fetchSpy = mockFetch(ok); // super-admin skips the ownership read
+    await handleConfig(
+      makeRequest("POST", MCP, { ...write, id: "helps " }),
+      env,
+      superAdmin(),
+      MCP
+    );
+    const sent = JSON.parse(String(fetchSpy.mock.calls[0]![1]!.body)) as {
+      id: string;
+    };
+    expect(sent.id).toBe("helps");
+  });
 });
 
 describe("config — /api/config/mcp-servers/{id} (#292): delete is super-only", () => {

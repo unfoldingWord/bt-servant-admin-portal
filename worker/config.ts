@@ -544,8 +544,15 @@ async function fetchMcpServerOwners(
   const body = (await res.json()) as {
     servers?: { id?: unknown; ownerOrg?: unknown }[];
   };
+  // Fail closed on a well-formed 200 that isn't the expected shape: without a
+  // real `servers` array we cannot tell an edit from an add, and defaulting to
+  // "empty pool" would let an edit slip through as an add. An empty array is a
+  // legitimately empty pool and is fine.
+  if (!Array.isArray(body.servers)) {
+    throw new Error("MCP pool read returned no servers array");
+  }
   const owners = new Map<string, string | undefined>();
-  for (const s of body.servers ?? []) {
+  for (const s of body.servers) {
     if (typeof s.id === "string") {
       owners.set(s.id, typeof s.ownerOrg === "string" ? s.ownerOrg : undefined);
     }
@@ -1316,6 +1323,10 @@ export async function handleConfig(
       if (!id) {
         return errorResponse("Server config must include a string id", 400);
       }
+      // Forward the trimmed id so the key whose ownership we verify below is the
+      // exact key the engine upserts — otherwise `{id: "helps "}` would be
+      // checked as "helps" but written under "helps ".
+      body.id = id;
 
       // Adding a new server is open to any admin; editing an existing one is
       // owner-scoped. Super-admins skip the check (they manage everything), so

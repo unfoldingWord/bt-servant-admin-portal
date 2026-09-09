@@ -109,12 +109,14 @@ export function McpServerDialog({
       setErrorText("Name cannot be empty.");
       return;
     }
+    let parsedUrl: URL;
     try {
-      const parsed = new URL(trimmedUrl);
-      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-        throw new Error("bad protocol");
-      }
+      parsedUrl = new URL(trimmedUrl);
     } catch {
+      setErrorText("Enter a valid http(s) URL.");
+      return;
+    }
+    if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
       setErrorText("Enter a valid http(s) URL.");
       return;
     }
@@ -130,21 +132,39 @@ export function McpServerDialog({
       return;
     }
 
+    // authToken three-way (worker's #278 write rule): a typed value sets it,
+    // the explicit "remove" clears it, and leaving it blank preserves the
+    // stored token. Setting and clearing at once makes no sense — the typed
+    // value wins and we don't send the clear.
+    const typedToken = authToken.trim();
+    const keepsStoredToken =
+      server !== null &&
+      server.hasAuthToken &&
+      !clearToken &&
+      typedToken === "";
+    // A bearer token must never ride over cleartext: require https whenever the
+    // server will carry one (newly set, or an existing one kept).
+    if (
+      (typedToken !== "" || keepsStoredToken) &&
+      parsedUrl.protocol !== "https:"
+    ) {
+      setErrorText("Use an https URL for a server that has an auth token.");
+      return;
+    }
+
     const body: McpServerWrite = {
       id: trimmedId,
       name: trimmedName,
       url: trimmedUrl,
       enabled,
       priority: priorityNum,
+      // Cleared → undefined → omitted from the JSON. The worker full-replaces
+      // every field except authToken/ownerOrg, so omitting allowedTools removes
+      // the restriction (it is not preserve-on-omit the way authToken is).
       allowedTools: parseAllowedTools(allowedTools),
       transport,
     };
 
-    // authToken three-way (worker's #278 write rule): a typed value sets it,
-    // the explicit "remove" clears it, and leaving it blank preserves the
-    // stored token. Setting and clearing at once makes no sense — the typed
-    // value wins and we don't send the clear.
-    const typedToken = authToken.trim();
     if (typedToken) {
       body.authToken = typedToken;
     } else if (clearToken) {
@@ -181,7 +201,7 @@ export function McpServerDialog({
                   <span className="text-foreground font-medium">
                     {server.id}
                   </span>{" "}
-                  · owned by {server.ownerOrg ?? "unfoldingWord"}
+                  · owned by {server.ownerOrg ?? "—"}
                 </>
               ) : (
                 "Register an MCP server in the shared pool. It becomes available to every org."
