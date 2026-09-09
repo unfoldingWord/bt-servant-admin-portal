@@ -131,6 +131,9 @@ export function McpServersPage() {
       )}
 
       <div className="flex-1 overflow-y-auto">
+        {/* On error, render nothing in the body — the banner above already
+            explains it. Showing the empty state here would wrongly imply the
+            pool loaded and is empty. */}
         {poolQuery.isLoading ? (
           <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-3">
             <FontAwesomeIcon
@@ -139,9 +142,7 @@ export function McpServersPage() {
             />
             <p className="text-sm">Loading servers…</p>
           </div>
-        ) : poolQuery.error ? // The error banner above says what happened; don't also render the
-        // "empty pool" state, which would wrongly imply the pool is empty.
-        null : servers.length === 0 ? (
+        ) : poolQuery.error ? null : servers.length === 0 ? (
           <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
             <p className="text-sm">
               No servers in the pool yet.
