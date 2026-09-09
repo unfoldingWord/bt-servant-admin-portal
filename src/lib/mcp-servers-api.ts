@@ -1,5 +1,4 @@
 import type {
-  McpServer,
   McpServerPoolResponse,
   McpServerWrite,
 } from "@/types/mcp-servers";
@@ -80,10 +79,12 @@ export async function getMcpServers(
 
 // Add or edit a server. The worker upserts by `id`: a new id appends, an
 // existing id replaces in place (token and owner preserved unless changed).
+// The success body (the updated pool) is not read: the hooks refetch, and
+// parsing it would turn an empty/204 success into a spurious error.
 export async function upsertMcpServer(
   body: McpServerWrite,
   signal?: AbortSignal
-): Promise<McpServer[]> {
+): Promise<void> {
   const res = await fetch("/api/config/mcp-servers", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...SAME_ORIGIN_HEADERS },
@@ -91,20 +92,16 @@ export async function upsertMcpServer(
     signal,
   });
   if (!res.ok) await throwForStatus(res);
-  const data = (await res.json()) as { servers: McpServer[] };
-  return data.servers;
 }
 
 export async function deleteMcpServer(
   id: string,
   signal?: AbortSignal
-): Promise<McpServer[]> {
+): Promise<void> {
   const res = await fetch(`/api/config/mcp-servers/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: SAME_ORIGIN_HEADERS,
     signal,
   });
   if (!res.ok) await throwForStatus(res);
-  const data = (await res.json()) as { servers: McpServer[] };
-  return data.servers;
 }

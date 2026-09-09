@@ -83,7 +83,11 @@ export function McpServerDialog({
     server?.transport ?? "json-rpc"
   );
   const [showAdvanced, setShowAdvanced] = useState(
-    Boolean(server?.allowedTools?.length) || server?.transport !== undefined
+    // Only auto-expand when something non-default is set. A worker >= 2.51
+    // always returns transport ("json-rpc" by default), so gating on "defined"
+    // would open the panel for every edit.
+    Boolean(server?.allowedTools?.length) ||
+      (server?.transport !== undefined && server.transport !== "json-rpc")
   );
   const [errorText, setErrorText] = useState<string | null>(null);
 

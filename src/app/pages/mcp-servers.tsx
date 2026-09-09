@@ -212,9 +212,11 @@ export function McpServersPage() {
                           onClick={() => setEditingId(server.id)}
                           disabled={!editable || !canWrite}
                           title={
-                            editable
-                              ? "Edit server"
-                              : "Only the owning org (or a super admin) can edit this server."
+                            !canWrite
+                              ? "The server pool isn't set up in this environment yet."
+                              : editable
+                                ? "Edit server"
+                                : "Only the owning org (or a super admin) can edit this server."
                           }
                         >
                           <Pencil className="size-3.5" />
@@ -229,9 +231,11 @@ export function McpServersPage() {
                           }}
                           disabled={!isSuperAdmin || !canWrite}
                           title={
-                            isSuperAdmin
-                              ? "Delete server"
-                              : "Deletions go through unfoldingWord."
+                            !canWrite
+                              ? "The server pool isn't set up in this environment yet."
+                              : isSuperAdmin
+                                ? "Delete server"
+                                : "Deletions go through unfoldingWord."
                           }
                         >
                           <Trash2 className="text-destructive size-3.5" />

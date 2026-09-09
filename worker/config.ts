@@ -1374,11 +1374,13 @@ export async function handleConfig(
     /^\/api\/config\/mcp-servers\/([^/]+)$/
   );
   if (mcpDeleteMatch?.[1]) {
-    if (session.isSuperAdmin !== true) {
-      return errorResponse("Deleting MCP servers requires a super admin", 403);
-    }
+    // Method before role: a non-DELETE on this DELETE-only path is a 405
+    // regardless of who asks, rather than a misleading 403.
     if (request.method !== "DELETE") {
       return errorResponse("Method not allowed", 405);
+    }
+    if (session.isSuperAdmin !== true) {
+      return errorResponse("Deleting MCP servers requires a super admin", 403);
     }
     const serverId = decodeURIComponent(mcpDeleteMatch[1]);
     return proxyToEngine(
