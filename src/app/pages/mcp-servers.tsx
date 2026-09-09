@@ -123,7 +123,7 @@ export function McpServersPage() {
         </div>
       </div>
 
-      {loaded && !canWrite && (
+      {loaded && !canWrite && !poolQuery.error && (
         <div className="bg-muted/40 text-muted-foreground border-b px-6 py-3 text-sm">
           The server pool hasn&rsquo;t been set up in this environment yet.
           You&rsquo;re seeing the current list, but adding, editing, and

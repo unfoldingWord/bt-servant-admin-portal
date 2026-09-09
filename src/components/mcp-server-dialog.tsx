@@ -120,34 +120,26 @@ export function McpServerDialog({
       setErrorText("Enter a valid http(s) URL.");
       return;
     }
-    const priorityNum = Number(priority);
-    // Guard the blank field explicitly: Number("") is 0, which would otherwise
-    // pass the integer check and silently save priority 0 (tried first).
-    if (
-      priority.trim() === "" ||
-      !Number.isInteger(priorityNum) ||
-      priorityNum < 0
-    ) {
+    const priorityText = priority.trim();
+    // Plain non-negative integer only: reject "", "1.5", "-1", and exponent
+    // forms like "1e3" that Number() would otherwise silently accept.
+    if (!/^\d+$/.test(priorityText)) {
       setErrorText("Priority must be a whole number ≥ 0.");
       return;
     }
+    const priorityNum = Number(priorityText);
 
     // authToken three-way (worker's #278 write rule): a typed value sets it,
-    // the explicit "remove" clears it, and leaving it blank preserves the
-    // stored token. Setting and clearing at once makes no sense — the typed
-    // value wins and we don't send the clear.
+    // "Remove the stored token" clears it, and leaving it blank preserves the
+    // stored token. Clear is authoritative — it wins over any value left in the
+    // (now-disabled) field, so checking Remove always removes.
     const typedToken = authToken.trim();
-    const keepsStoredToken =
-      server !== null &&
-      server.hasAuthToken &&
+    const willHaveToken =
       !clearToken &&
-      typedToken === "";
+      (typedToken !== "" || (server !== null && server.hasAuthToken));
     // A bearer token must never ride over cleartext: require https whenever the
     // server will carry one (newly set, or an existing one kept).
-    if (
-      (typedToken !== "" || keepsStoredToken) &&
-      parsedUrl.protocol !== "https:"
-    ) {
+    if (willHaveToken && parsedUrl.protocol !== "https:") {
       setErrorText("Use an https URL for a server that has an auth token.");
       return;
     }
@@ -165,10 +157,10 @@ export function McpServerDialog({
       transport,
     };
 
-    if (typedToken) {
-      body.authToken = typedToken;
-    } else if (clearToken) {
+    if (clearToken) {
       body.authToken = null;
+    } else if (typedToken) {
+      body.authToken = typedToken;
     }
 
     upsert.mutate(body, {

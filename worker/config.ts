@@ -1352,6 +1352,13 @@ export async function handleConfig(
             );
           }
         }
+        // This owner check and the upsert below are not atomic: the shared
+        // pool has no compare-and-swap (worker#386 / admin-portal#278), so a
+        // row created by another org in the read-write window could be
+        // overwritten by an add that read it as absent. That last-write-wins
+        // window is the accepted property of the pool design (admins are
+        // trusted operators, per #278); closing it needs a CAS in the worker,
+        // which is deliberately out of scope here.
       }
       return proxyToEngine(request, env, enginePath, ["POST"], body);
     }
