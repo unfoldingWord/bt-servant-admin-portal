@@ -19,6 +19,7 @@ import { BaruchPage } from "@/app/pages/baruch";
 import { LanguagesPage } from "@/app/pages/languages";
 import { LoginPage } from "@/app/pages/login";
 import { ManualConfigPage } from "@/app/pages/manual-config";
+import { McpServersPage } from "@/app/pages/mcp-servers";
 import { ModesPage } from "@/app/pages/modes";
 import { ResourcesPage } from "@/app/pages/resources";
 
@@ -67,6 +68,14 @@ const router = createBrowserRouter([
           },
           { path: "languages", element: <LanguagesPage /> },
           { path: "resources", element: <ResourcesPage /> },
+          {
+            path: "mcp-servers",
+            element: (
+              <RequireAdmin>
+                <McpServersPage />
+              </RequireAdmin>
+            ),
+          },
           {
             path: "admin/users",
             element: (
