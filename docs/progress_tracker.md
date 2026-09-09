@@ -6,9 +6,9 @@
 
 **Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **2026-07-31 was the first ultracode batch day**: three features shipped same-day through the new batch pipeline (parallel implement lanes → independent verify → dual external review via **codex + grok CLIs** → authorized merges) — **#209 group-chat toggle (PR #267), #261 MCP topology map (PR #268), #249 language admin trump + org-wide visibility (PR #271, −888 net lines via #247 carve-out deletion)**. #249 went design→decided→spec→shipped in one day after Elsy's morning +1. Review loops earned their keep: 5 confirmed defects fixed post-verification, including a real BFF authz gap (`requires_group` invisible to the verb-rights gate) caught only by the deep-tree lens in _untouched_ code. #195 premise-check stopped a half-feature; exact worker ask filed as worker#346. #254 eval harness built (9 scenarios / 32 checks over baruch's real prompt assembly, `claude-sonnet-4-6` vs `claude-opus-4-8`); blocked only on an API credential (Ian's lane). **2026-08-10 was ultracode day 2**: #277 resource prioritization went design→decided→built→dual-external-approved same day (**PR #282**, awaiting merge) via a mechanism pivot that un-gated it from worker#257 item 2 — the ordering persists as a generated block in the mode document's `## Tool Guidance` section (the document IS the injection; zero worker changes). Same session: #269/#279 root-caused by live MCP probes as a worker adapter gap (worker#354 filed — TC Helps has enumeration on both endpoints; the issues' premises were wrong), #278 scoped with a recommendation (global server "library" key; partner orgs currently get zero MCP fan-out even in chat), and the #264 five-movements mode document drafted from the live obs-5m-mcp server and posted for Tim/Elsy review.
 **2026-08-11 was ultracode day 3 — the fastest full cycle yet**: Ian settled the worker#236 org-default-language contract in the morning; by mid-afternoon **four PRs were built, adversarially verified, dual-external-reviewed to convergence, and merged** — #288 (#286 org default language + #272 cleanups, contract-first against the not-yet-implemented worker route), #289 (#230 follow-up: one server-attribution join across all three resource surfaces, emission bytes frozen), #290 (#281 outside-priority disclosure riding the #277 Tool Guidance block, zero worker changes), #287 (gitleaks-action v2→v3, the last Node-20 action runtime). Review pipeline: per-lane adversarial verify → 3 codex+grok rounds → final delta pass; ~20 confirmed findings fixed, including a dual-confirmed P1 data-loss path in orphan repair, a CommonMark lazy-continuation bug that would have inverted the disclosure's meaning for the model, an Apply/autosave revert race, and a grok-forced design reversal (emission frozen, hardening display-only). Also merged same morning: **PR #282 (#277) and the 08-10 docs PR**; Elsy's dupe re-files #284/#285 got diagnosis cross-links; follow-ups filed as #293/#294.
-**Last Updated**: 2026-09-03
+**Last Updated**: 2026-09-09
 **Demo target**: June 9 (passed) — outcome to be summarized
-**Last prod deploy**: **2026-08-05 evening — the promotion completed.** Ian merged the version bump (PR #275, `9c7f2a3`, 1.10.4 → 1.11.0, tag `v1.11.0`) and dispatched Deploy Production the same evening (run `31041497803`, succeeded 19:53 UTC) — prod is at **v1.11.0**. That closed out the promotion coordinated earlier that day: sign-off in standup (Seth + Elsy: no objection), Elsy's two staging verifications same afternoon (#249 4/4 scenarios, #260 3/3), and the **worker prod deploy (2.29.0 → 2.37.0) at 17:03 UTC**. Prod worker was confirmed to carry worker#270's `requires_group` merge semantics since v2.27.0, and 2.37.0 brings worker#257, un-degrading the Resources panel/topology map. _(Amended 2026-08-10: at EOD writing time the portal dispatch was still pending; it ran ~an hour later.)_
+**Last prod deploy**: **2026-09-09 — Ian promoted worker → v2.50.0** (run `34352633458`, 12:42) **and web-client → v1.12.2** (run `34373280525`, 15:54). The **pt-BR interface is now LIVE in prod end-to-end** (worker localization #406/#407/#408 + web-client i18n with the #58/#60/#61 fixes). **Portal prod is still v1.12.0** (2026-08-17, `36ad8ca`) — **not** promoted; a portal promotion (→ v1.14.0) is pending and would carry #308/#311/#312/#278-copy/#292. _(Prior: 2026-08-05 portal v1.11.0 + worker 2.29→2.37; portal later reached v1.12.0 on 08-17.)_
 
 ## Milestones
 
@@ -58,7 +58,8 @@
 | #249 language admin trump + org-wide visibility         | 100%     | Shipped 2026-07-31 (PR #271 = `991ea68`) — option 4, Ian+Elsy joint pick same morning. #247 carve-out deleted (−1157/+269); deadlock encoded as regression test. Elsy staging checklist posted on issue.                                                                                                                                                                                                     |
 | #308 mode-import re-validate at confirm                 | 100%     | Shipped 2026-09-02 (PR #315 = `d01d2b4`, v1.12.1) — two-point collision gate, awaited create seed, label-sync/import conflict, 4 P3s; 4 codex+grok rounds + code-review skill                                                                                                                                                                                                                                |
 | #311 QR per mode — part 1 (portal panel)                | 60%      | Shipped 2026-09-02 (PR #316 = `3a1d144`, v1.13.0) — wa.me deep link + SVG QR + eligibility gate; 5 rounds. Remaining: `WHATSAPP_NUMBER` var, post-create pointer, worker first-contact message (Q2)                                                                                                                                                                                                          |
-| #278 MCP global pool — worker side                      | 70%      | Shipped 2026-09-02 (worker PR #386 = `4fe714b`, v2.43.0) — `__global__` key, legacy fallback, hasAuthToken redaction; 7 rounds. Remaining: staging/prod key write (Seth host), fan-out measure, M2 portal copy                                                                                                                                                                                               |
+| #278 MCP global pool — worker side                      | 85%      | Shipped 2026-09-02 (worker PR #386 = `4fe714b`, v2.43.0) — `__global__` key, legacy fallback, hasAuthToken redaction; 7 rounds. M2 portal copy shipped (PR #320, v1.13.2). Ian answered the prod key list 2026-09-09 (prod `__global__` = raw `unfoldingWord`). Remaining: **staging + prod `__global__` write (Seth, wrangler auth)** — the sole blocker for pool writes in either env.                     |
+| #292 MCP server management UI                           | 90%      | **Shipped to staging 2026-09-09 (portal PR #323 = `40cb9bc`, v1.14.0).** `/mcp-servers` admin page + Resources link; owner-scoped edit, super-only delete; BFF-enforced. Backed by **worker#417** (ownerOrg attribution, PR #420, v2.51.0). 6 code-review rounds. Remaining: staging `__global__` write → Elsy end-to-end verify; the delete-authz confirm (super vs uW-org admin); portal prod promotion.   |
 
 ### Per-PR ephemeral CF Workers — Shipped
 
@@ -110,6 +111,70 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-09-09 — MCP global-pool lane built & merged both sides (worker#417 v2.51.0 + portal#292 v1.14.0, both on staging); Ian's prod-readiness answered → he promoted worker v2.50.0 + web-client v1.12.2 to prod (pt-BR now LIVE in prod); #217 localization scoped
+
+Long build session. Two cross-repo lanes shipped to staging through the full review pipeline; Ian promoted two of the three prod lanes.
+
+**Shipped / merged:**
+
+- **worker#417 — `ownerOrg` attribution on the global MCP server pool (worker PR #420 = `1cdcaf0`, v2.51.0, merged + tagged, on staging).** Prerequisite for portal#292's edit-scoping. The pool had no owner field and the write routes took `:org` but never persisted it. Worker now stamps `ownerOrg` from the route org on create, preserves it on edit (ownership never transfers via an edit), and returns it in the public projection; a legacy/absent value defaults to `DEFAULT_ORG` at read time (no data migration). `ownerOrg` is a display/attribution attribute, **not** a security boundary — the portal enforces; writes stay super-admin-only with no CAS (Elsy signed off, #278). +19 module tests. **frank(codex)+george(grok): 1 P2 + 3 P3 round 1 → clean round 2** (projection/write-path guarded against malformed legacy `ownerOrg`; e2e route coverage added).
+- **portal#292 — MCP server management UI (portal PR #323 = `40cb9bc`, v1.14.0, merged, on staging).** New `/mcp-servers` admin page (add/edit/remove) + admin-only link from Resources. Elsy's edit model (2026-09-09): one shared list; add = any admin (stamped to acting org); edit = owner or super; **delete = super-admins only** (partners never delete — a partner's server may be referenced by another org's modes and nothing tracks those refs; "uW admins delete" modelled as super-admins, **flagged to Elsy** as a one-line change if she meant uW-org admins too). BFF is the enforcement point: GET admin-only; POST reads the pool to gate owner-scoped edits (fails **closed** — 502 — on a bad/shapeless read); DELETE super-only. Onion layers: types/lib/hooks/dialog/page + a `worker/config.ts` proxy arm. +13 BFF authz tests. **claude-code-review: 6 rounds** — caught real bugs (fail-**open** ownership read on a malformed 200, trimmed-id-vs-written-id mismatch, "Remove token" overridden by a typed value, http+token cleartext, null-body 500, edit-form wipe on refetch) all fixed; remaining items accepted-by-design (TOCTOU last-write-wins per #278) or pre-existing convention.
+
+**Prod (Ian, today):**
+
+- **Ian promoted worker → v2.50.0** (run `34352633458`, 12:42) **and web-client → v1.12.2** (run `34373280525`, 15:54). This puts the **pt-BR interface LIVE in prod, end-to-end**: worker localization (#406/#407/#408) + web-client i18n with the #58 regression fix AND Ian's **#60 (loading indicator) + #61 (first-turn blank screen) fixes** (v1.12.1/v1.12.2, both CLOSED). The pt-BR lane is **done** — Frances's FCBH Brazil teams can use it now.
+- **Portal prod NOT promoted — still v1.12.0 (2026-08-17).** A portal promotion (→ v1.14.0) is pending and would carry #308/#311/#312/#278-copy/#292 together.
+
+**Coordination / research:**
+
+- **Answered Ian's prod-readiness question** with a three-lane analysis (portal admin batch ready; MCP global-pool coupled worker-first + `__global__` write; localization gated then — since cleared). Corrected stale tracker facts: portal prod was v1.12.0 (not v1.11.0), worker prod v2.42.0 at analysis time.
+- **#278 — Ian's full answer**: prod `__global__` = the raw `unfoldingWord` value (3 servers); staging `__global__` still unwritten (writes 409); delete legacy keys after a ~1-week verified window. Staging + prod `__global__` writes remain **Seth's** (wrangler auth) — the sole remaining blocker for #292 pool writes in either env.
+- **#217 (localization epic, 19 languages)** — filed by BincyJ on the **dormant bt-servant-engine** repo; posted a scope redirecting to web-client (the i18n engine already exists; net-new work = 17 dictionaries + RTL + non-Latin fonts + translation sourcing) with a phased plan.
+
+**Environment / learnings:**
+
+- **Portal needs a gitignored `.npmrc` with the Font Awesome Pro token for `npm ci`** — not in any repo/env var (CI-secret only). Blocked local typecheck/lint/build/commit until Seth wrote it; then the full toolchain ran. **Run `npm run format:check` locally as part of portal verification** — the husky lint-staged prettier and CI's `prettier --check .` disagreed twice (a `null`-with-inline-comment JSX ternary wasn't idempotent); cost two CI round-trips.
+
+**Next steps:**
+
+- **Write the staging `__global__` key** (Seth, wrangler auth) → unblocks Elsy's end-to-end #292 verification on staging.
+- **Confirm the #292 delete-authz assumption** with Elsy (super-admins vs uW-org admins).
+- **Portal prod promotion** (v1.12.0 → v1.14.0) + the prod `__global__` migration when ready.
+- Decide the `fix-215` worker WIP; file/route the gateway hono bump (baruch already on 4.13). #153 governance epic remains the stated critical path.
+
+### 2026-09-08 — worker #366 resource-priority no-op fixed & merged (v2.50.0); #311 unblocked (WhatsApp number set + verified); repo-wide Security Audit cleared via deps PR (v2.49.1); worktrees + assigned-work swept
+
+Long single session (ran past local midnight into 2026-09-09 container-UTC). Zulip MCP OAuth authed via outside-to-in port-forward at the start.
+
+**Shipped / merged (worker):**
+
+- **#366 — resource-priority ranking now actionable in chat (worker PR #415 = `4d37c0b`, v2.50.0, merged).** Elsy's #277 ranking was a no-op: the portal writes an HTML-comment-fenced block into the mode doc's `## Tool Guidance`, but the worker parsed it as inert prose AND leaked the raw `<!-- order -->` markers into the system prompt. New `src/services/claude/resource-priority.ts` (wired in `createOrchestrationContext` after Ulysses stripping): strips the markers, and when the order parses, appends an actionable directive that lists ranked resources by `name — serverId` and tells the model to honor the order via each tool's resource selector (citing `fetch_scripture`'s `resource` param — `ult`/`ust` etc.). Worker-only, no portal companion, no new wire field. **Honest limit: prompt-bias, not enforcement; `excluded` not handled (portal doesn't emit it).** 38 module tests. **Ten codex+grok review rounds** (see learnings); scope posted to #366 first (research-first policy), Ian cc'd.
+- **Security Audit cleared repo-wide (worker PR #416 = `fa12457`, v2.49.1, merged).** Newly-published advisories broke the full-tree audit gate (blocks all jobs via `needs: [security-audit]`). Fix-forward per #387 precedent: **hono `^4.12.34 <4.13` → `^4.13.5`** (prod; the deferred b353558 "4.13 as its own reviewed change", now security-forced — no API-contract change, hono is internal), + dev overrides **sharp `>=0.35.4`**, **js-yaml `>=4.3.2`**. Ian cc'd.
+
+**Unblocked / verified:**
+
+- **#311 QR** — set GitHub Actions var `WHATSAPP_NUMBER=15558196461` (Tim's 2026-06-24 Zulip #Branding post). **555 area code looked fake; verified real by a live WhatsApp round-trip** (Seth messaged it, BT Servant replied). Staging deploy triggered + green → AC#4 scannable on staging. Comment posted for Elsy. (Memory saved so the 555 isn't re-flagged.)
+- **#278** — Elsy accepted on staging; nudged Ian for the prod KV list (the sole prod blocker; Ian co-assignee).
+- **#292** — nudged Elsy on the one open product question (who the MCP-mgmt UI is for).
+
+**Housekeeping:**
+
+- **SOD + INA sweep**: worker `main` synced; portal PR #321 (2026-09-04 EOD entry) merged + branch cleaned.
+- **Worktree cleanup (both repos)**: removed 14 worktrees, 16 local branches, 10 remote branches (all merged PRs). Post-merge: merged local branches pruned again; worker/portal now `main`-only. Release tags pushed: worker `v2.49.1`, `v2.50.0`.
+- **Assigned-work audit**: surfaced that #278 is blocked on Ian (not us) and #311/#366 had same-day Elsy pings.
+
+**Blockers / needs attention:**
+
+- **worker `fix-215-retire-org-prompt-overrides` worktree** — kept on purpose: it holds **uncommitted WIP with zero commits** (modified `index.ts`, `user-do.ts`, `engine.ts`, deleted `poll.ts`, etc.), the worker side of the portal #125 Phase-2 gate. Seth's call: finish or discard.
+- **Cross-repo hono advisory (separate lanes)**: `whatsapp-gateway` (hono `^4.11.7`, **no audit gate** — silently exposed) and `baruch` (hono `^4.12.14`, gates prod audit — **likely red CI**) carry the same advisory. Each needs its own bump.
+
+**Next steps:**
+
+- #366 staging verification with Elsy (re-test the `translation Coach` ranking — the directive is live on staging).
+- #153 governance epic (stated critical path) — post the drafted versioned-config API design (3 self-decisions pending) + Elsy owes the approver decision.
+- #311 prod promotion when ready (manual dispatch) + optional part-2 worker first-contact welcome.
+- Decide on the `fix-215` WIP; file/route the gateway + baruch hono bumps.
 
 ### 2026-09-04 — pt-BR regression fixed + shipped to staging (3-repo parallel batch); portal backlog cleared; first-turn blank-screen race root-caused
 
