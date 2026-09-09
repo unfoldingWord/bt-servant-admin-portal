@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Pencil, Plus, Trash2 } from "lucide-react";
@@ -62,6 +62,13 @@ export function McpServersPage() {
     () => servers.find((s) => s.id === confirmDeleteId) ?? null,
     [servers, confirmDeleteId]
   );
+
+  // If the row being edited disappears (deleted elsewhere, dropped by a
+  // refetch), clear the selection so a later re-add of the same id can't
+  // spontaneously reopen the dialog.
+  useEffect(() => {
+    if (editingId !== null && editingServer === null) setEditingId(null);
+  }, [editingId, editingServer]);
 
   // Editing is owner-scoped; an absent ownerOrg (older worker or legacy entry)
   // is treated as un-attributed → super-admin only. The BFF enforces the same
@@ -238,6 +245,8 @@ export function McpServersPage() {
       </div>
 
       <McpServerDialog
+        // Remount each time Add opens so the form starts blank.
+        key={addOpen ? "add-open" : "add-idle"}
         server={null}
         open={addOpen}
         onOpenChange={setAddOpen}
@@ -245,6 +254,9 @@ export function McpServersPage() {
       />
 
       <McpServerDialog
+        // Key on the target id so a refetch of the same server never remounts
+        // (edits survive), while switching targets does.
+        key={editingId ?? "edit-idle"}
         server={editingServer}
         // Gate on the resolved server, not just the id: if the row is deleted
         // elsewhere while the dialog is open, editingServer becomes null and we

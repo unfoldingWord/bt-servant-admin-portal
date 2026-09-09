@@ -92,6 +92,18 @@ describe("config — /api/config/mcp-servers (#292): read + add", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("POST with a null JSON body → 400 (not an uncaught 500)", async () => {
+    const fetchSpy = mockFetch(ok);
+    const res = await handleConfig(
+      makeRequest("POST", MCP, null),
+      env,
+      admin(),
+      MCP
+    );
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("POST add (new id, non-super) → reads the pool then proxies the write", async () => {
     const fetchSpy = mockFetch(() => pool([]), ok);
     const res = await handleConfig(

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type {
   McpServer,
@@ -31,13 +31,13 @@ import {
 } from "@/components/ui/select";
 
 interface McpServerDialogProps {
-  // The server being edited, or null to add a new one.
+  // The server being edited, or null to add a new one. The parent gives the
+  // dialog a `key` tied to this target, so it remounts (and re-initialises its
+  // fields) when the target changes — a background pool refetch keeps the same
+  // key and therefore never clobbers in-progress edits.
   server: McpServer | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // Org context to write into (a super-admin's selected org, else undefined =
-  // the caller's own org). New servers are stamped owned by this org.
-  org?: string;
   // Ids already in the pool — an add dialog rejects a duplicate before the
   // request so the user gets an inline reason, not a round-trip.
   existingIds: string[];
@@ -59,43 +59,33 @@ export function McpServerDialog({
   server,
   open,
   onOpenChange,
-  org,
   existingIds,
 }: McpServerDialogProps) {
-  const upsert = useUpsertMcpServer(org);
+  const upsert = useUpsertMcpServer();
   const isEdit = server !== null;
 
-  const [id, setId] = useState("");
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
-  const [enabled, setEnabled] = useState(true);
-  const [priority, setPriority] = useState("1");
+  // Initialised once per mount from the target. The parent keys this component
+  // on the target, so switching servers (or opening Add) remounts with fresh
+  // fields, while a refetch of the same target does not — no effect resync, so
+  // nothing can wipe what the admin has typed. `authToken` starts empty because
+  // reads are redacted; an empty field on edit means "keep the stored token".
+  const [id, setId] = useState(server?.id ?? "");
+  const [name, setName] = useState(server?.name ?? "");
+  const [url, setUrl] = useState(server?.url ?? "");
+  const [enabled, setEnabled] = useState(server?.enabled ?? true);
+  const [priority, setPriority] = useState(String(server?.priority ?? 1));
   const [authToken, setAuthToken] = useState("");
   const [clearToken, setClearToken] = useState(false);
-  const [allowedTools, setAllowedTools] = useState("");
-  const [transport, setTransport] = useState<McpTransport>("json-rpc");
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [allowedTools, setAllowedTools] = useState(
+    server?.allowedTools?.join(", ") ?? ""
+  );
+  const [transport, setTransport] = useState<McpTransport>(
+    server?.transport ?? "json-rpc"
+  );
+  const [showAdvanced, setShowAdvanced] = useState(
+    Boolean(server?.allowedTools?.length) || server?.transport !== undefined
+  );
   const [errorText, setErrorText] = useState<string | null>(null);
-
-  // Re-sync from the server prop whenever the target changes or the dialog
-  // reopens. `authToken` is never echoed back (redacted), so it always starts
-  // empty — an empty field on edit means "keep the stored token".
-  useEffect(() => {
-    if (!open) return;
-    setId(server?.id ?? "");
-    setName(server?.name ?? "");
-    setUrl(server?.url ?? "");
-    setEnabled(server?.enabled ?? true);
-    setPriority(String(server?.priority ?? 1));
-    setAuthToken("");
-    setClearToken(false);
-    setAllowedTools(server?.allowedTools?.join(", ") ?? "");
-    setTransport(server?.transport ?? "json-rpc");
-    setShowAdvanced(
-      Boolean(server?.allowedTools?.length) || server?.transport !== undefined
-    );
-    setErrorText(null);
-  }, [server, open]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

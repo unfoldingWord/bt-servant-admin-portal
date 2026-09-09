@@ -1304,6 +1304,14 @@ export async function handleConfig(
       } catch {
         return errorResponse("Invalid JSON", 400);
       }
+      // A JSON literal `null` (or any non-object) parses without throwing;
+      // guard before dereferencing so it's a 400, not a 500.
+      if (body === null || typeof body !== "object") {
+        return errorResponse(
+          "Request body must be a server config object",
+          400
+        );
+      }
       const id = typeof body.id === "string" ? body.id.trim() : "";
       if (!id) {
         return errorResponse("Server config must include a string id", 400);
