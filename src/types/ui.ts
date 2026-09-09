@@ -4,4 +4,5 @@ export type Section =
   | "prompt-configuration"
   | "languages"
   | "resources"
+  | "mcp-servers"
   | "admin-users";

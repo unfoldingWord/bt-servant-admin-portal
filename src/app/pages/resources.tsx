@@ -9,6 +9,10 @@ import {
   RotateCw,
 } from "lucide-react";
 
+import { useNavigate } from "react-router";
+
+import { useAuthStore } from "@/lib/auth-store";
+import { hasAdminPowers } from "@/lib/permissions";
 import { safeResourceHref } from "@/lib/resource-href";
 import {
   buildServerNameMap,
@@ -200,6 +204,10 @@ function ResourceRow({
 
 export function ResourcesPage() {
   const contextOrg = useUiStore((s) => s.contextOrg);
+  const navigate = useNavigate();
+  // Admins get a link through to the pool editor — this page is a read-only
+  // catalog; the management surface lives at /mcp-servers (#292).
+  const isAdmin = hasAdminPowers(useAuthStore((s) => s.user));
 
   // The endpoint takes an IETF-style content-language code ("en", "sw",
   // "es-419") — deliberately NOT the org's tuning-language slugs, which are
@@ -279,6 +287,15 @@ export function ResourcesPage() {
             IETF code — en, sw, es-419
           </p>
         </form>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => void navigate("/mcp-servers")}
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 pb-1.5 text-xs font-medium underline-offset-2 hover:underline"
+          >
+            Manage servers →
+          </button>
+        )}
         <div
           role="group"
           aria-label="View"

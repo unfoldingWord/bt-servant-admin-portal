@@ -10,6 +10,7 @@ const pathToSection: Record<string, Section> = {
   "/prompt-configuration": "prompt-configuration",
   "/languages": "languages",
   "/resources": "resources",
+  "/mcp-servers": "mcp-servers",
   "/admin/users": "admin-users",
 };
 

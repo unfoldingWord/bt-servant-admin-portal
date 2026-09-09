@@ -520,6 +520,46 @@ function resolveOrg(
   return resolved;
 }
 
+// Read the current global MCP pool's owners (#292). The pool is one shared
+// library, so the org only affects logging and the not-migrated fallback; what
+// we need is each server's `ownerOrg` to decide whether a non-super-admin may
+// edit a given row. Ownership is the portal's to enforce — the worker stores,
+// stamps and returns `ownerOrg` but does not gate on it (worker#417).
+//
+// Fails closed: a thrown fetch or non-2xx propagates to the caller, which maps
+// it to a 502 so an edit is denied rather than performed against an unknown
+// pool. `ownerOrg` is absent when talking to a pre-2.51 worker or for a legacy
+// entry; callers treat "absent" as not-yours (super-admin only).
+async function fetchMcpServerOwners(
+  env: Env,
+  org: string
+): Promise<Map<string, string | undefined>> {
+  const res = await fetch(
+    `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(org)}/mcp-servers`,
+    { headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` } }
+  );
+  if (!res.ok) {
+    throw new Error(`MCP pool read failed (${res.status})`);
+  }
+  const body = (await res.json()) as {
+    servers?: { id?: unknown; ownerOrg?: unknown }[];
+  };
+  // Fail closed on a well-formed 200 that isn't the expected shape: without a
+  // real `servers` array we cannot tell an edit from an add, and defaulting to
+  // "empty pool" would let an edit slip through as an add. An empty array is a
+  // legitimately empty pool and is fine.
+  if (!Array.isArray(body.servers)) {
+    throw new Error("MCP pool read returned no servers array");
+  }
+  const owners = new Map<string, string | undefined>();
+  for (const s of body.servers) {
+    if (typeof s.id === "string") {
+      owners.set(s.id, typeof s.ownerOrg === "string" ? s.ownerOrg : undefined);
+    }
+  }
+  return owners;
+}
+
 export async function handleConfig(
   request: Request,
   env: Env,
@@ -1244,6 +1284,119 @@ export async function handleConfig(
       env,
       `/api/v1/admin/orgs/${encodedOrg}/resources?language=${encodeURIComponent(language)}`,
       ["GET"]
+    );
+  }
+
+  // /api/config/mcp-servers → the shared global MCP server pool (#292).
+  // GET: any admin. POST (add/edit): admins, but editing an existing server
+  // requires owning it (super-admins edit anything). This worker is the only
+  // enforcement point — the engine takes one shared admin token and has no
+  // per-user identity — so the ownership check lives here, not in the client.
+  if (pathname === "/api/config/mcp-servers") {
+    if (!hasAdminPowers(session)) {
+      return errorResponse("Forbidden", 403);
+    }
+    const enginePath = `/api/v1/admin/orgs/${encodedOrg}/mcp-servers`;
+
+    if (request.method === "GET") {
+      return proxyToEngine(request, env, enginePath, ["GET"]);
+    }
+
+    if (request.method === "POST") {
+      // Read the write body once to learn the target id, then hand the parsed
+      // copy to proxyToEngine (request bodies are one-shot streams).
+      let body: { id?: unknown };
+      try {
+        body = (await request.json()) as { id?: unknown };
+      } catch {
+        return errorResponse("Invalid JSON", 400);
+      }
+      // A JSON literal `null` (or any non-object) parses without throwing;
+      // guard before dereferencing so it's a 400, not a 500.
+      if (body === null || typeof body !== "object") {
+        return errorResponse(
+          "Request body must be a server config object",
+          400
+        );
+      }
+      const id = typeof body.id === "string" ? body.id.trim() : "";
+      if (!id) {
+        return errorResponse("Server config must include a string id", 400);
+      }
+      // Forward the trimmed id so the key whose ownership we verify below is the
+      // exact key the engine upserts — otherwise `{id: "helps "}` would be
+      // checked as "helps" but written under "helps ".
+      body.id = id;
+
+      // Adding a new server is open to any admin; editing an existing one is
+      // owner-scoped. Super-admins skip the check (they manage everything), so
+      // only a non-super caller pays the extra pool read.
+      if (session.isSuperAdmin !== true) {
+        let owners: Map<string, string | undefined>;
+        try {
+          owners = await fetchMcpServerOwners(env, resolved.org);
+        } catch {
+          return errorResponse(
+            "Couldn't verify server ownership — try again.",
+            502
+          );
+        }
+        if (owners.has(id)) {
+          const ownerOrg = owners.get(id);
+          // Absent ownerOrg is treated as not-yours: only super-admins manage
+          // un-attributed rows. Worker >= 2.51 always returns a concrete
+          // ownerOrg (its projection defaults an absent stored value to the
+          // migrated unfoldingWord pool — no data back-fill needed), so this
+          // fallback only applies when talking to an older worker.
+          if (ownerOrg === undefined || ownerOrg !== resolved.org) {
+            return errorResponse(
+              "You can only edit MCP servers your org owns.",
+              403
+            );
+          }
+        }
+        // This owner check and the upsert below are not atomic: the shared
+        // pool has no compare-and-swap (worker#386 / admin-portal#278), so a
+        // row created by another org in the read-write window could be
+        // overwritten by an add that read it as absent. That last-write-wins
+        // window is the accepted property of the pool design (admins are
+        // trusted operators, per #278); closing it needs a CAS in the worker,
+        // which is deliberately out of scope here.
+      }
+      return proxyToEngine(request, env, enginePath, ["POST"], body);
+    }
+
+    return errorResponse("Method not allowed", 405);
+  }
+
+  // /api/config/mcp-servers/{id} → DELETE only. Deletions go through uW: a
+  // partner's server may be referenced by another org's modes and nothing
+  // tracks those cross-org references today, so partners never delete (Elsy,
+  // #292). Modelled as super-admin-only — the portal's cross-org authority.
+  const mcpDeleteMatch = pathname.match(
+    /^\/api\/config\/mcp-servers\/([^/]+)$/
+  );
+  if (mcpDeleteMatch?.[1]) {
+    // Method before role: a non-DELETE on this DELETE-only path is a 405
+    // regardless of who asks, rather than a misleading 403.
+    if (request.method !== "DELETE") {
+      return errorResponse("Method not allowed", 405);
+    }
+    if (session.isSuperAdmin !== true) {
+      return errorResponse("Deleting MCP servers requires a super admin", 403);
+    }
+    let serverId: string;
+    try {
+      serverId = decodeURIComponent(mcpDeleteMatch[1]);
+    } catch {
+      // A malformed %-sequence would otherwise throw URIError → 500.
+      return errorResponse("Invalid server id encoding", 400);
+    }
+    return proxyToEngine(
+      request,
+      env,
+      `/api/v1/admin/orgs/${encodedOrg}/mcp-servers/${encodeURIComponent(serverId)}`,
+      ["DELETE"]
     );
   }
 

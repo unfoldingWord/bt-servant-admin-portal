@@ -3,12 +3,14 @@ import { faComments as faCommentsLight } from "@fortawesome/pro-light-svg-icons"
 import { faLanguage as faLanguageLight } from "@fortawesome/pro-light-svg-icons";
 import { faMessageBot as faMessageBotLight } from "@fortawesome/pro-light-svg-icons";
 import { faPenToSquare as faPenToSquareLight } from "@fortawesome/pro-light-svg-icons";
+import { faServer as faServerLight } from "@fortawesome/pro-light-svg-icons";
 import { faUsers as faUsersLight } from "@fortawesome/pro-light-svg-icons";
 import { faBooks as faBooksSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faComments as faCommentsSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faLanguage as faLanguageSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faMessageBot as faMessageBotSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faPenToSquare as faPenToSquareSolid } from "@fortawesome/pro-solid-svg-icons";
+import { faServer as faServerSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faUsers as faUsersSolid } from "@fortawesome/pro-solid-svg-icons";
 import { useNavigate } from "react-router";
 
@@ -99,6 +101,18 @@ export function ActivityBar() {
             void navigate("/resources");
           }}
         />
+        {isAdmin && (
+          <ActivityBarItem
+            icon={faServerLight}
+            activeIcon={faServerSolid}
+            label="Manage the shared MCP server pool"
+            isActive={activeSection === "mcp-servers"}
+            onClick={() => {
+              setActiveSection("mcp-servers");
+              void navigate("/mcp-servers");
+            }}
+          />
+        )}
         {isAdmin && (
           <ActivityBarItem
             icon={faUsersLight}
