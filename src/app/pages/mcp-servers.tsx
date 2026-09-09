@@ -46,10 +46,11 @@ export function McpServersPage() {
     () => poolQuery.data?.servers ?? [],
     [poolQuery.data]
   );
-  // Writes require a successful read AND a migrated pool. Until the pool has
-  // actually loaded, `canWrite` stays false so Add/Edit/Delete aren't offered
-  // against an unknown (possibly unmigrated) pool. `loaded` gates the
-  // not-migrated banner so it doesn't flash during the initial fetch.
+  // Writes require a successful read AND a migrated pool. `migrated` is part of
+  // the worker's GET contract (worker#417, pinned by its e2e tests); reading it
+  // as `=== true` fails safe — a missing/false value disables writes rather
+  // than allowing them against an unknown pool. Until the pool has loaded,
+  // `canWrite` stays false; `loaded` gates the banner so it doesn't flash.
   const loaded = poolQuery.data !== undefined;
   const canWrite = poolQuery.data?.migrated === true;
   const existingIds = useMemo(() => servers.map((s) => s.id), [servers]);

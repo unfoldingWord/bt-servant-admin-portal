@@ -125,13 +125,13 @@ export function McpServerDialog({
       return;
     }
     const priorityText = priority.trim();
-    // Plain non-negative integer only: reject "", "1.5", "-1", and exponent
-    // forms like "1e3" that Number() would otherwise silently accept.
-    if (!/^\d+$/.test(priorityText)) {
+    const priorityNum = Number(priorityText);
+    // Plain non-negative integer only: reject "", "1.5", "-1", exponent forms
+    // like "1e3", and digit strings so long that Number() loses precision.
+    if (!/^\d+$/.test(priorityText) || !Number.isSafeInteger(priorityNum)) {
       setErrorText("Priority must be a whole number ≥ 0.");
       return;
     }
-    const priorityNum = Number(priorityText);
 
     // authToken three-way (worker's #278 write rule): a typed value sets it,
     // "Remove the stored token" clears it, and leaving it blank preserves the

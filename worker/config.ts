@@ -1343,8 +1343,11 @@ export async function handleConfig(
         }
         if (owners.has(id)) {
           const ownerOrg = owners.get(id);
-          // Absent ownerOrg (older worker, or a legacy pre-#292 entry) is
-          // treated as not-yours: only super-admins manage un-attributed rows.
+          // Absent ownerOrg is treated as not-yours: only super-admins manage
+          // un-attributed rows. Worker >= 2.51 always returns a concrete
+          // ownerOrg (its projection defaults an absent stored value to the
+          // migrated unfoldingWord pool — no data back-fill needed), so this
+          // fallback only applies when talking to an older worker.
           if (ownerOrg === undefined || ownerOrg !== resolved.org) {
             return errorResponse(
               "You can only edit MCP servers your org owns.",
@@ -1382,7 +1385,13 @@ export async function handleConfig(
     if (session.isSuperAdmin !== true) {
       return errorResponse("Deleting MCP servers requires a super admin", 403);
     }
-    const serverId = decodeURIComponent(mcpDeleteMatch[1]);
+    let serverId: string;
+    try {
+      serverId = decodeURIComponent(mcpDeleteMatch[1]);
+    } catch {
+      // A malformed %-sequence would otherwise throw URIError → 500.
+      return errorResponse("Invalid server id encoding", 400);
+    }
     return proxyToEngine(
       request,
       env,
