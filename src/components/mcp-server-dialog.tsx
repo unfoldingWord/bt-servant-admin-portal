@@ -95,9 +95,6 @@ export function McpServerDialog({
       Boolean(server?.allowedTools?.length) || server?.transport !== undefined
     );
     setErrorText(null);
-    upsert.reset();
-    // upsert is a stable React Query reference
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server, open]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -132,7 +129,13 @@ export function McpServerDialog({
       return;
     }
     const priorityNum = Number(priority);
-    if (!Number.isInteger(priorityNum) || priorityNum < 0) {
+    // Guard the blank field explicitly: Number("") is 0, which would otherwise
+    // pass the integer check and silently save priority 0 (tried first).
+    if (
+      priority.trim() === "" ||
+      !Number.isInteger(priorityNum) ||
+      priorityNum < 0
+    ) {
       setErrorText("Priority must be a whole number ≥ 0.");
       return;
     }

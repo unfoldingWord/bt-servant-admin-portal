@@ -46,7 +46,12 @@ export function McpServersPage() {
     () => poolQuery.data?.servers ?? [],
     [poolQuery.data]
   );
-  const migrated = poolQuery.data?.migrated ?? true;
+  // Writes require a successful read AND a migrated pool. Until the pool has
+  // actually loaded, `canWrite` stays false so Add/Edit/Delete aren't offered
+  // against an unknown (possibly unmigrated) pool. `loaded` gates the
+  // not-migrated banner so it doesn't flash during the initial fetch.
+  const loaded = poolQuery.data !== undefined;
+  const canWrite = poolQuery.data?.migrated === true;
   const existingIds = useMemo(() => servers.map((s) => s.id), [servers]);
 
   const editingServer = useMemo(
@@ -98,9 +103,9 @@ export function McpServersPage() {
           <Button
             size="sm"
             onClick={() => setAddOpen(true)}
-            disabled={!migrated}
+            disabled={!canWrite}
             title={
-              migrated
+              canWrite
                 ? undefined
                 : "The server pool isn't set up in this environment yet."
             }
@@ -111,7 +116,7 @@ export function McpServersPage() {
         </div>
       </div>
 
-      {!migrated && !poolQuery.isLoading && (
+      {loaded && !canWrite && (
         <div className="bg-muted/40 text-muted-foreground border-b px-6 py-3 text-sm">
           The server pool hasn&rsquo;t been set up in this environment yet.
           You&rsquo;re seeing the current list, but adding, editing, and
@@ -134,11 +139,13 @@ export function McpServersPage() {
             />
             <p className="text-sm">Loading servers…</p>
           </div>
-        ) : servers.length === 0 ? (
+        ) : poolQuery.error ? // The error banner above says what happened; don't also render the
+        // "empty pool" state, which would wrongly imply the pool is empty.
+        null : servers.length === 0 ? (
           <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
             <p className="text-sm">
               No servers in the pool yet.
-              {migrated && " Click “Add server” to register the first one."}
+              {canWrite && " Click “Add server” to register the first one."}
             </p>
           </div>
         ) : (
@@ -192,7 +199,7 @@ export function McpServersPage() {
                           size="sm"
                           variant="ghost"
                           onClick={() => setEditingId(server.id)}
-                          disabled={!editable || !migrated}
+                          disabled={!editable || !canWrite}
                           title={
                             editable
                               ? "Edit server"
@@ -209,7 +216,7 @@ export function McpServersPage() {
                             setDeleteError(null);
                             setConfirmDeleteId(server.id);
                           }}
-                          disabled={!isSuperAdmin || !migrated}
+                          disabled={!isSuperAdmin || !canWrite}
                           title={
                             isSuperAdmin
                               ? "Delete server"
@@ -238,7 +245,10 @@ export function McpServersPage() {
 
       <McpServerDialog
         server={editingServer}
-        open={editingId !== null}
+        // Gate on the resolved server, not just the id: if the row is deleted
+        // elsewhere while the dialog is open, editingServer becomes null and we
+        // close rather than silently flipping the dialog into "Add" mode.
+        open={editingId !== null && editingServer !== null}
         onOpenChange={(open) => {
           if (!open) setEditingId(null);
         }}
