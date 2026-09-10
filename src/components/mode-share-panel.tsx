@@ -428,15 +428,18 @@ export function ModeSharePanel({
           // dialog's content box and spilled past its right edge (#311).
           // A full-width primary over an equal-width download pair follows
           // the dialog's own vertical rhythm and can't overflow at any width.
-          <DialogFooter className="flex-col gap-2 sm:flex-col sm:justify-normal">
-            <Button size="sm" variant="ghost" asChild className="w-full">
+          <DialogFooter className="flex-col sm:flex-col sm:justify-normal">
+            <Button size="sm" variant="ghost" asChild>
               <a href={state.url} target="_blank" rel="noopener noreferrer">
                 <ExternalLink />
                 Open in WhatsApp
                 <span className="sr-only"> (opens in a new tab)</span>
               </a>
             </Button>
-            <div className="flex gap-2">
+            {/* flex-wrap so the pair stacks rather than overflowing on very
+                narrow (sub-~334px) viewports, where two whitespace-nowrap
+                buttons no longer fit side by side (#311 review). */}
+            <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
                 variant="outline"
