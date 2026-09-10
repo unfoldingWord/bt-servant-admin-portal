@@ -427,7 +427,8 @@ export function ModeSharePanel({
           // `sm:max-w-md` the three buttons together are wider than the
           // dialog's content box and spilled past its right edge (#311).
           // A full-width primary over an equal-width download pair follows
-          // the dialog's own vertical rhythm and can't overflow at any width.
+          // the dialog's own vertical rhythm; the pair wraps rather than
+          // spilling, so it holds at every realistic viewport width.
           <DialogFooter className="flex-col sm:flex-col sm:justify-normal">
             <Button size="sm" variant="ghost" asChild>
               <a href={state.url} target="_blank" rel="noopener noreferrer">
