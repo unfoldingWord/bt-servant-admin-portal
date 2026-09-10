@@ -112,6 +112,42 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ## Session Log
 
+### 2026-09-10 (evening) — #311 part 2 (per-mode first-contact welcome) built end-to-end cross-repo through 6+ external review rounds (worker PR #423 v2.52.0, portal PR #327 v1.15.0); #153 governance contract posted; worker#418 root-caused + CONFIRMED via CF logs; container Cloudflare + 1Password access stood up
+
+Long build-and-review session. Cross-repo INA sweep first, then cleared the Elsy-facing / stated-critical-path items, then built #311 part 2 on both sides through a deep external-review loop that earned its keep repeatedly.
+
+**Parallel-tracked after an activity/supersession sweep** (nobody on our targets; found worker#37 was a stale 7-month spike, not a fresh bug):
+
+- **#153 Governance & Versioning — design contract POSTED** ([comment](https://github.com/unfoldingWord/bt-servant-admin-portal/issues/153#issuecomment-5620886986)). Reconstructed + refreshed the versioned-config/audit contract (3 self-decisions: 5-min draft coalescing, `FROZEN` 409, best-effort audit). Elsy already picked Option 2 in-thread; only her approver-rule remains external. Review window to 2026-09-15.
+- **worker#37 → carved out worker#421** (`bug`): the concrete matrix/WhatsApp between-tool reasoning-text leak (39/91 turns) split out of the stale streaming-UX spike, with a testable acceptance criterion; flagged #37's `claude-sonnet-4-5`/pre-V2 staleness.
+- **worker#418 (DO drops chat turns) — root-caused AND confirmed in prod logs.** Root cause: `processImmediateSSE` runs the turn (save + `releaseLock`) in an **untracked background promise** (no `state.waitUntil`), so the runtime reclaims the isolate before cleanup → "Durable Object no longer active". Confirmed the 3 failed turns in the exact 15:38–15:41 UTC window via the Observability logs; stacks pinpoint `saveConversation`/`getHistory` + `releaseLock`. Proposed fix (`waitUntil` anchoring + resilient `releaseLock`) posted; **not built** (Seth's call). Retry-interpose rejected once logs showed the death is at the persistence step.
+
+**Container access unlocked (Seth-driven, durable):** installed the **1Password CLI** (service-account token → `uw-dev-ops` vault) and did a **`wrangler login --device`** (device-flow, no localhost callback) — KV read/write now works via OAuth (unblocks #278/#292 prod/staging KV). cf-logs needs an **API token** (observability is not an OAuth scope) now stored at `op://uw-dev-ops/cf-workers-observability/credential`. Recipe saved to memory. CF account `5a3ffd86…9242`.
+
+**#311 part 2 — per-mode first-contact welcome, cross-repo, worker-first:**
+
+- **Worker PR #423 (v2.52.0)** — new optional `welcome_message` on the mode record; one-time per-user-per-mode welcome keyed `mode_welcomed:<slug>` (per-user in groups), emitted out-of-band via a new `onWelcome` webhook **before** orchestration (kept out of `responses` so the WhatsApp delta-stream stays intact), in-band prepend on SSE/`/chat/final`; non-fatal delivery with a `mode_welcome_pending` re-emit; model's own first-interaction welcome suppressed (no double); reserved-slug (`#default/#none/#clear`) share links dropped; new `WHATSAPP_NUMBER` var. **CI green + on staging.** Awaiting Seth's merge (classifier-gated).
+- **Review loop earned its keep — 6 codex+grok rounds to convergence + a 7th (claude-code-review) that caught a real bug the other two missed.** Caught, among others: the field being **dropped by admin CRUD** (dead for existing modes), a **garbled WhatsApp delivery** from the initial prepend, multiple `first_interaction` double-welcome interactions, the SSE in-band flag/pending accounting (disconnect/throw/reslug), and finally a **flag-write-after-successful-send arming pending → duplicate welcome** (fixed: best-effort record) + a reserved-token parity drift risk (pinned via exported `CLEAR_TOKENS` + test).
+- **Portal PR #327 (v1.15.0)** — author `welcome_message` in the create dialog (max 1000, copy-only; worker appends the wa.me line) + a dismissible **post-create nudge** to the QR/share panel + import/export parity. `claude-code-review`: no medium+; fixed the one real bug (bare `welcome_message: |` importing literal `"|"`). **Pushed + PR open**, merge held for the worker.
+
+**Filed / assigned to us:** worker#422 (welcome hardening: flag/`first_interaction` atomicity, `complete`-mode POST, hot-path pending N+1), **gateway#45** (gateway returns 200 before Meta send — the real one-time-delivery ack fix), portal#328 (no in-portal edit of an existing mode's welcome — flagged for Elsy).
+
+**In progress / handoff:**
+
+- **Merge #423** (worker, v2.52.0) is Seth's to run — the auto-mode classifier blocks Claude from merging PRs. Command handed off (`gh pr merge 423 --squash` + tag `v2.52.0`). Then **portal #327** becomes mergeable (worker-first), then a portal prod-promotion decision (still v1.12.0 in prod).
+- **This EOD entry rides on PR #326** (the morning 2026-09-10 docs entry, still open).
+
+**Blockers:** #153 approver rule (Elsy); worker#418 fix is proposed-not-built (Seth's call on `waitUntil` vs. waiting for a soak); gateway#45 wants doing before the QR path carries real WhatsApp volume.
+
+**Next steps:** merge #423 → portal #327 → decide portal prod promotion; pick up worker#418 fix and gateway#45 (both ours now); #153 unblocks on Elsy's approver rule 2026-09-15.
+
+**Learnings:**
+
+- **Observability logs need an API token, not wrangler OAuth** — the telemetry endpoint 403s OAuth bearer tokens; no OAuth scope grants it. Device-flow `wrangler login` is the clean in-container browser auth for KV/deploy.
+- **Different reviewers have different blind spots** — codex+grok converged, then a `claude-code-review` pass (accidentally run on the worker branch via a stale `cd`) found a real correctness bug both had missed. Worth a third lens on high-stakes changes.
+- **Watch the shell cwd before invoking a repo-scoped skill/review** — a lingering `cd` sent a "portal" review at the worker repo. (Serendipitous here; usually just wasteful.)
+- **`555` area code is a false-positive magnet** — codex flagged the real, verified BT Servant WhatsApp number as fictional on every round. The memory exists precisely so it isn't re-flagged.
+
 ### 2026-09-10 — #277 confirmed complete + live in prod (answered Elsy); #311 QR modal button-overflow fixed & merged to staging (v1.14.1); #292 staging pool seeded + delete-authz confirmed
 
 SOD + cross-repo INA sweep, then cleared the two Elsy-facing items assigned to us and unblocked the #292 staging verification.
