@@ -8,7 +8,7 @@ import {
 } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Download, ListOrdered, QrCode, Save, Upload } from "lucide-react";
+import { Download, ListOrdered, QrCode, Save, Upload, X } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { shouldAutoSaveDraft } from "@/lib/autosave-gate";
@@ -237,6 +237,19 @@ export function ModesPage() {
   // of mode B under mode A's flags, no unmount while open.
   const [shareFor, setShareFor] = useState<string | null>(null);
   const shareOpen = isModeShareOpen(shareFor, selectedMode);
+  // #311 (part 2) — post-create nudge. Holds the slug of the mode just created
+  // from the New Mode card so a dismissible callout can point the admin at the
+  // QR/share panel. A LATCH, not `shareFor`: the `setShareFor(null)` effect
+  // below fires on the very selection change `handleCreateMode` triggers, so a
+  // naive `setShareFor(name)` there would be cleared in the same render. This
+  // is keyed on the selection instead: the nudge only RENDERS while
+  // `justCreated === selectedMode`, so it stays hidden until the new slug is
+  // actually selected (immediately on the clean create path, or once the
+  // "Switch mode?" confirm resolves on the dirty path). It is cleared on
+  // dismiss, when the selection moves elsewhere, or when the org context
+  // changes — never by the create's own selection change.
+  const [justCreated, setJustCreated] = useState<string | null>(null);
+  const showCreatedNudge = justCreated !== null && justCreated === selectedMode;
   // The derived `open` closes in the same render; this clears the latch so
   // re-selecting the same mode later does not reopen the dialog unasked
   // (Radix only reports onOpenChange for user dismissals, not for a
@@ -246,12 +259,27 @@ export function ModesPage() {
   useEffect(() => {
     setShareFor(null);
   }, [selectedMode, contextOrg]);
+  // #311 (part 2) — retire the post-create nudge when the org context changes.
+  // `setContextOrg` also nulls the selection, so the divergence effect below
+  // would catch this indirectly; clearing it here directly makes the documented
+  // intent true and robust to any future change in that coupling. Fires on
+  // mount too (a no-op while `justCreated` is null) and never on the create
+  // itself, which leaves `contextOrg` untouched.
+  useEffect(() => {
+    setJustCreated(null);
+  }, [contextOrg]);
   const shareButtonRef = useRef<HTMLButtonElement | null>(null);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
 
   const serverLabel = modeQuery.data?.label;
   const serverDescription = modeQuery.data?.description;
+  // #311 (part 2) — the mode's authored welcome copy. Re-asserted verbatim on
+  // every PUT this page sends, exactly like `serverDescription`: the worker
+  // has no partial update, and an omitted key keeps the stored value while
+  // null/'' deletes it — so passing the server value through preserves it
+  // across document autosaves and flag toggles that don't touch the field.
+  const serverWelcomeMessage = modeQuery.data?.welcome_message;
 
   const syncedNameRef = useRef<string | null>(null);
   useEffect(() => {
@@ -338,6 +366,7 @@ export function ModesPage() {
           body: {
             label: serverLabel,
             description: serverDescription,
+            welcome_message: serverWelcomeMessage,
             document: doc,
             ...sent,
           },
@@ -370,6 +399,7 @@ export function ModesPage() {
       selectedMode,
       serverDescription,
       serverLabel,
+      serverWelcomeMessage,
       trackersOwn,
     ]
   );
@@ -479,6 +509,24 @@ export function ModesPage() {
   const [pendingContextOrg, setPendingContextOrg] = useState<{
     value: string | null;
   } | null>(null);
+
+  // #311 (part 2) — retire the post-create nudge once the selection moves off
+  // the mode it was raised for (a genuine navigation). Guarded by
+  // `pendingSwitch` so a nudge staged for a mode still behind the "Switch
+  // mode?" confirm survives until the switch resolves and `selectedMode`
+  // catches up: the dirty create path sets `justCreated` before the deferred
+  // selection lands. The create's own selection change leaves this alone — it
+  // fires only once `justCreated`, `selectedMode`, and any `pendingSwitch` have
+  // diverged. Org-context changes are handled by the dedicated effect above.
+  useEffect(() => {
+    if (
+      justCreated !== null &&
+      justCreated !== selectedMode &&
+      justCreated !== pendingSwitch
+    ) {
+      setJustCreated(null);
+    }
+  }, [justCreated, selectedMode, pendingSwitch]);
 
   // #277 — the resource-priority panel. Open state lives here, not in the
   // panel, so a failed apply-save leaves it exactly where the user left it.
@@ -606,6 +654,10 @@ export function ModesPage() {
           body: {
             label: mode.label,
             description: mode.description,
+            // #311 (part 2) — carry an imported welcome message through, and
+            // let an omitted one keep the stored value (parity with the other
+            // scalars). `parseModeImport` caps it at the worker's max.
+            welcome_message: mode.welcome_message,
             document: mode.document,
             published: mode.published,
             requires_group: mode.requires_group,
@@ -875,7 +927,7 @@ export function ModesPage() {
   }, [selectedMode, modeEditRights, modePublishRights, setSelectedMode]);
 
   const handleCreateMode = useCallback(
-    (name: string, label: string, description: string) => {
+    (name: string, label: string, description: string, welcome: string) => {
       // Deliberately does NOT refuse while another save is in flight: the
       // create dialog is fire-and-forget (it closes as soon as this
       // returns), so a silent no-op would swallow the user's new mode.
@@ -903,6 +955,10 @@ export function ModesPage() {
           body: {
             label: label || undefined,
             description: description || undefined,
+            // #311 (part 2) — opt in only when authored; an empty field is
+            // "no welcome", sent as undefined (omitted) rather than '' so the
+            // create matches the clear-to-opt-out convention `description` uses.
+            welcome_message: welcome || undefined,
             document: MODE_DOCUMENT_SCAFFOLD,
             // Both flags, always explicit. The worker has no partial
             // update — an omitted key means "keep whatever is stored" —
@@ -928,10 +984,24 @@ export function ModesPage() {
             // draft gets the same "Switch mode?" prompt clone/retire get
             // (code-review on #315).
             if (isDirtyRef.current) {
+              // #311 (part 2) — stage the post-create nudge for the new slug
+              // even on the dirty path. It only RENDERS once
+              // `justCreated === selectedMode`, which happens after the admin
+              // confirms the "Switch mode?" prompt and `confirmSwitch` selects
+              // this slug; the `pendingSwitch` guard on the retire effect keeps
+              // the latch alive across that window. If the admin cancels the
+              // switch, that effect clears it — the selection never reaches
+              // this slug.
+              setJustCreated(name);
               setPendingSwitch(name);
               return;
             }
             setSelectedMode(name);
+            // #311 (part 2) — raise the post-create nudge for this slug. Set
+            // alongside the selection so `justCreated === selectedMode` holds
+            // once both land. The dirty path stages the same latch above,
+            // before its deferred selection.
+            setJustCreated(name);
           },
           onSettled: () => {
             inFlightSavesRef.current -= 1;
@@ -967,6 +1037,7 @@ export function ModesPage() {
           body: {
             label: serverLabel,
             description: serverDescription,
+            welcome_message: serverWelcomeMessage,
             document: draft,
             ...sent,
           },
@@ -987,6 +1058,7 @@ export function ModesPage() {
       selectedMode,
       serverDescription,
       serverLabel,
+      serverWelcomeMessage,
       trackersOwn,
     ]
   );
@@ -1018,6 +1090,7 @@ export function ModesPage() {
           body: {
             label: serverLabel,
             description: serverDescription,
+            welcome_message: serverWelcomeMessage,
             document: draft,
             ...sent,
           },
@@ -1038,6 +1111,7 @@ export function ModesPage() {
       selectedMode,
       serverDescription,
       serverLabel,
+      serverWelcomeMessage,
       trackersOwn,
     ]
   );
@@ -1075,6 +1149,7 @@ export function ModesPage() {
           body: {
             label: serverLabel,
             description: serverDescription,
+            welcome_message: serverWelcomeMessage,
             document: nextDocument,
             ...sent,
           },
@@ -1125,6 +1200,7 @@ export function ModesPage() {
       selectedMode,
       serverDescription,
       serverLabel,
+      serverWelcomeMessage,
       trackersOwn,
     ]
   );
@@ -1341,6 +1417,10 @@ export function ModesPage() {
             body: {
               label: nextLabel,
               description: target.description,
+              // Re-assert the stored welcome copy — this label-only PUT must
+              // not drop it (worker keeps an omitted key, but pass it through
+              // explicitly for parity with `description`).
+              welcome_message: target.welcome_message,
               document,
               ...sent,
             },
@@ -1611,6 +1691,53 @@ export function ModesPage() {
         </div>
       </div>
 
+      {/* #311 (part 2) — post-create nudge. A dismissible inline callout, not
+          an auto-opened dialog: the freshly-created mode is a DRAFT whose QR is
+          inactive, so it points at the QR/share surface with the right
+          expectation ("publish first") instead of surfacing a code that won't
+          scan. Sits below the toolbar, next to the QR-code button it refers to.
+          Keyed on `justCreated === selectedMode`, so it rides along with the
+          new selection and never survives a switch to another mode. */}
+      {showCreatedNudge && (
+        <div
+          className="bg-muted flex flex-wrap items-center gap-x-3 gap-y-2 border-l-2 px-6 py-3 text-sm"
+          style={{ borderLeftColor: "var(--brand-modes)" }}
+          role="status"
+          aria-live="polite"
+        >
+          <QrCode
+            className="size-4 shrink-0"
+            style={{ color: "var(--brand-modes)" }}
+            aria-hidden="true"
+          />
+          <p className="text-foreground min-w-0 flex-1">
+            <span className="font-medium">Mode created as a draft.</span>{" "}
+            Publish it to activate its QR code, then share it on WhatsApp.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setShareFor(selectedMode);
+              setJustCreated(null);
+            }}
+            disabled={!effectiveOrg}
+            title={shareHelp}
+          >
+            <QrCode className="mr-1.5 size-3.5" />
+            Show QR code
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setJustCreated(null)}
+            aria-label="Dismiss"
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+      )}
+
       {error && (
         <div
           className="bg-destructive/10 text-destructive border-destructive border-l-2 px-6 py-3 text-sm"
@@ -1877,9 +2004,9 @@ export function ModesPage() {
                 {pendingImport?.mode.name}
               </span>{" "}
               already exists. Importing this file replaces its document and its
-              published / group-chat settings, and updates the display name and
-              description when the file includes them. This can&rsquo;t be
-              undone.
+              published / group-chat settings, and updates the display name,
+              description, and welcome message when the file includes them. This
+              can&rsquo;t be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {importConfirmError && (
