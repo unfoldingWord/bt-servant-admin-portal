@@ -423,8 +423,13 @@ export function ModeSharePanel({
         )}
 
         {state.kind === "ready" && (
-          <DialogFooter className="sm:justify-between">
-            <Button size="sm" variant="ghost" asChild>
+          // Stack the actions instead of a single justify-between row: at
+          // `sm:max-w-md` the three buttons together are wider than the
+          // dialog's content box and spilled past its right edge (#311).
+          // A full-width primary over an equal-width download pair follows
+          // the dialog's own vertical rhythm and can't overflow at any width.
+          <DialogFooter className="flex-col gap-2 sm:flex-col sm:justify-normal">
+            <Button size="sm" variant="ghost" asChild className="w-full">
               <a href={state.url} target="_blank" rel="noopener noreferrer">
                 <ExternalLink />
                 Open in WhatsApp
@@ -432,11 +437,21 @@ export function ModeSharePanel({
               </a>
             </Button>
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={handleDownloadSvg}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleDownloadSvg}
+                className="flex-1"
+              >
                 <Download />
                 Download SVG
               </Button>
-              <Button size="sm" variant="outline" onClick={handleDownloadPng}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleDownloadPng}
+                className="flex-1"
+              >
                 <Download />
                 Download PNG
               </Button>
