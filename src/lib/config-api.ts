@@ -145,6 +145,9 @@ export async function putMode(
     document: string;
     published?: boolean;
     requires_group?: boolean;
+    // #311 (part 2) — additive first-contact welcome copy. Additive field on
+    // the existing PUT (no new route); a pre-v2.52.0 worker silently drops it.
+    welcome_message?: string;
   },
   signal?: AbortSignal,
   org?: string | null

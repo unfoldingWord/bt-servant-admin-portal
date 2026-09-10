@@ -12,11 +12,18 @@
 
 import { MODE_EXPORT_VERSION } from "./mode-export";
 import { slugifyModeName } from "./mode-slug";
+import { MAX_MODE_WELCOME_MESSAGE_LENGTH } from "@/types/prompt-override";
 
 export interface ParsedModeImport {
   name: string;
   label?: string;
   description?: string;
+  /**
+   * #311 (part 2) — first-contact welcome copy. Present only when the file
+   * carries it; validated against MAX_MODE_WELCOME_MESSAGE_LENGTH so an
+   * over-long hand-edit is rejected here rather than 400-ing at the worker.
+   */
+  welcome_message?: string;
   document: string;
   /** Always resolved to a definite boolean — an absent key means false. */
   published: boolean;
@@ -179,6 +186,19 @@ function parseModeImportUnsafe(raw: string): ModeImportResult {
   if (fields.scalars.label !== undefined) mode.label = fields.scalars.label;
   if (fields.scalars.description !== undefined) {
     mode.description = fields.scalars.description;
+  }
+  // #311 (part 2) — an over-long welcome message would 400 at the worker;
+  // reject it here so the failure lands in the pre-flight banner with a clear
+  // reason, the same way the flag validators above do.
+  if (fields.scalars.welcome_message !== undefined) {
+    const welcome = fields.scalars.welcome_message;
+    if (welcome.length > MAX_MODE_WELCOME_MESSAGE_LENGTH) {
+      return {
+        ok: false,
+        error: `The 'welcome_message' is ${welcome.length} characters — the maximum is ${MAX_MODE_WELCOME_MESSAGE_LENGTH}.`,
+      };
+    }
+    mode.welcome_message = welcome;
   }
 
   return { ok: true, mode };

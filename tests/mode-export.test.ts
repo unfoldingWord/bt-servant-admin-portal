@@ -46,6 +46,22 @@ describe("buildModeExportContent — frontmatter", () => {
     expect(out).toContain("published: false");
   });
 
+  it("emits welcome_message when set, escaping newlines onto one line (#311 part 2)", () => {
+    const out = buildModeExportContent(
+      { ...baseMode, welcome_message: "Hi there!\nText me a passage." },
+      { org: "unfoldingWord", exportedAt: FIXED_DATE }
+    );
+    expect(out).toContain('welcome_message: "Hi there!\\nText me a passage."');
+  });
+
+  it("omits welcome_message when undefined (#311 part 2)", () => {
+    const out = buildModeExportContent(baseMode, {
+      org: "uW",
+      exportedAt: FIXED_DATE,
+    });
+    expect(out).not.toContain("welcome_message:");
+  });
+
   it("emits an aliases block when the mode carries aliases", () => {
     const out = buildModeExportContent(
       { ...baseMode, aliases: ["spoken-old", "spoken-legacy"] },

@@ -26,6 +26,15 @@ export function buildModeExportContent(
   if (mode.description !== undefined) {
     lines.push(`description: ${yamlScalar(mode.description)}`);
   }
+  // #311 (part 2) — first-contact welcome copy. Emitted only when set, same
+  // rule as `description`/`aliases`: an absent field stays absent so existing
+  // exports remain byte-stable. Additive optional key, so MODE_EXPORT_VERSION
+  // stays put (precedent: the #241 PR A aliases addition). The scalar emitter
+  // escapes newlines, so a multi-line welcome round-trips on one frontmatter
+  // line.
+  if (mode.welcome_message !== undefined) {
+    lines.push(`welcome_message: ${yamlScalar(mode.welcome_message)}`);
+  }
   lines.push(`published: ${mode.published === true ? "true" : "false"}`);
   // Emitted only when set (#209): absent and false are semantically
   // identical (mode visible everywhere), and omitting the key keeps

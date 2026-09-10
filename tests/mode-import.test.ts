@@ -37,6 +37,29 @@ describe("parseModeImport — round-trip with mode-export", () => {
     expect(result.mode.droppedAliases).toEqual([]);
   });
 
+  it("round-trips a multi-line welcome_message (#311 part 2)", () => {
+    const mode: PromptMode = {
+      name: "spoken",
+      document: "# body",
+      welcome_message: "Welcome!\nText me a passage to begin.",
+    };
+    const result = parseModeImport(exported(mode));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode.welcome_message).toBe(
+      "Welcome!\nText me a passage to begin."
+    );
+  });
+
+  it("leaves welcome_message unset when the file omits it (#311 part 2)", () => {
+    const result = parseModeImport(
+      exported({ name: "spoken", document: "# body" })
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode.welcome_message).toBeUndefined();
+  });
+
   it("round-trips a minimal mode (name + document only)", () => {
     const mode: PromptMode = { name: "minimal", document: "body only" };
     const result = parseModeImport(exported(mode));
@@ -175,6 +198,32 @@ describe("parseModeImport — rejections", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toContain("missing a mode 'name'");
+  });
+
+  it("rejects a welcome_message longer than the worker max (#311 part 2)", () => {
+    const raw = exported({
+      name: "spoken",
+      document: "body",
+      welcome_message: "x".repeat(1001),
+    });
+    const result = parseModeImport(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("welcome_message");
+    expect(result.error).toContain("1000");
+  });
+
+  it("accepts a welcome_message exactly at the max (#311 part 2)", () => {
+    const result = parseModeImport(
+      exported({
+        name: "spoken",
+        document: "body",
+        welcome_message: "y".repeat(1000),
+      })
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode.welcome_message).toHaveLength(1000);
   });
 
   it("rejects an export from a newer portal version", () => {

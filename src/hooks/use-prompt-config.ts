@@ -88,6 +88,8 @@ export interface ModeSaveTarget {
     document: string;
     published?: boolean;
     requires_group?: boolean;
+    // #311 (part 2) — additive first-contact welcome copy (worker v2.52.0).
+    welcome_message?: string;
   };
   /**
    * The org the PUT targets, pinned by the CALLER at the moment the action

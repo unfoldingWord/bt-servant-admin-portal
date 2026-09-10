@@ -158,6 +158,43 @@ describe("putMode", () => {
     );
   });
 
+  it("forwards an optional `welcome_message` in the PUT body (#311 part 2)", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ mode: { name: "spoken", document: "" } }))
+      );
+    const body = {
+      label: "Spoken",
+      description: "Conversational",
+      welcome_message: "Welcome! Text me a passage.",
+      document: "## Identity\n",
+      published: true,
+    };
+    await putMode("spoken", body);
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    const parsed = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(parsed.welcome_message).toBe("Welcome! Text me a passage.");
+  });
+
+  it("omits `welcome_message` when the caller leaves it undefined", async () => {
+    // Parity with `description`'s clear-to-opt-out convention: an undefined
+    // field is dropped by JSON.stringify, so the worker keeps the stored value
+    // (an omitted key is "keep", null/'' is "delete").
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ mode: { name: "spoken", document: "" } }))
+      );
+    await putMode("spoken", {
+      document: "## Identity\n",
+      welcome_message: undefined,
+    });
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    const parsed = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty("welcome_message");
+  });
+
   it("does NOT send a legacy `overrides` field", async () => {
     // Portal #82 AC: the mode editor handles only markdown — no legacy
     // slot-map awareness in src/lib. The worker would reject a PUT that
