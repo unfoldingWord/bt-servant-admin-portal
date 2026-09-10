@@ -283,6 +283,40 @@ describe("parseModeImport — rejections", () => {
     expect(result.error).toContain("welcome_message");
   });
 
+  it("rejects a bare block-scalar indicator with no continuation (#311 part 2)", () => {
+    // `welcome_message: |` (or `>`) with nothing indented below would otherwise
+    // import the literal "|" as the welcome text.
+    const raw = [
+      "---",
+      'name: "spoken"',
+      "welcome_message: |",
+      "export_version: 1",
+      "---",
+      "",
+      "body",
+    ].join("\n");
+    const result = parseModeImport(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("welcome_message");
+  });
+
+  it("imports a bare empty welcome_message as a clear, not block form (#311 part 2)", () => {
+    const raw = [
+      "---",
+      'name: "spoken"',
+      "welcome_message:",
+      "export_version: 1",
+      "---",
+      "",
+      "body",
+    ].join("\n");
+    const result = parseModeImport(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode.welcome_message).toBe("");
+  });
+
   it("rejects an export from a newer portal version", () => {
     const raw = [
       "---",

@@ -262,16 +262,22 @@ function parseFrontmatter(frontmatterLines: string[]): ParsedFrontmatter {
       continue;
     }
 
-    // Block-form scalar for `welcome_message` (`welcome_message:` empty, or a
-    // `|`/`>` literal/folded indicator, followed by indented continuation
-    // lines). The exporter never emits this shape, so it can only come from a
-    // hand-edit — and parsing it as a plain scalar would keep `""`/`"|"` and
-    // silently drop the indented copy. Flag it and consume the continuation
-    // lines so the caller can reject with a clear, field-named error (#311 p2).
+    // Block-form scalar for `welcome_message`. The exporter never emits this
+    // shape, so it can only come from a hand-edit; parsing it as a plain scalar
+    // would keep `"|"`/`">"` or silently drop indented copy. A `|`/`>` indicator
+    // is block form even with NO continuation (it would otherwise import the
+    // literal "|"); a bare EMPTY value is block form only when an indented
+    // continuation follows — a lone empty value stays a clear-to-opt-out scalar
+    // (matches create's empty→clear). Flag it so the caller rejects with a
+    // clear, field-named error and never stores the indicator/copy silently.
+    const trimmedValue = rawValue.trim();
+    const hasLiteralBlockIndicator =
+      trimmedValue.startsWith("|") || trimmedValue.startsWith(">");
     if (
       key === "welcome_message" &&
-      isBlockScalarIndicator(rawValue) &&
-      isIndentedContinuation(frontmatterLines[i + 1])
+      (hasLiteralBlockIndicator ||
+        (trimmedValue === "" &&
+          isIndentedContinuation(frontmatterLines[i + 1])))
     ) {
       blockFormWelcome = true;
       while (isIndentedContinuation(frontmatterLines[i + 1])) i++;
@@ -282,15 +288,6 @@ function parseFrontmatter(frontmatterLines: string[]): ParsedFrontmatter {
   }
 
   return { scalars, aliases, blockFormWelcome };
-}
-
-/**
- * A YAML block-scalar opener: an empty value, or a `|`/`>` indicator
- * (optionally with a chomping/indent modifier such as `|-` or `>+`).
- */
-function isBlockScalarIndicator(rawValue: string): boolean {
-  const trimmed = rawValue.trim();
-  return trimmed === "" || trimmed.startsWith("|") || trimmed.startsWith(">");
 }
 
 /**
