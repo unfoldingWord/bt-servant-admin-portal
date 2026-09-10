@@ -423,7 +423,13 @@ export function ModeSharePanel({
         )}
 
         {state.kind === "ready" && (
-          <DialogFooter className="sm:justify-between">
+          // Stack the actions instead of a single justify-between row: at
+          // `sm:max-w-md` the three buttons together are wider than the
+          // dialog's content box and spilled past its right edge (#311).
+          // A full-width primary over an equal-width download pair follows
+          // the dialog's own vertical rhythm; the pair wraps rather than
+          // spilling, so it holds at every realistic viewport width.
+          <DialogFooter className="flex-col sm:flex-col sm:justify-normal">
             <Button size="sm" variant="ghost" asChild>
               <a href={state.url} target="_blank" rel="noopener noreferrer">
                 <ExternalLink />
@@ -431,12 +437,25 @@ export function ModeSharePanel({
                 <span className="sr-only"> (opens in a new tab)</span>
               </a>
             </Button>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={handleDownloadSvg}>
+            {/* flex-wrap so the pair stacks rather than overflowing on very
+                narrow (sub-~334px) viewports, where two whitespace-nowrap
+                buttons no longer fit side by side (#311 review). */}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleDownloadSvg}
+                className="flex-1"
+              >
                 <Download />
                 Download SVG
               </Button>
-              <Button size="sm" variant="outline" onClick={handleDownloadPng}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleDownloadPng}
+                className="flex-1"
+              >
                 <Download />
                 Download PNG
               </Button>
