@@ -919,10 +919,25 @@ export function ModeSelector({
               className="text-sm"
               aria-describedby="mode-welcome-help"
             />
-            <p id="mode-welcome-help" className="text-muted-foreground text-xs">
-              Optional. Your welcome copy only — the WhatsApp share link is
-              added automatically, so leave it out.
-            </p>
+            <div className="flex items-start justify-between gap-2">
+              <p
+                id="mode-welcome-help"
+                className="text-muted-foreground text-xs"
+              >
+                Optional. Your welcome copy only — the WhatsApp share link is
+                added automatically, so leave it out.
+              </p>
+              {/* #311 (part 2) — visible awareness of the 1000-char cap the
+                  `maxLength` above enforces, so hitting it reads as a limit
+                  rather than a silent truncation (matches the hard error the
+                  importer raises at the same cap). */}
+              <span
+                className="text-muted-foreground shrink-0 text-xs tabular-nums"
+                aria-hidden="true"
+              >
+                {newWelcomeMessage.length}/{MAX_MODE_WELCOME_MESSAGE_LENGTH}
+              </span>
+            </div>
           </div>
           <div className="mt-4 flex justify-end gap-2">
             <Button

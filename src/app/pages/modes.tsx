@@ -242,9 +242,12 @@ export function ModesPage() {
   // QR/share panel. A LATCH, not `shareFor`: the `setShareFor(null)` effect
   // below fires on the very selection change `handleCreateMode` triggers, so a
   // naive `setShareFor(name)` there would be cleared in the same render. This
-  // is keyed on the selection instead (`justCreated === selectedMode`), set
-  // only once the new slug is actually selected, and cleared on dismiss or when
-  // the selection moves elsewhere — never by the create's own selection change.
+  // is keyed on the selection instead: the nudge only RENDERS while
+  // `justCreated === selectedMode`, so it stays hidden until the new slug is
+  // actually selected (immediately on the clean create path, or once the
+  // "Switch mode?" confirm resolves on the dirty path). It is cleared on
+  // dismiss, when the selection moves elsewhere, or when the org context
+  // changes — never by the create's own selection change.
   const [justCreated, setJustCreated] = useState<string | null>(null);
   const showCreatedNudge = justCreated !== null && justCreated === selectedMode;
   // The derived `open` closes in the same render; this clears the latch so
@@ -256,15 +259,15 @@ export function ModesPage() {
   useEffect(() => {
     setShareFor(null);
   }, [selectedMode, contextOrg]);
-  // Retire the post-create nudge once the selection moves off the mode it was
-  // raised for (a genuine navigation), or the org context changes. The create
-  // itself sets `justCreated` to the SAME slug it selects, so this leaves that
-  // case alone — it only fires when the two have since diverged.
+  // #311 (part 2) — retire the post-create nudge when the org context changes.
+  // `setContextOrg` also nulls the selection, so the divergence effect below
+  // would catch this indirectly; clearing it here directly makes the documented
+  // intent true and robust to any future change in that coupling. Fires on
+  // mount too (a no-op while `justCreated` is null) and never on the create
+  // itself, which leaves `contextOrg` untouched.
   useEffect(() => {
-    if (justCreated !== null && justCreated !== selectedMode) {
-      setJustCreated(null);
-    }
-  }, [justCreated, selectedMode, contextOrg]);
+    setJustCreated(null);
+  }, [contextOrg]);
   const shareButtonRef = useRef<HTMLButtonElement | null>(null);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const debouncedDraft = useDebounced(draft, AUTO_SAVE_DEBOUNCE_MS);
@@ -506,6 +509,24 @@ export function ModesPage() {
   const [pendingContextOrg, setPendingContextOrg] = useState<{
     value: string | null;
   } | null>(null);
+
+  // #311 (part 2) — retire the post-create nudge once the selection moves off
+  // the mode it was raised for (a genuine navigation). Guarded by
+  // `pendingSwitch` so a nudge staged for a mode still behind the "Switch
+  // mode?" confirm survives until the switch resolves and `selectedMode`
+  // catches up: the dirty create path sets `justCreated` before the deferred
+  // selection lands. The create's own selection change leaves this alone — it
+  // fires only once `justCreated`, `selectedMode`, and any `pendingSwitch` have
+  // diverged. Org-context changes are handled by the dedicated effect above.
+  useEffect(() => {
+    if (
+      justCreated !== null &&
+      justCreated !== selectedMode &&
+      justCreated !== pendingSwitch
+    ) {
+      setJustCreated(null);
+    }
+  }, [justCreated, selectedMode, pendingSwitch]);
 
   // #277 — the resource-priority panel. Open state lives here, not in the
   // panel, so a failed apply-save leaves it exactly where the user left it.
@@ -963,14 +984,23 @@ export function ModesPage() {
             // draft gets the same "Switch mode?" prompt clone/retire get
             // (code-review on #315).
             if (isDirtyRef.current) {
+              // #311 (part 2) — stage the post-create nudge for the new slug
+              // even on the dirty path. It only RENDERS once
+              // `justCreated === selectedMode`, which happens after the admin
+              // confirms the "Switch mode?" prompt and `confirmSwitch` selects
+              // this slug; the `pendingSwitch` guard on the retire effect keeps
+              // the latch alive across that window. If the admin cancels the
+              // switch, that effect clears it — the selection never reaches
+              // this slug.
+              setJustCreated(name);
               setPendingSwitch(name);
               return;
             }
             setSelectedMode(name);
             // #311 (part 2) — raise the post-create nudge for this slug. Set
             // alongside the selection so `justCreated === selectedMode` holds
-            // once both land; the clean path only (the dirty path routes
-            // through the switch confirm and does not auto-select).
+            // once both land. The dirty path stages the same latch above,
+            // before its deferred selection.
             setJustCreated(name);
           },
           onSettled: () => {

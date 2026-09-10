@@ -187,11 +187,27 @@ function parseModeImportUnsafe(raw: string): ModeImportResult {
   if (fields.scalars.description !== undefined) {
     mode.description = fields.scalars.description;
   }
+  // #311 (part 2) — a hand-edited YAML block-form welcome (`welcome_message:`
+  // empty, or a `|`/`>` literal/folded scalar, with the copy on indented lines
+  // below) is a shape this importer does not read. Rather than silently import
+  // the empty first line and drop the authored copy, reject with a clear,
+  // field-named error telling the editor how to write it on one line.
+  if (fields.blockFormWelcome) {
+    return {
+      ok: false,
+      error:
+        "The 'welcome_message' uses YAML block form (an empty or '|'/'>' value with the text on indented lines below). Put the copy on the 'welcome_message:' line as a quoted value instead, using \\n for line breaks.",
+    };
+  }
   // #311 (part 2) — an over-long welcome message would 400 at the worker;
   // reject it here so the failure lands in the pre-flight banner with a clear
   // reason, the same way the flag validators above do.
   if (fields.scalars.welcome_message !== undefined) {
-    const welcome = fields.scalars.welcome_message;
+    // Trim to match the create dialog, which sends `newWelcomeMessage.trim()`.
+    // Without this a quoted `" hi "` would import with its padding intact —
+    // stored differently from the same text typed in the UI, and the padding
+    // would count toward the length cap checked below (#311 part 2).
+    const welcome = fields.scalars.welcome_message.trim();
     if (welcome.length > MAX_MODE_WELCOME_MESSAGE_LENGTH) {
       return {
         ok: false,
@@ -207,6 +223,12 @@ function parseModeImportUnsafe(raw: string): ModeImportResult {
 interface ParsedFrontmatter {
   scalars: Record<string, string>;
   aliases: string[];
+  /**
+   * #311 (part 2) — set when `welcome_message` appears in YAML block form
+   * (empty/`|`/`>` value followed by indented continuation lines). The caller
+   * rejects rather than silently importing the empty first line.
+   */
+  blockFormWelcome: boolean;
 }
 
 function parseFrontmatter(frontmatterLines: string[]): ParsedFrontmatter {
@@ -214,6 +236,7 @@ function parseFrontmatter(frontmatterLines: string[]): ParsedFrontmatter {
   // an ordinary own property, never a prototype write or an inherited read.
   const scalars: Record<string, string> = Object.create(null);
   const aliases: string[] = [];
+  let blockFormWelcome = false;
 
   for (let i = 0; i < frontmatterLines.length; i++) {
     const line = frontmatterLines[i];
@@ -239,10 +262,43 @@ function parseFrontmatter(frontmatterLines: string[]): ParsedFrontmatter {
       continue;
     }
 
+    // Block-form scalar for `welcome_message` (`welcome_message:` empty, or a
+    // `|`/`>` literal/folded indicator, followed by indented continuation
+    // lines). The exporter never emits this shape, so it can only come from a
+    // hand-edit — and parsing it as a plain scalar would keep `""`/`"|"` and
+    // silently drop the indented copy. Flag it and consume the continuation
+    // lines so the caller can reject with a clear, field-named error (#311 p2).
+    if (
+      key === "welcome_message" &&
+      isBlockScalarIndicator(rawValue) &&
+      isIndentedContinuation(frontmatterLines[i + 1])
+    ) {
+      blockFormWelcome = true;
+      while (isIndentedContinuation(frontmatterLines[i + 1])) i++;
+      continue;
+    }
+
     scalars[key] = parseScalar(rawValue);
   }
 
-  return { scalars, aliases };
+  return { scalars, aliases, blockFormWelcome };
+}
+
+/**
+ * A YAML block-scalar opener: an empty value, or a `|`/`>` indicator
+ * (optionally with a chomping/indent modifier such as `|-` or `>+`).
+ */
+function isBlockScalarIndicator(rawValue: string): boolean {
+  const trimmed = rawValue.trim();
+  return trimmed === "" || trimmed.startsWith("|") || trimmed.startsWith(">");
+}
+
+/**
+ * True for a non-blank line that begins with whitespace — a block scalar's
+ * indented continuation line.
+ */
+function isIndentedContinuation(line: string | undefined): boolean {
+  return line !== undefined && /^[ \t]+\S/.test(line);
 }
 
 /**
