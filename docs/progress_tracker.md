@@ -6,7 +6,7 @@
 
 **Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **2026-07-31 was the first ultracode batch day**: three features shipped same-day through the new batch pipeline (parallel implement lanes → independent verify → dual external review via **codex + grok CLIs** → authorized merges) — **#209 group-chat toggle (PR #267), #261 MCP topology map (PR #268), #249 language admin trump + org-wide visibility (PR #271, −888 net lines via #247 carve-out deletion)**. #249 went design→decided→spec→shipped in one day after Elsy's morning +1. Review loops earned their keep: 5 confirmed defects fixed post-verification, including a real BFF authz gap (`requires_group` invisible to the verb-rights gate) caught only by the deep-tree lens in _untouched_ code. #195 premise-check stopped a half-feature; exact worker ask filed as worker#346. #254 eval harness built (9 scenarios / 32 checks over baruch's real prompt assembly, `claude-sonnet-4-6` vs `claude-opus-4-8`); blocked only on an API credential (Ian's lane). **2026-08-10 was ultracode day 2**: #277 resource prioritization went design→decided→built→dual-external-approved same day (**PR #282**, awaiting merge) via a mechanism pivot that un-gated it from worker#257 item 2 — the ordering persists as a generated block in the mode document's `## Tool Guidance` section (the document IS the injection; zero worker changes). Same session: #269/#279 root-caused by live MCP probes as a worker adapter gap (worker#354 filed — TC Helps has enumeration on both endpoints; the issues' premises were wrong), #278 scoped with a recommendation (global server "library" key; partner orgs currently get zero MCP fan-out even in chat), and the #264 five-movements mode document drafted from the live obs-5m-mcp server and posted for Tim/Elsy review.
 **2026-08-11 was ultracode day 3 — the fastest full cycle yet**: Ian settled the worker#236 org-default-language contract in the morning; by mid-afternoon **four PRs were built, adversarially verified, dual-external-reviewed to convergence, and merged** — #288 (#286 org default language + #272 cleanups, contract-first against the not-yet-implemented worker route), #289 (#230 follow-up: one server-attribution join across all three resource surfaces, emission bytes frozen), #290 (#281 outside-priority disclosure riding the #277 Tool Guidance block, zero worker changes), #287 (gitleaks-action v2→v3, the last Node-20 action runtime). Review pipeline: per-lane adversarial verify → 3 codex+grok rounds → final delta pass; ~20 confirmed findings fixed, including a dual-confirmed P1 data-loss path in orphan repair, a CommonMark lazy-continuation bug that would have inverted the disclosure's meaning for the model, an Apply/autosave revert race, and a grok-forced design reversal (emission frozen, hardening display-only). Also merged same morning: **PR #282 (#277) and the 08-10 docs PR**; Elsy's dupe re-files #284/#285 got diagnosis cross-links; follow-ups filed as #293/#294.
-**Last Updated**: 2026-09-09
+**Last Updated**: 2026-09-10
 **Demo target**: June 9 (passed) — outcome to be summarized
 **Last prod deploy**: **2026-09-09 — Ian promoted worker → v2.50.0** (run `34352633458`, 12:42) **and web-client → v1.12.2** (run `34373280525`, 15:54). The **pt-BR interface is now LIVE in prod end-to-end** (worker localization #406/#407/#408 + web-client i18n with the #58/#60/#61 fixes). **Portal prod is still v1.12.0** (2026-08-17, `36ad8ca`) — **not** promoted; a portal promotion (→ v1.14.0) is pending and would carry #308/#311/#312/#278-copy/#292. _(Prior: 2026-08-05 portal v1.11.0 + worker 2.29→2.37; portal later reached v1.12.0 on 08-17.)_
 
@@ -111,6 +111,72 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-09-10 (evening) — #311 part 2 (per-mode first-contact welcome) built end-to-end cross-repo through 6+ external review rounds (worker PR #423 v2.52.0, portal PR #327 v1.15.0); #153 governance contract posted; worker#418 root-caused + CONFIRMED via CF logs; container Cloudflare + 1Password access stood up
+
+Long build-and-review session. Cross-repo INA sweep first, then cleared the Elsy-facing / stated-critical-path items, then built #311 part 2 on both sides through a deep external-review loop that earned its keep repeatedly.
+
+**Parallel-tracked after an activity/supersession sweep** (nobody on our targets; found worker#37 was a stale 7-month spike, not a fresh bug):
+
+- **#153 Governance & Versioning — design contract POSTED** ([comment](https://github.com/unfoldingWord/bt-servant-admin-portal/issues/153#issuecomment-5620886986)). Reconstructed + refreshed the versioned-config/audit contract (3 self-decisions: 5-min draft coalescing, `FROZEN` 409, best-effort audit). Elsy already picked Option 2 in-thread; only her approver-rule remains external. Review window to 2026-09-15.
+- **worker#37 → carved out worker#421** (`bug`): the concrete matrix/WhatsApp between-tool reasoning-text leak (39/91 turns) split out of the stale streaming-UX spike, with a testable acceptance criterion; flagged #37's `claude-sonnet-4-5`/pre-V2 staleness.
+- **worker#418 (DO drops chat turns) — root-caused AND confirmed in prod logs.** Root cause: `processImmediateSSE` runs the turn (save + `releaseLock`) in an **untracked background promise** (no `state.waitUntil`), so the runtime reclaims the isolate before cleanup → "Durable Object no longer active". Confirmed the 3 failed turns in the exact 15:38–15:41 UTC window via the Observability logs; stacks pinpoint `saveConversation`/`getHistory` + `releaseLock`. Proposed fix (`waitUntil` anchoring + resilient `releaseLock`) posted; **not built** (Seth's call). Retry-interpose rejected once logs showed the death is at the persistence step.
+
+**Container access unlocked (Seth-driven, durable):** installed the **1Password CLI** (service-account token → `uw-dev-ops` vault) and did a **`wrangler login --device`** (device-flow, no localhost callback) — KV read/write now works via OAuth (unblocks #278/#292 prod/staging KV). cf-logs needs an **API token** (observability is not an OAuth scope) now stored at `op://uw-dev-ops/cf-workers-observability/credential`. Recipe saved to memory. CF account `5a3ffd86…9242`.
+
+**#311 part 2 — per-mode first-contact welcome, cross-repo, worker-first:**
+
+- **Worker PR #423 (v2.52.0)** — new optional `welcome_message` on the mode record; one-time per-user-per-mode welcome keyed `mode_welcomed:<slug>` (per-user in groups), emitted out-of-band via a new `onWelcome` webhook **before** orchestration (kept out of `responses` so the WhatsApp delta-stream stays intact), in-band prepend on SSE/`/chat/final`; non-fatal delivery with a `mode_welcome_pending` re-emit; model's own first-interaction welcome suppressed (no double); reserved-slug (`#default/#none/#clear`) share links dropped; new `WHATSAPP_NUMBER` var. **CI green + on staging.** Awaiting Seth's merge (classifier-gated).
+- **Review loop earned its keep — 6 codex+grok rounds to convergence + a 7th (claude-code-review) that caught a real bug the other two missed.** Caught, among others: the field being **dropped by admin CRUD** (dead for existing modes), a **garbled WhatsApp delivery** from the initial prepend, multiple `first_interaction` double-welcome interactions, the SSE in-band flag/pending accounting (disconnect/throw/reslug), and finally a **flag-write-after-successful-send arming pending → duplicate welcome** (fixed: best-effort record) + a reserved-token parity drift risk (pinned via exported `CLEAR_TOKENS` + test).
+- **Portal PR #327 (v1.15.0)** — author `welcome_message` in the create dialog (max 1000, copy-only; worker appends the wa.me line) + a dismissible **post-create nudge** to the QR/share panel + import/export parity. `claude-code-review`: no medium+; fixed the one real bug (bare `welcome_message: |` importing literal `"|"`). **Pushed + PR open**, merge held for the worker.
+
+**Filed / assigned to us:** worker#422 (welcome hardening: flag/`first_interaction` atomicity, `complete`-mode POST, hot-path pending N+1), **gateway#45** (gateway returns 200 before Meta send — the real one-time-delivery ack fix), portal#328 (no in-portal edit of an existing mode's welcome — flagged for Elsy).
+
+**In progress / handoff:**
+
+- **Merge #423** (worker, v2.52.0) is Seth's to run — the auto-mode classifier blocks Claude from merging PRs. Command handed off (`gh pr merge 423 --squash` + tag `v2.52.0`). Then **portal #327** becomes mergeable (worker-first), then a portal prod-promotion decision (still v1.12.0 in prod).
+- **This EOD entry rides on PR #326** (the morning 2026-09-10 docs entry, still open).
+
+**Blockers:** #153 approver rule (Elsy); worker#418 fix is proposed-not-built (Seth's call on `waitUntil` vs. waiting for a soak); gateway#45 wants doing before the QR path carries real WhatsApp volume.
+
+**Next steps:** merge #423 → portal #327 → decide portal prod promotion; pick up worker#418 fix and gateway#45 (both ours now); #153 unblocks on Elsy's approver rule 2026-09-15.
+
+**Learnings:**
+
+- **Observability logs need an API token, not wrangler OAuth** — the telemetry endpoint 403s OAuth bearer tokens; no OAuth scope grants it. Device-flow `wrangler login` is the clean in-container browser auth for KV/deploy.
+- **Different reviewers have different blind spots** — codex+grok converged, then a `claude-code-review` pass (accidentally run on the worker branch via a stale `cd`) found a real correctness bug both had missed. Worth a third lens on high-stakes changes.
+- **Watch the shell cwd before invoking a repo-scoped skill/review** — a lingering `cd` sent a "portal" review at the worker repo. (Serendipitous here; usually just wasteful.)
+- **`555` area code is a false-positive magnet** — codex flagged the real, verified BT Servant WhatsApp number as fictional on every round. The memory exists precisely so it isn't re-flagged.
+
+### 2026-09-10 — #277 confirmed complete + live in prod (answered Elsy); #311 QR modal button-overflow fixed & merged to staging (v1.14.1); #292 staging pool seeded + delete-authz confirmed
+
+SOD + cross-repo INA sweep, then cleared the two Elsy-facing items assigned to us and unblocked the #292 staging verification.
+
+**SOD / INA sweep:** portal + worker clean and synced; web-client fast-forwarded to v1.12.2 (Ian's #60/#61 prod fixes from 09-09). The INA sweep surfaced the real queue: two direct Elsy pings assigned to us (#277 status question, #311 overflow) plus **three NEW unassigned worker items from Benjamin's 2026-09-09 bible-study eval** — worker#418 (Durable Object "no longer active" drops 3/82 chat turns with no `complete` event — reliability, highest value), worker#419 (guess→`get_tool_definitions`→retry drives first-turn latency to 48s median / 117s worst), worker#37 (between-tool reasoning text delivered to users in 39/91 turns on matrix/WhatsApp). None assigned to us; left for triage.
+
+**Shipped / merged:**
+
+- **#311 QR modal button-overflow fixed (portal PR #325 = `1b5c369`, v1.14.1, merged → staging).** At `sm:max-w-md` the share dialog footer laid its three actions (Open in WhatsApp / Download SVG / Download PNG) in one `justify-between` row wider than the modal content box, so the download buttons spilled past the right edge (Elsy's 2026-09-09 screenshot — filed _after_ she confirmed the QR itself works end-to-end: scans open WhatsApp with `#mode-name`, links redirect). Restructured the footer to a vertical stack — full-width primary over an equal-width, wrapping download pair — width-independent, so it can't overflow. **claude-code-review: round 1** caught 1 real residual overflow (the `flex-1` download pair still overflowed at sub-~334px because the buttons keep `whitespace-nowrap`) + 2 cleanups → fixed (`flex-wrap` on the pair; dropped redundant `gap-2`/`w-full`); **round 2 clean** (no correctness bugs), one comment overclaim ("any width") softened. CI green, 1041 tests. **Tracks #311 — does not close it** (part 2 worker first-contact welcome + post-create pointer remain).
+
+**Confirmed / unblocked:**
+
+- **#277 resource prioritization — confirmed complete and live in prod; answered Elsy's "completed or waiting for review?"** Portal ranking panel (PR #282) has been in prod since **v1.12.0** (`git tag --contains` on `59a8da9` = v1.12.0). The reason her 2026-08-19 test showed no effect was worker-side — the worker read the Tool Guidance block as inert prose — which is worker#366, fixed and **promoted to prod 2026-09-09 in worker v2.50.0** (issue CLOSED 09-09). So the feature now works end-to-end in prod. The only open item is the issue's own accuracy/adherence check (now measurable); offered to run the `translation Coach` case (also settles #281).
+- **#278 / #292 — staging global MCP pool seeded.** Seth wrote staging `MCP_SERVERS` `__global__ = []` via `wrangler kv key put --remote --namespace-id=76b75c…f22` (verified `get --remote` → `[]`, "Resource location: remote"). Writes 409'd until the key existed, so this unblocks Elsy's #292 add/edit/remove verification on staging. **Gotcha (cost one wrong write):** the container wrangler (4.88.0) defaults `kv key` ops to LOCAL miniflare and needs `--remote`; `--remote` then needs host/token auth (no browser in-container). Runbook saved to memory.
+- **#292 delete-authz resolved.** Elsy confirmed "uW admin = super admin, not the regular admin" — matches the shipped behavior (delete = super-admins only). **No change needed.**
+
+**Comments posted:** #277 (status), #311 (fix on staging), #292 (staging ready + delete-authz confirmed).
+
+**Housekeeping / notes:**
+
+- **web-client carries 4 local-only untracked files** not on origin — `AGENTS.md`, `src/hooks/use-org.ts`, `src/lib/feature-flags.ts`, `src/lib/validate-org.ts` — leftover org-validation/feature-flags scratch, not part of any lane. Keep or discard (Seth's call).
+- Stale local portal branches remain (`docs-eod-2026-08-10/11/13`, `docs/eod-2026-09-01`, `fix/293-294-…`) — cleanup candidates.
+
+**Next steps:**
+
+- **#153 Governance & Versioning epic (stated critical path)** — post the drafted versioned-config API design (3 self-decisions: draft coalescing, FROZEN 409, best-effort audit); Elsy still owes the approver-rule decision.
+- **#311 part 2** — worker first-contact welcome per mode/user (`mode_welcomed:<slug>`, text-only V1) + the post-create QR pointer.
+- **Triage the new worker eval items** — worker#418 (silent turn-drops, highest value), #419 (first-turn latency), #37 (reasoning-text leak).
+- **#170** rescope — still waiting on Elsy + Tim.
 
 ### 2026-09-09 — MCP global-pool lane built & merged both sides (worker#417 v2.51.0 + portal#292 v1.14.0, both on staging); Ian's prod-readiness answered → he promoted worker v2.50.0 + web-client v1.12.2 to prod (pt-BR now LIVE in prod); #217 localization scoped
 
