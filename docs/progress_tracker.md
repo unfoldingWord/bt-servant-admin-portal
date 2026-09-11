@@ -112,6 +112,20 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ## Session Log
 
+### 2026-09-11 (afternoon) — both docs PRs merged (#326 → `a3f11be`, #329 → `19ef719`); portal#330 filed (CI glob never matches slashed branches); #278 status posted; workspace cleaned
+
+Short wrap-up after the morning incident entry below landed.
+
+**Merged (Seth's word each time):** #326 (his 09-10 EOD entry) first, then #329 (the 09-11 entry + #278/#292 row corrections). #329 had been stacked on #326's branch to avoid a two-docs-PR conflict; after #326 merged, it was retargeted to `main` (GitHub does not auto-retarget unless the base branch is deleted), rebased so only the 09-11 commit replayed (`cefbbb9` → `30eee0b`, identical content), force-pushed with lease → CI green (Secret Scan / Code Quality / Build). No staging deploy — by design: `deploy-staging.yml` has `paths-ignore: docs/**`.
+
+**portal#330 filed** off a real miss: while stacked, #329 got **zero** CI for 4+ minutes. `ci.yml` uses `branches: ["*"]`, and `*` does not match `/` — so push CI is effectively `main`-only (14 of the last 15 push runs were `main`; the 15th was hyphenated `docs-eod-2026-08-19`) and any PR with a slashed **base** never triggers `pull_request` CI. Fix is `"**"`; optional `types: [..., edited]` so a base retarget re-runs CI. This EOD's branch is deliberately slash-free (`docs-eod-2026-09-11`) to get push CI until #330 lands.
+
+**#278 status comment posted:** migration done in both envs; the staging `[]` regression and restore; the runbook correction (never seed `[]` where the legacy DEFAULT_ORG key has servers); remaining = Ian's prod legacy-key cleanup ~09-16, staging legacy keys held as rollback until #292 verify, and the open partner-servers (`wordcollective`) question — flagged as needing a decision **before** legacy keys are deleted, since that is the last copy of the partner entry.
+
+**Cleanup:** merged remote branches `docs/eod-2026-09-10` and `docs/progress-2026-09-11` deleted (Seth, via `!` — branch deletion is classifier-blocked for Claude); stale local branches and remote-tracking refs pruned; the session's op service-account token file shredded.
+
+**Next:** #292 → Elsy's end-to-end verify against the real 6-server pool → scope the portal prod promotion (prod v1.12.0; `main` carries #308/#311/#312/#278-copy/#292). worker#432 hardening is unowned.
+
 ### 2026-09-11 — Staging MCP outage root-caused and fixed (the 09-10 `[]` seed blanked chat); worker#432 filed with hardening; #278 pool migration now complete in both envs
 
 Start-of-day session that turned into an incident. Elsy reported on Zulip that staging BTS was "not responding via MCPs" after Ian's posthog prod prep; Seth had pushed work the day before and asked for a look.
