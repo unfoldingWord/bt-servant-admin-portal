@@ -462,10 +462,7 @@ function PanelBody({
         )}
 
         {resources.error && (
-          <div
-            className="bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2.5 text-xs"
-            role="alert"
-          >
+          <div className={cn(DESTRUCTIVE_NOTICE_CLASS, "py-2.5")} role="alert">
             {resources.error.message}
           </div>
         )}

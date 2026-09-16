@@ -67,6 +67,13 @@ interface ModeDetailsPanelProps {
    * where a user mid-edit can neither read it nor act on it.
    */
   saveError: string | null;
+  /**
+   * What the document's save was rejected with, while `documentUnsaved`
+   * (#337). Same reason as `saveError` for living here: without it the user
+   * would have to close the sheet — and lose typed text — to learn whether
+   * it was a blip or a validation error.
+   */
+  documentError?: string | null;
 }
 
 /**
@@ -114,6 +121,7 @@ function PanelBody({
   canEdit,
   isSaving = false,
   documentUnsaved,
+  documentError = null,
   onSave,
   onOpenChange,
   saveError,
@@ -145,6 +153,13 @@ function PanelBody({
   // lives in `describeModeDetailsSaveBlock` alone.
   const blockIsDocument = saveBlock?.kind === "document";
   const fieldsReadOnly = !canEdit || blockIsDocument;
+  // A save running elsewhere on the page (an autosave under the sheet) is
+  // the other block worth showing: a Save click in the tick before React
+  // reflects it is refused by the page's synchronous lock, and this notice
+  // is the feedback for that click for as long as the save runs. The user's
+  // own save is not "another save" — the button already reads "Saving…".
+  const blockIsVisible =
+    blockIsDocument || (saveBlock?.kind === "busy" && isSaving && !saving);
 
   // Saving — and recording a failed save — is the page's job (`saveError`
   // comes back down as a prop). The await only scopes the local busy state;
@@ -280,10 +295,16 @@ function PanelBody({
         {canEdit && saveBlock && (
           <p
             id={saveHelpId}
-            role={blockIsDocument ? "status" : undefined}
-            className={cn(blockIsDocument ? MUTED_NOTICE_CLASS : "sr-only")}
+            role={blockIsVisible ? "status" : undefined}
+            className={cn(blockIsVisible ? MUTED_NOTICE_CLASS : "sr-only")}
           >
             {saveBlock.message}
+            {blockIsDocument && documentError && (
+              <>
+                {" "}
+                It was rejected with: <em>{documentError}</em>
+              </>
+            )}
             {blockIsDocument &&
               changed &&
               " Anything typed here won't be kept."}
