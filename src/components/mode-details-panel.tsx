@@ -19,12 +19,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  DESTRUCTIVE_NOTICE_CLASS,
+  MUTED_NOTICE_CLASS,
+} from "@/lib/notice-classes";
 import { cn } from "@/lib/utils";
 import { TextareaField } from "@/components/textarea-field";
-
-/** The muted notice style, shared by the read-only note and the document block. */
-const CALLOUT_CLASS =
-  "bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs leading-relaxed";
 
 /** Content id, so the page's opener can point `aria-controls` at it. */
 export const MODE_DETAILS_SHEET_ID = "mode-details-sheet";
@@ -38,6 +38,12 @@ interface ModeDetailsPanelProps {
    * return focus to on close; we do it ourselves.
    */
   returnFocusTo?: RefObject<HTMLElement | null>;
+  /**
+   * Where focus goes instead when the opener cannot take it — it is disabled
+   * while the document block stands (#337), and `.focus()` on a disabled
+   * button is a no-op that would drop focus to the page body.
+   */
+  fallbackFocusTo?: RefObject<HTMLElement | null>;
   /** Display name, for the header. Falls back to nothing, not the slug. */
   modeLabel?: string;
   /**
@@ -92,7 +98,11 @@ export function ModeDetailsPanel(props: ModeDetailsPanelProps) {
         // window so nothing on screen merely LOOKS dismissible.
         showCloseButton={!props.isSaving}
         onCloseAutoFocus={(event) => {
-          const target = props.returnFocusTo?.current;
+          const opener = props.returnFocusTo?.current;
+          const target =
+            opener && !opener.matches(":disabled")
+              ? opener
+              : props.fallbackFocusTo?.current;
           // Null when the opener has unmounted (selection cleared); let
           // Radix fall through to its default rather than focus nothing.
           if (!target) return;
@@ -195,7 +205,7 @@ function PanelBody({
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:px-5">
         {!canEdit && (
-          <p id={readOnlyHelpId} className={CALLOUT_CLASS} role="status">
+          <p id={readOnlyHelpId} className={MUTED_NOTICE_CLASS} role="status">
             Read-only. {NO_EDIT_RIGHTS_REASON}
           </p>
         )}
@@ -261,10 +271,7 @@ function PanelBody({
 
       <SheetFooter className="gap-3 border-t p-4 sm:px-5">
         {saveError && (
-          <p
-            className="bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2 text-xs"
-            role="alert"
-          >
+          <p className={DESTRUCTIVE_NOTICE_CLASS} role="alert">
             <span className="font-medium">Save failed.</span> {saveError}
             {/* The retry offer is withdrawn while the document block stands:
                 the status line below says what has to happen first. */}
@@ -284,7 +291,7 @@ function PanelBody({
           <p
             id={saveHelpId}
             role={blockIsDocument ? "status" : undefined}
-            className={cn(blockIsDocument ? CALLOUT_CLASS : "sr-only")}
+            className={cn(blockIsDocument ? MUTED_NOTICE_CLASS : "sr-only")}
           >
             {saveBlock.message}
             {blockIsDocument &&

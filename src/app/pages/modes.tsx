@@ -247,15 +247,17 @@ export function ModesPage() {
   // which is the truth the `disabled` props merely reflect.
   const inFlightSavesRef = useRef(0);
   // A dirty document whose save was rejected — for ANY reason, a validation
-  // error or a network blip alike. Recorded by three paths: `performSave`
-  // (autosave and the editor's Save), the priorities Apply, and the Details
-  // save when the draft it carried was dirty (#337). The flag toggles and
-  // label sync carry the draft but do not record a rejection; the autosave
-  // re-fire on isPending → false does. Once recorded, autosave stops
-  // retrying it (Frank P2 on PR #122) and the Details sheet refuses to carry
-  // it (#337). Those are the only refusals — the editor's Save, the toggles
-  // and label sync send it again on purpose; that is the recovery, alongside
-  // editing further. Every success path clears it through `markModeSynced`.
+  // error or a network blip alike. Recorded by the two paths that exist to
+  // persist or change the draft: `performSave` (autosave and the editor's
+  // Save) and the priorities Apply. The flag toggles, label sync and the
+  // Details save carry the draft but record nothing on failure — a failure
+  // there may be theirs, not the document's, and the autosave re-fire on
+  // isPending → false settles which. Once recorded, autosave stops retrying
+  // it (Frank P2 on PR #122) and the Details opener and sheet refuse to
+  // carry it (#337). Those are the only refusals — the editor's Save, the
+  // toggles and label sync send it again on purpose; that is the recovery,
+  // alongside editing further. Every success path clears it, through
+  // `markModeSynced` or, for the import, by hand.
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
@@ -349,13 +351,15 @@ export function ModesPage() {
     []
   );
 
-  // The one success path for every PUT that carries the document. Advances
+  // The success path for every PUT that carries the current draft. Advances
   // the trackers only if they still describe `target` (a switch can outlive
   // the PUT) and says whether they did, so a caller finishes its own success
   // work under the same ownership answer. One place on purpose: PR #339
   // round 1 found two hand-copied versions of this cluster each missing the
   // `lastFailedDoc` clear, which locked the Details sheet on a document that
-  // had in fact been saved.
+  // had in fact been saved. The import is the deliberate exception: its
+  // ownership test is org-aware and it re-anchors `syncedNameRef` itself, so
+  // it performs the same four writes by hand (see `runImport`).
   const markModeSynced = useCallback(
     (
       target: string,
@@ -599,6 +603,11 @@ export function ModesPage() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsSaveError, setDetailsSaveError] = useState<string | null>(null);
   const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
+  // #337 — where focus lands when the sheet closes under the document block:
+  // the Details opener is disabled then, and the editor's Save is the very
+  // control the block asks for (enabled, since the block implies a dirty
+  // draft and edit rights).
+  const editorSaveButtonRef = useRef<HTMLButtonElement | null>(null);
   const resetDetailsPanel = useCallback(() => {
     setDetailsOpen(false);
     setDetailsSaveError(null);
@@ -606,16 +615,6 @@ export function ModesPage() {
   useEffect(() => {
     resetDetailsPanel();
   }, [resetDetailsPanel, selectedMode]);
-  // #337 — an in-flight refusal the sheet recorded is moot once the document
-  // block engages: nothing is in flight and Save is disabled, so "try again
-  // in a moment" would be the wrong instruction. A real failure stays; it is
-  // the diagnosis the block's prescription follows.
-  useEffect(() => {
-    if (!documentUnsaved) return;
-    setDetailsSaveError((current) =>
-      current === SAVE_IN_FLIGHT_REASON ? null : current
-    );
-  }, [documentUnsaved]);
 
   const [prioritiesOpen, setPrioritiesOpen] = useState(false);
   const [priorityApplyError, setPriorityApplyError] = useState<string | null>(
@@ -1211,17 +1210,15 @@ export function ModesPage() {
       // The button and the panel are already rights-gated; local mirror of
       // the worker's gate, same as flushSave.
       if (!canEditSelected) return;
-      // Reported inside the sheet rather than silently dropped: unlike the
-      // priorities Apply, the user has typed something here and needs to know
-      // why the click did nothing.
-      if (inFlightSavesRef.current > 0 || saveMode.isPending) {
-        setDetailsSaveError(SAVE_IN_FLIGHT_REASON);
-        return;
-      }
+      // Same-tick race with an autosave that just started under the sheet:
+      // refuse silently, like the priorities Apply. Next render the button
+      // reads "Saving…" and is disabled, which is the whole explanation;
+      // recording a refusal in the failure slot instead left "Save failed …
+      // try again" standing after an autosave that then succeeded.
+      if (inFlightSavesRef.current > 0 || saveMode.isPending) return;
       const target = selectedMode;
       const sent = lastSyncedFlagsRef.current;
       const document = draftRef.current;
-      const documentDirty = isDirtyRef.current;
       setDetailsSaveError(null);
       inFlightSavesRef.current += 1;
       try {
@@ -1248,11 +1245,6 @@ export function ModesPage() {
         // here — a failure from a save that outlived the selection must not be
         // pinned on whatever mode the panel would now be showing.
         if (trackersOwn(target)) {
-          // #337 — a dirty draft this PUT carried is now a rejected one, the
-          // same as if autosave had sent it: recording it here means autosave
-          // does not re-send it unprompted and the sheet locks now, instead
-          // of after a second rejected PUT.
-          if (documentDirty) setLastFailedDoc(document);
           setDetailsSaveError(
             err instanceof Error && err.message
               ? err.message
@@ -1863,6 +1855,7 @@ export function ModesPage() {
                 Export
               </Button>
               <Button
+                ref={editorSaveButtonRef}
                 size="sm"
                 onClick={flushSave}
                 disabled={!isDirty || isSaving || !canEditSelected}
@@ -2260,6 +2253,7 @@ export function ModesPage() {
           setDetailsOpen(open);
         }}
         returnFocusTo={detailsButtonRef}
+        fallbackFocusTo={editorSaveButtonRef}
         modeLabel={serverLabel}
         stored={storedDetails}
         canEdit={canEditSelected}
