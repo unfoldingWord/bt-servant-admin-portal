@@ -1,10 +1,58 @@
 name: CI
 
+# Trigger shape is the uW standard (dev-practices `ci-cd-workflows.md`):
+# `pull_request` with NO base filter, plus `push` on `main` only.
+#
+# The `pull_request` filter is absent on purpose — that was the #330 bug. In an
+# Actions filter glob `*` does not match `/`, so `branches: ["*"]` excluded any
+# PR whose BASE contained a slash: a PR stacked on `docs/...` or `feat/...` got
+# no checks at all, which is how #329 sat at "no checks reported" on 2026-09-11.
+# An absent filter fires for every base, slashed or not. (Slash-free bases such
+# as `docs-eod-2026-08-19` did match the old glob, so this was never literally
+# "main-only" for PRs.)
+#
+# `push` is deliberately `main`-only rather than `"**"`. Running both events on
+# every feature-branch push doubles the whole matrix — two gitleaks history
+# scans and four `npm ci` installs per commit — for identical code, and posts
+# two same-named checks whose gitleaks commit ranges differ (push scans only
+# that push's commits; pull_request scans the whole PR). Local pre-commit hooks
+# already run lint + typecheck + build, and this repo opens a PR straight after
+# pushing, so pre-PR push coverage buys little.
+#
+# `edited` is deliberately NOT in `types`, and `types` is therefore left at its
+# default. It was tried first, so that retargeting a stacked PR onto `main`
+# would re-run CI without a follow-up push. But GitHub fires `edited` for title
+# and body edits too, and a run is created BEFORE any job-level `if:` is
+# evaluated, so an ordinary description edit did two harmful things at once: it
+# cancelled the in-flight real run through the `concurrency` group below, and
+# it published `skipped` check runs over the previous verdict for an unchanged
+# SHA. The net effect was a PR that looked green while its CI had been killed.
+#
+# The cost is that a base retarget now fires nothing at all (`synchronize` does
+# not fire on a base change), so a retargeted PR keeps the checks it earned
+# against its OLD base. To re-test against the new one, push — an empty commit
+# is enough — or close and reopen the PR. NOT `gh run rerun`: a re-run reuses
+# the original run's SHA, which for a `pull_request` run is the merge commit
+# computed against the old base, so it would re-validate the stale merge.
 on:
   push:
-    branches: ["*"]
+    branches: [main]
   pull_request:
-    branches: ["*"]
+
+# Supersede stale PR runs rather than letting a fix -> push -> re-review cycle
+# stack them up (dev-practices; `deploy-staging.yml` already does this).
+#
+# `main` pushes get a group PER COMMIT instead. Sharing one group would not
+# just cancel in-progress runs — when a third run queues, GitHub cancels the
+# one already PENDING in that group, whatever `cancel-in-progress` says. Merge
+# bursts are real here (four merges inside seven minutes on 2026-08-11, two
+# eleven seconds apart on 2026-08-19), and `deploy-staging.yml` fires on the
+# merge itself without being gated on CI, so a swallowed run means a commit
+# reaches staging with no CI verdict at all. Keying on the SHA also keeps main
+# runs parallel, so a verdict is never delayed behind an older commit's run.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ==========================================
