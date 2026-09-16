@@ -696,10 +696,7 @@ function PanelBody({
             user's fault and "rank fewer resources" is not their lever. Say what
             is true and what would help, without the alarm. */}
         {lengthVerdict === "over-untouched" && (
-          <p
-            className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs"
-            role="status"
-          >
+          <p className={MUTED_NOTICE_CLASS} role="status">
             This document is already too close to the 64,000-character limit to
             rewrite its priorities block. The saved ranking is untouched — trim
             the document elsewhere, and it can be updated again.

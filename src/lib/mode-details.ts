@@ -2,7 +2,11 @@ import {
   MAX_MODE_DESCRIPTION_LENGTH,
   MAX_MODE_WELCOME_MESSAGE_LENGTH,
 } from "@/types/prompt-override";
-import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
+import {
+  DOCUMENT_UNSAVED_REASON,
+  NO_EDIT_RIGHTS_REASON,
+  SAVE_IN_FLIGHT_REASON,
+} from "@/lib/mode-copy";
 
 // #328 — editing an existing mode's description and first-contact welcome.
 //
@@ -32,17 +36,6 @@ export interface StoredModeDetails {
 export type ModeDetailsBody = StoredModeDetails;
 
 export type ModeDetailsField = keyof ModeDetails;
-
-/**
- * #337 — the editor's draft failed to save and still stands. Every mode PUT
- * carries the whole document, so a details save would re-send that same
- * rejected draft and fail the same way. Read at the Details opener and, as a
- * backstop, inside the sheet, so it names the route that resolves it: the
- * editor's own Save, which sends the draft again (a transient failure needs
- * nothing more; a rejected one needs the edits fixed or undone first).
- */
-export const DOCUMENT_UNSAVED_REASON =
-  "The mode document hasn't been saved. Save it from the editor first — fixing or undoing your edits if it was rejected — before changing the details.";
 
 export const MODE_DETAILS_LIMITS: Record<ModeDetailsField, number> = {
   description: MAX_MODE_DESCRIPTION_LENGTH,

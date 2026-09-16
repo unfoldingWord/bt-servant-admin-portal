@@ -1,6 +1,8 @@
 // The two notice styles the Modes sheets share (details, resource priorities).
-// One home so a tone or padding change lands in every sheet at once; before
-// this the strings were byte-identical copies across both panels.
+// One home so a tone or padding change lands in both sheets at once; before
+// this the strings were byte-identical copies across the two panels. Notices
+// with their own padding (the priorities sheet's over-limit alert) and the
+// languages editor's keep their own strings.
 
 /** Muted, informational: read-only notes, blocks the user must resolve elsewhere. */
 export const MUTED_NOTICE_CLASS =

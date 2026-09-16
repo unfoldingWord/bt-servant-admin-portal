@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
 import {
   DOCUMENT_UNSAVED_REASON,
+  NO_EDIT_RIGHTS_REASON,
+  SAVE_IN_FLIGHT_REASON,
+} from "@/lib/mode-copy";
+import {
   MODE_DETAILS_LIMITS,
   describeModeDetailsSaveBlock,
   modeDetailsChanged,

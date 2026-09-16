@@ -37,9 +37,13 @@ import { type ParsedModeImport, parseModeImport } from "@/lib/mode-import";
 import { classifyModeImport } from "@/lib/mode-import-gate";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { downloadBlob } from "@/lib/download-blob";
-import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
 import {
   DOCUMENT_UNSAVED_REASON,
+  NO_EDIT_RIGHTS_REASON,
+  SAVE_IN_FLIGHT_REASON,
+  gatedHelp,
+} from "@/lib/mode-copy";
+import {
   type ModeDetails,
   type StoredModeDetails,
   toModeDetailsBody,
@@ -256,8 +260,8 @@ export function ModesPage() {
   // it (Frank P2 on PR #122) and the Details opener and sheet refuse to
   // carry it (#337). Those are the only refusals — the editor's Save, the
   // toggles and label sync send it again on purpose; that is the recovery,
-  // alongside editing further. Every success path clears it, through
-  // `markModeSynced` or, for the import, by hand.
+  // alongside editing further. Every success path clears it through
+  // `markModeSynced`.
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
@@ -357,9 +361,7 @@ export function ModesPage() {
   // work under the same ownership answer. One place on purpose: PR #339
   // round 1 found two hand-copied versions of this cluster each missing the
   // `lastFailedDoc` clear, which locked the Details sheet on a document that
-  // had in fact been saved. The import is the deliberate exception: its
-  // ownership test is org-aware and it re-anchors `syncedNameRef` itself, so
-  // it performs the same four writes by hand (see `runImport`).
+  // had in fact been saved.
   const markModeSynced = useCallback(
     (
       target: string,
@@ -602,15 +604,23 @@ export function ModesPage() {
   // reported" from one place.
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsSaveError, setDetailsSaveError] = useState<string | null>(null);
+  // A Details Save click that landed in the same tick as an autosave
+  // starting under the sheet (the synchronous lock saw it before React did).
+  // Shown as the in-flight reason and retired the moment nothing is in
+  // flight, whatever the outcome: on success the user simply clicks again;
+  // on failure the document block carries its own explanation.
+  const [detailsSaveDeferred, setDetailsSaveDeferred] = useState(false);
   const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
   // #337 — where focus lands when the sheet closes under the document block:
-  // the Details opener is disabled then, and the editor's Save is the very
-  // control the block asks for (enabled, since the block implies a dirty
-  // draft and edit rights).
+  // the Details opener is disabled then (focusing a disabled button is a
+  // no-op that would drop focus to the page body), and the editor's Save is
+  // the very control the block asks for — enabled, since the block implies
+  // a dirty draft and edit rights.
   const editorSaveButtonRef = useRef<HTMLButtonElement | null>(null);
   const resetDetailsPanel = useCallback(() => {
     setDetailsOpen(false);
     setDetailsSaveError(null);
+    setDetailsSaveDeferred(false);
   }, []);
   useEffect(() => {
     resetDetailsPanel();
@@ -640,16 +650,24 @@ export function ModesPage() {
 
   // The apply error is a claim about ONE document — the failed apply's
   // `nextDocument`, which is exactly what `lastFailedDoc` holds after the
-  // catch below. The moment the draft diverges from it (the user edited away
-  // or undid the ranking, or any save landed and cleared `lastFailedDoc`),
-  // the banner's "your ranking is still here, apply again" story is false —
-  // retire it. This is the recovery path the per-save clears can't see:
-  // divergence without a save.
+  // catch below. The moment that document is no longer the unsaved draft
+  // (the user edited away or undid the ranking, any save landed and cleared
+  // `lastFailedDoc`, or the ranking restored the saved document and the blip
+  // that followed rejected nothing the server lacks), the banner's "your
+  // ranking is still here, apply again" story is false — retire it. This is
+  // the recovery path the per-save clears can't see: divergence without a
+  // save. Same predicate as the Details refusal, by design (#337).
   useEffect(() => {
-    if (priorityApplyError !== null && draft !== lastFailedDoc) {
+    if (priorityApplyError !== null && !documentUnsaved) {
       setPriorityApplyError(null);
     }
-  }, [draft, lastFailedDoc, priorityApplyError]);
+  }, [documentUnsaved, priorityApplyError]);
+
+  // The deferred Details click (see `detailsSaveDeferred`) is only ever true
+  // while something is in flight; it expires with the flight.
+  useEffect(() => {
+    if (!isSaving) setDetailsSaveDeferred(false);
+  }, [isSaving]);
 
   // #260 — post-rename display-name sync prompt. Holds the rename
   // response (server truth for label/description/document/published) so
@@ -797,15 +815,15 @@ export function ModesPage() {
         // draft/lastSyncedDoc/flags stay pre-import and the next autosave
         // silently reverts the import (#302/#303 class).
         setDraft(mode.document);
-        setLastSyncedDoc(mode.document);
-        applyLastSyncedFlags(
-          reconcileModeFlags(
-            { published: mode.published, requires_group: mode.requires_group },
-            saved
-          )
-        );
-        setLastFailedDoc(null);
+        // Re-anchor first so `markModeSynced`'s ownership test passes: the
+        // org-aware gate above has already decided this IS the open mode.
         syncedNameRef.current = mode.name;
+        markModeSynced(
+          mode.name,
+          mode.document,
+          { published: mode.published, requires_group: mode.requires_group },
+          saved
+        );
         // #308 P3 — an open priority panel's unapplied local ranking was built
         // from the pre-import draft; close and reset it exactly as a selection
         // change does, so it cannot Apply into the imported document.
@@ -825,7 +843,7 @@ export function ModesPage() {
         `Imported “${mode.name}” — select it from the mode list to edit.${aliasNote}`
       );
     },
-    [applyLastSyncedFlags, resetPrioritiesPanel]
+    [markModeSynced, resetPrioritiesPanel]
   );
 
   const handleImportFileChange = useCallback(
@@ -1210,16 +1228,18 @@ export function ModesPage() {
       // The button and the panel are already rights-gated; local mirror of
       // the worker's gate, same as flushSave.
       if (!canEditSelected) return;
-      // Same-tick race with an autosave that just started under the sheet:
-      // refuse silently, like the priorities Apply. Next render the button
-      // reads "Saving…" and is disabled, which is the whole explanation;
-      // recording a refusal in the failure slot instead left "Save failed …
-      // try again" standing after an autosave that then succeeded.
-      if (inFlightSavesRef.current > 0 || saveMode.isPending) return;
+      // Same-tick race with an autosave that just started under the sheet.
+      // Unlike the priorities Apply, the user has typed something here and
+      // needs to know why the click did nothing — see `detailsSaveDeferred`.
+      if (inFlightSavesRef.current > 0 || saveMode.isPending) {
+        setDetailsSaveDeferred(true);
+        return;
+      }
       const target = selectedMode;
       const sent = lastSyncedFlagsRef.current;
       const document = draftRef.current;
       setDetailsSaveError(null);
+      setDetailsSaveDeferred(false);
       inFlightSavesRef.current += 1;
       try {
         const saved = await saveMode.mutateAsync({
@@ -1618,19 +1638,21 @@ export function ModesPage() {
 
   // Base description, plus the reason when the switch is gated off. See
   // the sr-only span below for why the title isn't enough on its own.
-  const requiresGroupHelp = canEditSelected
-    ? REQUIRES_GROUP_HELP
-    : `${REQUIRES_GROUP_HELP} ${NO_EDIT_RIGHTS_REASON}`;
-  const resourcePrioritiesHelp = canEditSelected
-    ? RESOURCE_PRIORITIES_HELP
-    : `${RESOURCE_PRIORITIES_HELP} ${NO_EDIT_RIGHTS_REASON}`;
+  const rightsReason = canEditSelected ? null : NO_EDIT_RIGHTS_REASON;
+  const requiresGroupHelp = gatedHelp(REQUIRES_GROUP_HELP, rightsReason);
+  const resourcePrioritiesHelp = gatedHelp(
+    RESOURCE_PRIORITIES_HELP,
+    rightsReason
+  );
   // #337 — the refusal lives at the opener, like the other gated controls;
   // the sheet's own block is the backstop for a draft that fails while it
   // is open. `documentUnsaved` implies edit rights (every path that records
-  // `lastFailedDoc` is rights-gated), so this never locks out a viewer.
-  const detailsHelp = documentUnsaved
-    ? `${MODE_DETAILS_HELP} ${DOCUMENT_UNSAVED_REASON}`
-    : MODE_DETAILS_HELP;
+  // `lastFailedDoc` is rights-gated), so a viewer — who has nothing to save
+  // and gets a read-only sheet anyway — is never locked out by it.
+  const detailsHelp = gatedHelp(
+    MODE_DETAILS_HELP,
+    documentUnsaved ? DOCUMENT_UNSAVED_REASON : null
+  );
 
   const shareHelp = effectiveOrg
     ? "QR code and link that open this mode on WhatsApp."
@@ -2252,15 +2274,17 @@ export function ModesPage() {
           if (!open) setDetailsSaveError(null);
           setDetailsOpen(open);
         }}
-        returnFocusTo={detailsButtonRef}
-        fallbackFocusTo={editorSaveButtonRef}
+        returnFocusTo={documentUnsaved ? editorSaveButtonRef : detailsButtonRef}
         modeLabel={serverLabel}
         stored={storedDetails}
         canEdit={canEditSelected}
         isSaving={isSaving}
         documentUnsaved={documentUnsaved}
         onSave={handleSaveModeDetails}
-        saveError={detailsSaveError}
+        saveError={
+          detailsSaveError ??
+          (detailsSaveDeferred ? SAVE_IN_FLIGHT_REASON : null)
+        }
       />
 
       {/* #311 — WhatsApp QR + share link. Mounted at page level like the

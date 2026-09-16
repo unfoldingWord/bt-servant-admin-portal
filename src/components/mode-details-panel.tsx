@@ -38,12 +38,6 @@ interface ModeDetailsPanelProps {
    * return focus to on close; we do it ourselves.
    */
   returnFocusTo?: RefObject<HTMLElement | null>;
-  /**
-   * Where focus goes instead when the opener cannot take it — it is disabled
-   * while the document block stands (#337), and `.focus()` on a disabled
-   * button is a no-op that would drop focus to the page body.
-   */
-  fallbackFocusTo?: RefObject<HTMLElement | null>;
   /** Display name, for the header. Falls back to nothing, not the slug. */
   modeLabel?: string;
   /**
@@ -98,11 +92,7 @@ export function ModeDetailsPanel(props: ModeDetailsPanelProps) {
         // window so nothing on screen merely LOOKS dismissible.
         showCloseButton={!props.isSaving}
         onCloseAutoFocus={(event) => {
-          const opener = props.returnFocusTo?.current;
-          const target =
-            opener && !opener.matches(":disabled")
-              ? opener
-              : props.fallbackFocusTo?.current;
+          const target = props.returnFocusTo?.current;
           // Null when the opener has unmounted (selection cleared); let
           // Radix fall through to its default rather than focus nothing.
           if (!target) return;
@@ -310,19 +300,17 @@ function PanelBody({
             {canEdit ? "Cancel" : "Close"}
           </Button>
           {canEdit && (
-            <>
-              <Button
-                size="sm"
-                onClick={() => {
-                  void submit();
-                }}
-                disabled={saveBlock !== null}
-                title={saveBlock?.message}
-                aria-describedby={saveBlock ? saveHelpId : undefined}
-              >
-                {busy ? "Saving…" : "Save changes"}
-              </Button>
-            </>
+            <Button
+              size="sm"
+              onClick={() => {
+                void submit();
+              }}
+              disabled={saveBlock !== null}
+              title={saveBlock?.message}
+              aria-describedby={saveBlock ? saveHelpId : undefined}
+            >
+              {busy ? "Saving…" : "Save changes"}
+            </Button>
           )}
         </div>
       </SheetFooter>
