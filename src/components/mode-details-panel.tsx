@@ -23,7 +23,6 @@ import {
   DESTRUCTIVE_NOTICE_CLASS,
   MUTED_NOTICE_CLASS,
 } from "@/lib/notice-classes";
-import { cn } from "@/lib/utils";
 import { TextareaField } from "@/components/textarea-field";
 
 /** Content id, so the page's opener can point `aria-controls` at it. */
@@ -49,12 +48,6 @@ interface ModeDetailsPanelProps {
   /** A save is in flight somewhere on the page; Save must wait it out. */
   isSaving?: boolean;
   /**
-   * The editor's draft is unsaved and its last save failed (#337). Save is
-   * refused and the sheet says why, since the details PUT would re-send that
-   * draft and the editor that could resolve it is under this sheet's overlay.
-   */
-  documentUnsaved: boolean;
-  /**
    * Saves the next details. The panel never saves; the page does, through
    * the same mode-save path as everything else, and NEVER rejects this
    * promise — a failure is recorded in `saveError` instead, so it survives
@@ -67,13 +60,6 @@ interface ModeDetailsPanelProps {
    * where a user mid-edit can neither read it nor act on it.
    */
   saveError: string | null;
-  /**
-   * What the document's save was rejected with, while `documentUnsaved`
-   * (#337). Same reason as `saveError` for living here: without it the user
-   * would have to close the sheet — and lose typed text — to learn whether
-   * it was a blip or a validation error.
-   */
-  documentError?: string | null;
 }
 
 /**
@@ -120,8 +106,6 @@ function PanelBody({
   stored,
   canEdit,
   isSaving = false,
-  documentUnsaved,
-  documentError = null,
   onSave,
   onOpenChange,
   saveError,
@@ -136,30 +120,13 @@ function PanelBody({
   const overLimit = modeDetailsOverLimit(form);
   const busy = isSaving || saving;
 
-  const saveBlock = describeModeDetailsSaveBlock({
+  const saveBlockedReason = describeModeDetailsSaveBlock({
     canEdit,
     busy,
-    documentUnsaved,
     changed,
     overLimit,
     hasSaveError: saveError !== null,
   });
-  // #337 — the one block the user cannot clear from inside the sheet (the
-  // opener is gated on it; this is the backstop for a draft that fails while
-  // the sheet is open). Written out in the footer rather than left to the
-  // disabled button's title (no hover on touch). The fields go read-only
-  // rather than disabled: text already typed stays selectable, so it can be
-  // copied out before the sheet is closed. Read off the gate, so the ranking
-  // lives in `describeModeDetailsSaveBlock` alone.
-  const blockIsDocument = saveBlock?.kind === "document";
-  const fieldsReadOnly = !canEdit || blockIsDocument;
-  // A save running elsewhere on the page (an autosave under the sheet) is
-  // the other block worth showing: a Save click in the tick before React
-  // reflects it is refused by the page's synchronous lock, and this notice
-  // is the feedback for that click for as long as the save runs. The user's
-  // own save is not "another save" — the button already reads "Saving…".
-  const blockIsVisible =
-    blockIsDocument || (saveBlock?.kind === "busy" && isSaving && !saving);
 
   // Saving — and recording a failed save — is the page's job (`saveError`
   // comes back down as a prop). The await only scopes the local busy state;
@@ -183,11 +150,6 @@ function PanelBody({
   const welcomeId = `${ids}-welcome`;
   const saveHelpId = `${ids}-save-help`;
   const readOnlyHelpId = `${ids}-read-only`;
-  const fieldsDescribedBy = !canEdit
-    ? readOnlyHelpId
-    : blockIsDocument
-      ? saveHelpId
-      : undefined;
   const welcomeTrimmed = form.welcomeMessage.trim();
 
   return (
@@ -224,8 +186,8 @@ function PanelBody({
           rows={3}
           placeholder="Optional description for this mode..."
           help="Optional. A short note on what this mode is for."
-          readOnly={fieldsReadOnly}
-          describedBy={fieldsDescribedBy}
+          readOnly={!canEdit}
+          describedBy={canEdit ? undefined : readOnlyHelpId}
           disabled={busy}
         />
 
@@ -240,8 +202,8 @@ function PanelBody({
           rows={5}
           placeholder="Sent once, the first time someone messages this mode…"
           help="Optional. Your welcome copy only — the WhatsApp share link is added automatically, so leave it out."
-          readOnly={fieldsReadOnly}
-          describedBy={fieldsDescribedBy}
+          readOnly={!canEdit}
+          describedBy={canEdit ? undefined : readOnlyHelpId}
           disabled={busy}
         />
 
@@ -277,37 +239,9 @@ function PanelBody({
       <SheetFooter className="gap-3 border-t p-4 sm:px-5">
         {saveError && (
           <p className={DESTRUCTIVE_NOTICE_CLASS} role="alert">
-            <span className="font-medium">Save failed.</span> {saveError}
-            {/* The retry offer is withdrawn while the document block stands:
-                the status line below says what has to happen first. */}
-            {!blockIsDocument &&
-              " Nothing was saved — your changes are still here, so you can try again."}
-          </p>
-        )}
-        {/* One element carries the reason Save is unavailable, under the id
-            the button's aria-describedby names — a disabled button is out of
-            the tab order and gets no hover on touch, so the title alone can't
-            carry it (same idiom the Modes header uses for its gated controls).
-            Visible only for the document block, after the alert so the
-            diagnosis precedes the prescription; the rest stay for assistive
-            tech alone. `canEdit` gates it so a read-only viewer isn't read an
-            orphaned rights notice twice. */}
-        {canEdit && saveBlock && (
-          <p
-            id={saveHelpId}
-            role={blockIsVisible ? "status" : undefined}
-            className={cn(blockIsVisible ? MUTED_NOTICE_CLASS : "sr-only")}
-          >
-            {saveBlock.message}
-            {blockIsDocument && documentError && (
-              <>
-                {" "}
-                It was rejected with: <em>{documentError}</em>
-              </>
-            )}
-            {blockIsDocument &&
-              changed &&
-              " Anything typed here won't be kept."}
+            <span className="font-medium">Save failed.</span> {saveError}{" "}
+            Nothing was saved — your changes are still here, so you can try
+            again.
           </p>
         )}
 
@@ -321,17 +255,27 @@ function PanelBody({
             {canEdit ? "Cancel" : "Close"}
           </Button>
           {canEdit && (
-            <Button
-              size="sm"
-              onClick={() => {
-                void submit();
-              }}
-              disabled={saveBlock !== null}
-              title={saveBlock?.message}
-              aria-describedby={saveBlock ? saveHelpId : undefined}
-            >
-              {busy ? "Saving…" : "Save changes"}
-            </Button>
+            <>
+              <Button
+                size="sm"
+                onClick={() => {
+                  void submit();
+                }}
+                disabled={saveBlockedReason !== null}
+                title={saveBlockedReason ?? undefined}
+                aria-describedby={saveBlockedReason ? saveHelpId : undefined}
+              >
+                {busy ? "Saving…" : "Save changes"}
+              </Button>
+              {/* A disabled button is out of the tab order and gets no hover
+                  on touch, so the title alone can't carry the reason. Same
+                  idiom the Modes header uses for its gated controls. */}
+              {saveBlockedReason && (
+                <span id={saveHelpId} className="sr-only">
+                  {saveBlockedReason}
+                </span>
+              )}
+            </>
           )}
         </div>
       </SheetFooter>

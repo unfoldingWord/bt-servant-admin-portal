@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
 import {
   DOCUMENT_UNSAVED_REASON,
-  NO_EDIT_RIGHTS_REASON,
-  SAVE_IN_FLIGHT_REASON,
-} from "@/lib/mode-copy";
-import {
   MODE_DETAILS_LIMITS,
+  describeModeDetailsOpenBlock,
   describeModeDetailsSaveBlock,
   modeDetailsChanged,
   modeDetailsFromStored,
@@ -18,7 +16,6 @@ import {
 const OPEN_GATE = {
   canEdit: true,
   busy: false,
-  documentUnsaved: false,
   changed: true,
   overLimit: null,
   hasSaveError: false,
@@ -157,11 +154,10 @@ describe("mode-details — what blocks Save (#328)", () => {
         ...OPEN_GATE,
         canEdit: false,
         busy: true,
-        documentUnsaved: true,
         changed: false,
         overLimit: "description",
       })
-    ).toEqual({ kind: "rights", message: NO_EDIT_RIGHTS_REASON });
+    ).toBe(NO_EDIT_RIGHTS_REASON);
   });
 
   it("reports an in-flight save ahead of a length or no-op complaint", () => {
@@ -169,50 +165,28 @@ describe("mode-details — what blocks Save (#328)", () => {
       describeModeDetailsSaveBlock({
         ...OPEN_GATE,
         busy: true,
-        documentUnsaved: true,
         changed: false,
         overLimit: "welcomeMessage",
       })
-    ).toEqual({ kind: "busy", message: SAVE_IN_FLIGHT_REASON });
-  });
-
-  it("refuses to re-send a rejected document ahead of a cap or no-op (#337)", () => {
-    // The block is about the document under the sheet, not the fields inside
-    // it — so it outranks a field cap, and an unchanged form after a failed
-    // details save is still refused.
-    expect(
-      describeModeDetailsSaveBlock({
-        ...OPEN_GATE,
-        documentUnsaved: true,
-        changed: false,
-        overLimit: "description",
-        hasSaveError: true,
-      })
-    ).toEqual({ kind: "document", message: DOCUMENT_UNSAVED_REASON });
+    ).toBe(SAVE_IN_FLIGHT_REASON);
   });
 
   it("names the field and its cap when one is over", () => {
     expect(
       describeModeDetailsSaveBlock({ ...OPEN_GATE, overLimit: "description" })
-    ).toEqual({
-      kind: "limit",
-      message: "The description is over 500 characters.",
-    });
+    ).toBe("The description is over 500 characters.");
     expect(
       describeModeDetailsSaveBlock({
         ...OPEN_GATE,
         overLimit: "welcomeMessage",
       })
-    ).toEqual({
-      kind: "limit",
-      message: "The welcome message is over 1000 characters.",
-    });
+    ).toBe("The welcome message is over 1000 characters.");
   });
 
   it("blocks an unchanged form", () => {
-    expect(
-      describeModeDetailsSaveBlock({ ...OPEN_GATE, changed: false })
-    ).toEqual({ kind: "unchanged", message: "Nothing has changed." });
+    expect(describeModeDetailsSaveBlock({ ...OPEN_GATE, changed: false })).toBe(
+      "Nothing has changed."
+    );
   });
 
   it("allows an unchanged form to be retried after a failed save", () => {
@@ -225,5 +199,20 @@ describe("mode-details — what blocks Save (#328)", () => {
         hasSaveError: true,
       })
     ).toBeNull();
+  });
+});
+
+describe("mode-details — what blocks opening the sheet (#337)", () => {
+  it("refuses while the editor's draft is unsaved, and says what to do", () => {
+    // A details save carries the whole document. On a rejected draft it
+    // would fail with the document's error and invite a retry; on an untried
+    // one it would persist the draft as a side effect.
+    expect(describeModeDetailsOpenBlock({ isDirty: true })).toBe(
+      DOCUMENT_UNSAVED_REASON
+    );
+  });
+
+  it("allows a clean draft", () => {
+    expect(describeModeDetailsOpenBlock({ isDirty: false })).toBeNull();
   });
 });

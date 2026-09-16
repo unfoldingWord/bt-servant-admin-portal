@@ -2,11 +2,7 @@ import {
   MAX_MODE_DESCRIPTION_LENGTH,
   MAX_MODE_WELCOME_MESSAGE_LENGTH,
 } from "@/types/prompt-override";
-import {
-  DOCUMENT_UNSAVED_REASON,
-  NO_EDIT_RIGHTS_REASON,
-  SAVE_IN_FLIGHT_REASON,
-} from "@/lib/mode-copy";
+import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
 
 // #328 — editing an existing mode's description and first-contact welcome.
 //
@@ -48,10 +44,24 @@ const FIELD_NOUN: Record<ModeDetailsField, string> = {
   welcomeMessage: "welcome message",
 };
 
-/** Why Save is unavailable. `kind` is for layout decisions, `message` for people. */
-export interface ModeDetailsSaveBlock {
-  kind: "rights" | "busy" | "document" | "limit" | "unchanged";
-  message: string;
+/**
+ * #337 — why the Details sheet cannot be opened, or null when it can. Every
+ * mode PUT carries the whole document, so a details save on an unsaved draft
+ * would ship that draft: if it had been rejected, the save would fail with
+ * the document's error and the sheet would wrongly invite a retry; if it was
+ * merely untried, the details save would persist it as a side effect. The
+ * page's other document-carrying actions (Clone, Import, switching modes)
+ * gate on a dirty draft the same way. The sheet is modal, so a draft that is
+ * clean when it opens is still clean when it saves — this is the whole fix.
+ */
+export const DOCUMENT_UNSAVED_REASON =
+  "Save the mode document first — fixing or undoing your edits if the save was rejected — before changing the details.";
+
+export function describeModeDetailsOpenBlock(gate: {
+  /** The editor's draft differs from what the server holds. */
+  isDirty: boolean;
+}): string | null {
+  return gate.isDirty ? DOCUMENT_UNSAVED_REASON : null;
 }
 
 /** Everything that can stop a details save, as the panel knows it. */
@@ -59,12 +69,6 @@ export interface ModeDetailsSaveGate {
   canEdit: boolean;
   /** A save is in flight, here or elsewhere on the page. */
   busy: boolean;
-  /**
-   * The editor's draft is unsaved and its last save failed (#337). A details
-   * save would carry that draft verbatim, so it is refused up front rather
-   * than failing with the document's error and inviting a retry.
-   */
-  documentUnsaved: boolean;
   changed: boolean;
   overLimit: ModeDetailsField | null;
   /** A previous save failed and has not been resolved. */
@@ -75,29 +79,19 @@ export interface ModeDetailsSaveGate {
  * Why Save is unavailable, or null when it is available.
  *
  * Ordered most-fundamental first, so a user without edit rights is told THAT
- * rather than "nothing has changed". A rejected document outranks a field
- * cap, because no edit inside the sheet can clear it. `changed` stops
- * blocking once a save has failed: the form still holds the edit the user
- * wants, so "nothing has changed" would be precisely backwards on the retry
- * path.
+ * rather than "nothing has changed". `changed` stops blocking once a save has
+ * failed: the form still holds the edit the user wants, so "nothing has
+ * changed" would be precisely backwards on the retry path.
  */
 export function describeModeDetailsSaveBlock(
   gate: ModeDetailsSaveGate
-): ModeDetailsSaveBlock | null {
-  if (!gate.canEdit) return { kind: "rights", message: NO_EDIT_RIGHTS_REASON };
-  if (gate.busy) return { kind: "busy", message: SAVE_IN_FLIGHT_REASON };
-  if (gate.documentUnsaved) {
-    return { kind: "document", message: DOCUMENT_UNSAVED_REASON };
-  }
+): string | null {
+  if (!gate.canEdit) return NO_EDIT_RIGHTS_REASON;
+  if (gate.busy) return SAVE_IN_FLIGHT_REASON;
   if (gate.overLimit) {
-    return {
-      kind: "limit",
-      message: `The ${FIELD_NOUN[gate.overLimit]} is over ${MODE_DETAILS_LIMITS[gate.overLimit]} characters.`,
-    };
+    return `The ${FIELD_NOUN[gate.overLimit]} is over ${MODE_DETAILS_LIMITS[gate.overLimit]} characters.`;
   }
-  if (!gate.changed && !gate.hasSaveError) {
-    return { kind: "unchanged", message: "Nothing has changed." };
-  }
+  if (!gate.changed && !gate.hasSaveError) return "Nothing has changed.";
   return null;
 }
 

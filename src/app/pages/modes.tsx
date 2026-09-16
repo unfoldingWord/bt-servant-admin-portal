@@ -38,7 +38,6 @@ import { classifyModeImport } from "@/lib/mode-import-gate";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { downloadBlob } from "@/lib/download-blob";
 import {
-  DOCUMENT_UNSAVED_REASON,
   NO_EDIT_RIGHTS_REASON,
   SAVE_IN_FLIGHT_REASON,
   gatedHelp,
@@ -46,6 +45,7 @@ import {
 import {
   type ModeDetails,
   type StoredModeDetails,
+  describeModeDetailsOpenBlock,
   toModeDetailsBody,
 } from "@/lib/mode-details";
 import { isModeShareOpen } from "@/lib/mode-share-link";
@@ -253,15 +253,14 @@ export function ModesPage() {
   // A dirty document whose save was rejected — for ANY reason, a validation
   // error or a network blip alike. Recorded by the two paths that exist to
   // persist or change the draft: `performSave` (autosave and the editor's
-  // Save) and the priorities Apply. The flag toggles, label sync and the
-  // Details save carry the draft but record nothing on failure — a failure
-  // there may be theirs, not the document's, and on a dirty draft the
-  // autosave re-fire on isPending → false settles which. Once recorded, autosave stops retrying
-  // it (Frank P2 on PR #122) and the Details opener and sheet refuse to
-  // carry it (#337). Those are the only refusals — the editor's Save, the
-  // toggles and label sync send it again on purpose; that is the recovery,
-  // alongside editing further. Every success path clears it through
-  // `markModeSynced`.
+  // Save) and the priorities Apply. The flag toggles and label sync carry
+  // the draft but record nothing on failure — a failure there may be theirs,
+  // not the document's, and the autosave re-fire on isPending → false
+  // settles which. Once recorded, autosave stops retrying it (Frank P2 on
+  // PR #122); that is the only refusal — the editor's Save, the toggles and
+  // label sync send it again on purpose, which is the recovery, alongside
+  // editing further. Every success path clears it through `syncTrackers`
+  // (directly, or via `markModeSynced`).
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
@@ -391,11 +390,6 @@ export function ModesPage() {
   );
 
   const isDirty = draft !== lastSyncedDoc;
-  // #337 — see `lastFailedDoc`. The dirty term matters: a priorities Apply
-  // can restore the synced document and then fail on a network blip, which
-  // records a document the server already holds — nothing the editor could
-  // save again, so nothing the Details sheet should refuse.
-  const documentUnsaved = isDirty && draft === lastFailedDoc;
   const isSaving = saveMode.isPending;
   const hasSelection = selectedMode !== null && modeQuery.data;
 
@@ -613,12 +607,6 @@ export function ModesPage() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsSaveError, setDetailsSaveError] = useState<string | null>(null);
   const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
-  // #337 — where focus lands when the sheet closes under the document block:
-  // the Details opener is disabled then (focusing a disabled button is a
-  // no-op that would drop focus to the page body), and the editor's Save is
-  // the very control the block asks for — enabled, since the block implies
-  // a dirty draft and edit rights.
-  const editorSaveButtonRef = useRef<HTMLButtonElement | null>(null);
   const resetDetailsPanel = useCallback(() => {
     setDetailsOpen(false);
     setDetailsSaveError(null);
@@ -655,10 +643,7 @@ export function ModesPage() {
   // or undid the ranking, or any save landed and cleared `lastFailedDoc`),
   // the banner's "your ranking is still here, apply again" story is false —
   // retire it. This is the recovery path the per-save clears can't see:
-  // divergence without a save. Deliberately NOT the Details predicate
-  // (`documentUnsaved`, which adds a dirty term): a ranking that restores the
-  // saved document and then fails on a blip must keep its in-sheet alert,
-  // since nothing else in the open sheet would report the failure.
+  // divergence without a save.
   useEffect(() => {
     if (priorityApplyError !== null && draft !== lastFailedDoc) {
       setPriorityApplyError(null);
@@ -1221,11 +1206,14 @@ export function ModesPage() {
       // The button and the panel are already rights-gated; local mirror of
       // the worker's gate, same as flushSave.
       if (!canEditSelected) return;
-      // Same-tick race with an autosave that just started under the sheet
-      // (the synchronous lock saw it before React did). Refuse silently: a
-      // render later the sheet shows its in-flight notice for as long as
-      // that save runs, and Save re-enables when it settles.
-      if (inFlightSavesRef.current > 0 || saveMode.isPending) return;
+      // Backstop only: the sheet opens on a clean draft and is modal, so no
+      // autosave can start under it. Reported inside the sheet rather than
+      // silently dropped, in case that ever changes — the user has typed
+      // something here and needs to know why the click did nothing.
+      if (inFlightSavesRef.current > 0 || saveMode.isPending) {
+        setDetailsSaveError(SAVE_IN_FLIGHT_REASON);
+        return;
+      }
       const target = selectedMode;
       const sent = lastSyncedFlagsRef.current;
       const document = draftRef.current;
@@ -1634,15 +1622,11 @@ export function ModesPage() {
     RESOURCE_PRIORITIES_HELP,
     rightsReason
   );
-  // #337 — the refusal lives at the opener, like the other gated controls;
-  // the sheet's own block is the backstop for a draft that fails while it
-  // is open. `documentUnsaved` implies edit rights (every path that records
-  // `lastFailedDoc` is rights-gated), so a viewer — who has nothing to save
-  // and gets a read-only sheet anyway — is never locked out by it.
-  const detailsHelp = gatedHelp(
-    MODE_DETAILS_HELP,
-    documentUnsaved ? DOCUMENT_UNSAVED_REASON : null
-  );
+  // #337 — Details opens only on a clean draft, like Clone and Import. A
+  // viewer without edit rights never has a dirty draft, so this never locks
+  // one out of the read-only sheet.
+  const detailsOpenBlock = describeModeDetailsOpenBlock({ isDirty });
+  const detailsHelp = gatedHelp(MODE_DETAILS_HELP, detailsOpenBlock);
 
   const shareHelp = effectiveOrg
     ? "QR code and link that open this mode on WhatsApp."
@@ -1790,14 +1774,15 @@ export function ModesPage() {
               {/* #328 — description + first-contact welcome for THIS mode.
                   Not edit-gated at the button: viewers may read the welcome
                   copy; the panel disables the fields and Save without edit
-                  rights and says why. Gated on an unsaved document (#337):
-                  its PUT would carry the rejected draft. */}
+                  rights and says why. Gated on a dirty draft (#337): the
+                  sheet's PUT carries the whole document, and the sheet is
+                  modal, so a draft that is clean at open is clean at save. */}
               <Button
                 ref={detailsButtonRef}
                 size="sm"
                 variant="outline"
                 onClick={() => setDetailsOpen(true)}
-                disabled={isSaving || documentUnsaved}
+                disabled={isSaving || detailsOpenBlock !== null}
                 title={detailsHelp}
                 aria-describedby="mode-details-help"
                 aria-haspopup="dialog"
@@ -1867,7 +1852,6 @@ export function ModesPage() {
                 Export
               </Button>
               <Button
-                ref={editorSaveButtonRef}
                 size="sm"
                 onClick={flushSave}
                 disabled={!isDirty || isSaving || !canEditSelected}
@@ -2264,20 +2248,13 @@ export function ModesPage() {
           if (!open) setDetailsSaveError(null);
           setDetailsOpen(open);
         }}
-        returnFocusTo={documentUnsaved ? editorSaveButtonRef : detailsButtonRef}
+        returnFocusTo={detailsButtonRef}
         modeLabel={serverLabel}
         stored={storedDetails}
         canEdit={canEditSelected}
         isSaving={isSaving}
-        documentUnsaved={documentUnsaved}
         onSave={handleSaveModeDetails}
         saveError={detailsSaveError}
-        // The rejection the block is about — the shared mutation's last
-        // error — so the sheet can say what was wrong without being closed
-        // (the page banner sits under its overlay).
-        documentError={
-          documentUnsaved ? (saveMode.error?.message ?? null) : null
-        }
       />
 
       {/* #311 — WhatsApp QR + share link. Mounted at page level like the
