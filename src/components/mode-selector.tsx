@@ -16,7 +16,10 @@ import {
 import { pickCloneDefaultSlug } from "@/lib/mode-clone-defaults";
 import { slugifyModeName as slugify } from "@/lib/mode-slug";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
-import { MAX_MODE_WELCOME_MESSAGE_LENGTH } from "@/types/prompt-override";
+import {
+  MAX_MODE_DESCRIPTION_LENGTH,
+  MAX_MODE_WELCOME_MESSAGE_LENGTH,
+} from "@/types/prompt-override";
 import type { OrgModes, PromptMode } from "@/types/prompt-override";
 import {
   AlertDialog,
@@ -898,6 +901,7 @@ export function ModeSelector({
               onChange={(e) => setNewDescription(e.target.value)}
               placeholder="Optional description for this mode..."
               rows={2}
+              maxLength={MAX_MODE_DESCRIPTION_LENGTH}
               className="text-sm"
             />
           </div>

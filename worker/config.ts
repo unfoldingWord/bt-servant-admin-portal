@@ -139,6 +139,12 @@ interface ResourceShape {
   // engine takes one shared admin token and has no per-user identity — so
   // an unmodelled field is an unguarded one.
   requires_group?: boolean;
+  // #311 (part 2) / #328 first-contact welcome copy. Same rule as
+  // `requires_group`: it is end-user-facing authored text, so changing it is
+  // an EDIT. Before #328 it was absent from this shape, and a PUT that changed
+  // only this field computed zero required verbs — a publish-only shepherd
+  // could rewrite the welcome by hand-crafting the request.
+  welcome_message?: string;
 }
 
 // Tri-state resource lookup — the single copy of the engine GET +
@@ -277,9 +283,22 @@ function computeRequiredVerbsForPut(
     (isCreate
       ? body.requires_group === true
       : body.requires_group !== currentRequiresGroup);
+  // #328 — same shape as `description`: the portal re-asserts the stored
+  // value verbatim on every PUT (or omits it when unset), so only a genuine
+  // rewrite — including a clear, sent as '' against a stored value — reads
+  // as a change.
+  const welcomeChanged =
+    body.welcome_message !== undefined &&
+    (isCreate || body.welcome_message !== current.welcome_message);
 
   const verbs: RightsVerb[] = [];
-  if (docChanged || labelChanged || descChanged || requiresGroupChanged) {
+  if (
+    docChanged ||
+    labelChanged ||
+    descChanged ||
+    requiresGroupChanged ||
+    welcomeChanged
+  ) {
     verbs.push("edit");
   }
   if (publishChanged) verbs.push("publish");
@@ -319,7 +338,8 @@ function computeRequiredVerbsForPut(
 //      strictly more destructive than either alone.
 //   6. PUT → diff body vs current and require the union of verbs the
 //      diff implies (`edit` if any editorial field changed — document,
-//      label, description, or the #209 `requires_group` flag; `publish`
+//      label, description, the #209 `requires_group` flag, or the #328
+//      `welcome_message`; `publish`
 //      if the published flag flipped). No carve-outs: the #247
 //      admin-bootstrap-create exception (and its creator auto-grant)
 //      is deleted in #249 — check 2 subsumes it, so creating an org's
