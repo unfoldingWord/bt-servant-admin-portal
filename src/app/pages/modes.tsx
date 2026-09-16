@@ -2216,6 +2216,12 @@ export function ModesPage() {
         onOpenChange={(open) => {
           // Same promise as the priorities panel: no dismissal mid-PUT.
           if (!open && isSaving) return;
+          // Unlike the priorities panel, the failure DOES die with the sheet
+          // here: Radix unmounts the body on close, so reopening rebuilds the
+          // form from `stored` and the edits the banner promises are "still
+          // here" are gone. Keeping it would also leave Save enabled on an
+          // unchanged form, sending a no-op PUT.
+          if (!open) setDetailsSaveError(null);
           setDetailsOpen(open);
         }}
         returnFocusTo={detailsButtonRef}

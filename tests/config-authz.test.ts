@@ -283,6 +283,7 @@ function spyFetchWithCurrent(
     published?: boolean;
     requires_group?: boolean;
     welcome_message?: string;
+    aliases?: string[];
   } | null
 ) {
   let callCount = 0;
@@ -2929,6 +2930,36 @@ describe("config authz — #181 verb diff (pure function)", () => {
         { document: "## same\n", welcome_message: "Hello", published: false }
       )
     ).toEqual([]);
+  });
+
+  // #328 — `overrides` and `aliases` are the other two fields the engine
+  // accepts on this route. The portal sends neither, so presence alone is an
+  // authoring act.
+  it("update carrying overrides → ['edit'] (engine would replace the document)", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { published: false, overrides: { persona: "hijacked" } },
+        { document: "## same\n", published: false }
+      )
+    ).toEqual(["edit"]);
+  });
+
+  it("update carrying aliases → ['edit'] (an empty array drops every old slug)", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", published: false, aliases: [] },
+        { document: "## same\n", published: false, aliases: ["old-slug"] }
+      )
+    ).toEqual(["edit"]);
+  });
+
+  it("a publish-only PUT carrying neither is unaffected", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", published: true },
+        { document: "## same\n", published: false }
+      )
+    ).toEqual(["publish"]);
   });
 
   it("#209 update changing only requires_group → ['edit']", () => {

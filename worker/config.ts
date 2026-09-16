@@ -145,6 +145,17 @@ interface ResourceShape {
   // only this field computed zero required verbs — a publish-only shepherd
   // could rewrite the welcome by hand-crafting the request.
   welcome_message?: string;
+  // #328 — the other two unmodelled fields the engine accepts on this route.
+  // The portal never sends either (it sends `document`, and aliases move only
+  // through `_rename` / `_clone` / `_retire`), so their mere PRESENCE in a body
+  // is enough to demand edit rights; there is no re-assertion path that would
+  // make a value comparison necessary. Left unmodelled they were free hits for
+  // anyone past the early deny: `overrides` makes the engine's
+  // `mergeContentFields` discard the stored document and serve the caller's
+  // prompt slots instead, and `aliases: []` drops every slug a mode still
+  // answers to.
+  overrides?: unknown;
+  aliases?: string[];
 }
 
 // Tri-state resource lookup — the single copy of the engine GET +
@@ -290,6 +301,11 @@ function computeRequiredVerbsForPut(
   const welcomeChanged =
     body.welcome_message !== undefined &&
     (isCreate || body.welcome_message !== current.welcome_message);
+  // #328 — presence, not difference. The portal sends neither field on this
+  // route, so anything carrying one is rewriting mode content or its slug set
+  // by hand, which is an authoring act whatever the stored value happens to be.
+  const contentFieldPresent =
+    body.overrides !== undefined || body.aliases !== undefined;
 
   const verbs: RightsVerb[] = [];
   if (
@@ -297,7 +313,8 @@ function computeRequiredVerbsForPut(
     labelChanged ||
     descChanged ||
     requiresGroupChanged ||
-    welcomeChanged
+    welcomeChanged ||
+    contentFieldPresent
   ) {
     verbs.push("edit");
   }
@@ -337,10 +354,14 @@ function computeRequiredVerbsForPut(
 //   5. DELETE → requires BOTH edit + publish on the row. Deletion is
 //      strictly more destructive than either alone.
 //   6. PUT → diff body vs current and require the union of verbs the
-//      diff implies (`edit` if any editorial field changed — document,
-//      label, description, the #209 `requires_group` flag, or the #328
-//      `welcome_message`; `publish`
-//      if the published flag flipped). No carve-outs: the #247
+//      diff implies. `edit` when any editorial field changed — document,
+//      label, description, the #209 `requires_group` flag or the #328
+//      `welcome_message` — and also when the body merely CARRIES
+//      `overrides` or `aliases`, which the portal never sends on this
+//      route (#328). `publish` when the published flag flipped. Every
+//      field the engine accepts here is now modelled; anything added to
+//      the engine's mode schema must be added above too, or it lands
+//      unguarded. No carve-outs: the #247
 //      admin-bootstrap-create exception (and its creator auto-grant)
 //      is deleted in #249 — check 2 subsumes it, so creating an org's
 //      first language draft is now an ordinary admin write instead of
