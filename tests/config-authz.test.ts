@@ -282,6 +282,8 @@ function spyFetchWithCurrent(
     description?: string;
     published?: boolean;
     requires_group?: boolean;
+    welcome_message?: string;
+    aliases?: string[];
   } | null
 ) {
   let callCount = 0;
@@ -928,6 +930,100 @@ function findEnginePost(
   );
   return call ? [String(call[0]), call[1] as RequestInit] : undefined;
 }
+
+describe("config authz — #328 welcome_message is edit-gated", () => {
+  it("publish-only shepherd rewriting ONLY welcome_message → 403 (no engine write)", async () => {
+    // The load-bearing case, and the #209 story replayed: this caller clears
+    // the early-deny (publish on the row), the body changes nothing the
+    // pre-#328 shape modelled, so the diff computed [] and end-user copy
+    // changed hands without edit rights.
+    const fetchSpy = spyFetchWithCurrent("mode", {
+      document: "## same\n",
+      published: true,
+      welcome_message: "Welcome to the real mode.",
+    });
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/modes/spoken", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: "## same\n",
+          published: true,
+          welcome_message: "Send your bank details to…",
+        }),
+      }),
+      env,
+      makeSession({
+        mode_edit_rights: [],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken"
+    );
+    expect(res.status).toBe(403);
+    // Only the gate's current-state read — the proxy never ran.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("publish-only shepherd publishing while re-asserting an UNCHANGED welcome_message → 200", async () => {
+    // The portal re-asserts the stored welcome verbatim on every PUT, so a
+    // publish toggle must still cost publish rights only.
+    const fetchSpy = spyFetchWithCurrent("mode", {
+      document: "## same\n",
+      published: false,
+      welcome_message: "Welcome.",
+    });
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/modes/spoken", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: "## same\n",
+          published: true,
+          welcome_message: "Welcome.",
+        }),
+      }),
+      env,
+      makeSession({
+        mode_edit_rights: [],
+        mode_publish_rights: ["spoken"],
+      }),
+      "/api/config/modes/spoken"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("edit-rights shepherd rewriting welcome_message → 200 (proxied verbatim)", async () => {
+    const fetchSpy = spyFetchWithCurrent("mode", {
+      document: "## same\n",
+      published: false,
+      welcome_message: "Old",
+    });
+    const res = await handleConfig(
+      new Request("https://portal.example.test/api/config/modes/spoken", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: "## same\n",
+          published: false,
+          welcome_message: "New",
+        }),
+      }),
+      env,
+      makeSession({
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: [],
+      }),
+      "/api/config/modes/spoken"
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const init = fetchSpy.mock.calls[1]![1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      welcome_message: "New",
+    });
+  });
+});
 
 describe("config authz — #209 requires_group is edit-gated", () => {
   it("publish-only shepherd flipping ONLY requires_group → 403 (no engine write)", async () => {
@@ -2796,6 +2892,74 @@ describe("config authz — #181 verb diff (pure function)", () => {
         { document: "## same\n", description: "Old", published: false }
       )
     ).toEqual(["edit"]);
+  });
+
+  // #328 — the first-contact welcome is authored end-user copy; before this
+  // it was absent from the diff and a welcome-only PUT computed [].
+  it("update changing only welcome_message → ['edit']", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", welcome_message: "Hi!", published: false },
+        { document: "## same\n", welcome_message: "Hello", published: false }
+      )
+    ).toEqual(["edit"]);
+  });
+
+  it("update setting welcome_message on a row that has none → ['edit']", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", welcome_message: "Hi!", published: false },
+        { document: "## same\n", published: false }
+      )
+    ).toEqual(["edit"]);
+  });
+
+  it("update clearing welcome_message ('' against a stored value) → ['edit']", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", welcome_message: "", published: false },
+        { document: "## same\n", welcome_message: "Hello", published: false }
+      )
+    ).toEqual(["edit"]);
+  });
+
+  it("update re-asserting an UNCHANGED welcome_message → []", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", welcome_message: "Hello", published: false },
+        { document: "## same\n", welcome_message: "Hello", published: false }
+      )
+    ).toEqual([]);
+  });
+
+  // #328 — `overrides` and `aliases` are the other two fields the engine
+  // accepts on this route. The portal sends neither, so presence alone is an
+  // authoring act.
+  it("update carrying overrides → ['edit'] (engine would replace the document)", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { published: false, overrides: { persona: "hijacked" } },
+        { document: "## same\n", published: false }
+      )
+    ).toEqual(["edit"]);
+  });
+
+  it("update carrying aliases → ['edit'] (an empty array drops every old slug)", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", published: false, aliases: [] },
+        { document: "## same\n", published: false, aliases: ["old-slug"] }
+      )
+    ).toEqual(["edit"]);
+  });
+
+  it("a publish-only PUT carrying neither is unaffected", () => {
+    expect(
+      computeRequiredVerbsForPut(
+        { document: "## same\n", published: true },
+        { document: "## same\n", published: false }
+      )
+    ).toEqual(["publish"]);
   });
 
   it("#209 update changing only requires_group → ['edit']", () => {

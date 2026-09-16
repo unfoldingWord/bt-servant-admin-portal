@@ -49,6 +49,11 @@ export const MAX_SLOT_LENGTH = 8000;
 // NOT part of this budget and must not be typed into the field.
 export const MAX_MODE_WELCOME_MESSAGE_LENGTH = 1000;
 
+// #328 — mirrors the worker's `MAX_MODE_DESCRIPTION_LENGTH` (validatePromptMode
+// rejects longer with a 400). Enforced on the create card and the details
+// panel so the cap reads as a limit rather than a failed save.
+export const MAX_MODE_DESCRIPTION_LENGTH = 500;
+
 // Modes are stored as a single markdown document on the worker (worker
 // PR #213 / issue #200). The portal sends and receives markdown only;
 // the worker still accepts legacy slotted PUTs for back-compat but the

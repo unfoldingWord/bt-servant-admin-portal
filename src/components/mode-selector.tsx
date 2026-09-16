@@ -16,7 +16,10 @@ import {
 import { pickCloneDefaultSlug } from "@/lib/mode-clone-defaults";
 import { slugifyModeName as slugify } from "@/lib/mode-slug";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
-import { MAX_MODE_WELCOME_MESSAGE_LENGTH } from "@/types/prompt-override";
+import {
+  MAX_MODE_DESCRIPTION_LENGTH,
+  MAX_MODE_WELCOME_MESSAGE_LENGTH,
+} from "@/types/prompt-override";
 import type { OrgModes, PromptMode } from "@/types/prompt-override";
 import {
   AlertDialog,
@@ -39,7 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
+import { TextareaField } from "@/components/textarea-field";
 
 interface ModeSelectorProps {
   modesData: OrgModes | undefined;
@@ -888,56 +891,34 @@ export function ModeSelector({
               />
             </div>
           </div>
-          <div className="mt-3 space-y-1.5">
-            <Label htmlFor="mode-desc" className="text-xs">
-              Description
-            </Label>
-            <Textarea
+          {/* #328 — both fields use the same control as the details panel
+              that edits them afterwards, so the caps, helper copy and counter
+              cannot drift between authoring a mode and editing one. */}
+          <div className="mt-3">
+            <TextareaField
               id="mode-desc"
+              label="Description"
               value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              placeholder="Optional description for this mode..."
+              onChange={setNewDescription}
+              max={MAX_MODE_DESCRIPTION_LENGTH}
               rows={2}
-              className="text-sm"
+              placeholder="Optional description for this mode..."
             />
           </div>
           {/* #311 (part 2) — first-contact welcome message. Authored copy
               only; the worker appends the WhatsApp share link itself, so it
-              must not be typed here. Same create-time home as the description
-              above; capped at the worker's max. */}
-          <div className="mt-3 space-y-1.5">
-            <Label htmlFor="mode-welcome" className="text-xs">
-              First-contact welcome message
-            </Label>
-            <Textarea
+              must not be typed here. */}
+          <div className="mt-3">
+            <TextareaField
               id="mode-welcome"
+              label="First-contact welcome message"
               value={newWelcomeMessage}
-              onChange={(e) => setNewWelcomeMessage(e.target.value)}
-              placeholder="Sent once, the first time someone messages this mode…"
+              onChange={setNewWelcomeMessage}
+              max={MAX_MODE_WELCOME_MESSAGE_LENGTH}
               rows={3}
-              maxLength={MAX_MODE_WELCOME_MESSAGE_LENGTH}
-              className="text-sm"
-              aria-describedby="mode-welcome-help"
+              placeholder="Sent once, the first time someone messages this mode…"
+              help="Optional. Your welcome copy only — the WhatsApp share link is added automatically, so leave it out."
             />
-            <div className="flex items-start justify-between gap-2">
-              <p
-                id="mode-welcome-help"
-                className="text-muted-foreground text-xs"
-              >
-                Optional. Your welcome copy only — the WhatsApp share link is
-                added automatically, so leave it out.
-              </p>
-              {/* #311 (part 2) — visible awareness of the 1000-char cap the
-                  `maxLength` above enforces, so hitting it reads as a limit
-                  rather than a silent truncation (matches the hard error the
-                  importer raises at the same cap). */}
-              <span
-                className="text-muted-foreground shrink-0 text-xs tabular-nums"
-                aria-hidden="true"
-              >
-                {newWelcomeMessage.length}/{MAX_MODE_WELCOME_MESSAGE_LENGTH}
-              </span>
-            </div>
           </div>
           <div className="mt-4 flex justify-end gap-2">
             <Button

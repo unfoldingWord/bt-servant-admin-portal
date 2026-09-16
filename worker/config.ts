@@ -139,6 +139,23 @@ interface ResourceShape {
   // engine takes one shared admin token and has no per-user identity — so
   // an unmodelled field is an unguarded one.
   requires_group?: boolean;
+  // #311 (part 2) / #328 first-contact welcome copy. Same rule as
+  // `requires_group`: it is end-user-facing authored text, so changing it is
+  // an EDIT. Before #328 it was absent from this shape, and a PUT that changed
+  // only this field computed zero required verbs — a publish-only shepherd
+  // could rewrite the welcome by hand-crafting the request.
+  welcome_message?: string;
+  // #328 — the other two unmodelled fields the engine accepts on this route.
+  // The portal never sends either (it sends `document`, and aliases move only
+  // through `_rename` / `_clone` / `_retire`), so their mere PRESENCE in a body
+  // is enough to demand edit rights; there is no re-assertion path that would
+  // make a value comparison necessary. Left unmodelled they were free hits for
+  // anyone past the early deny: `overrides` makes the engine's
+  // `mergeContentFields` discard the stored document and serve the caller's
+  // prompt slots instead, and `aliases: []` drops every slug a mode still
+  // answers to.
+  overrides?: unknown;
+  aliases?: string[];
 }
 
 // Tri-state resource lookup — the single copy of the engine GET +
@@ -277,9 +294,28 @@ function computeRequiredVerbsForPut(
     (isCreate
       ? body.requires_group === true
       : body.requires_group !== currentRequiresGroup);
+  // #328 — same shape as `description`: the portal re-asserts the stored
+  // value verbatim on every PUT (or omits it when unset), so only a genuine
+  // rewrite — including a clear, sent as '' against a stored value — reads
+  // as a change.
+  const welcomeChanged =
+    body.welcome_message !== undefined &&
+    (isCreate || body.welcome_message !== current.welcome_message);
+  // #328 — presence, not difference. The portal sends neither field on this
+  // route, so anything carrying one is rewriting mode content or its slug set
+  // by hand, which is an authoring act whatever the stored value happens to be.
+  const contentFieldPresent =
+    body.overrides !== undefined || body.aliases !== undefined;
 
   const verbs: RightsVerb[] = [];
-  if (docChanged || labelChanged || descChanged || requiresGroupChanged) {
+  if (
+    docChanged ||
+    labelChanged ||
+    descChanged ||
+    requiresGroupChanged ||
+    welcomeChanged ||
+    contentFieldPresent
+  ) {
     verbs.push("edit");
   }
   if (publishChanged) verbs.push("publish");
@@ -318,9 +354,14 @@ function computeRequiredVerbsForPut(
 //   5. DELETE → requires BOTH edit + publish on the row. Deletion is
 //      strictly more destructive than either alone.
 //   6. PUT → diff body vs current and require the union of verbs the
-//      diff implies (`edit` if any editorial field changed — document,
-//      label, description, or the #209 `requires_group` flag; `publish`
-//      if the published flag flipped). No carve-outs: the #247
+//      diff implies. `edit` when any editorial field changed — document,
+//      label, description, the #209 `requires_group` flag or the #328
+//      `welcome_message` — and also when the body merely CARRIES
+//      `overrides` or `aliases`, which the portal never sends on this
+//      route (#328). `publish` when the published flag flipped. Every
+//      field the engine accepts here is now modelled; anything added to
+//      the engine's mode schema must be added above too, or it lands
+//      unguarded. No carve-outs: the #247
 //      admin-bootstrap-create exception (and its creator auto-grant)
 //      is deleted in #249 — check 2 subsumes it, so creating an org's
 //      first language draft is now an ordinary admin write instead of

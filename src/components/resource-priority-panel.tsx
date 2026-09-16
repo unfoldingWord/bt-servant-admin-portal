@@ -29,6 +29,7 @@ import {
   resolveServerName,
   type ServerNameMap,
 } from "@/lib/resource-servers";
+import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
 import { useUiStore } from "@/lib/ui-store";
 import { cn } from "@/lib/utils";
 import { useResources } from "@/hooks/use-resources";
@@ -60,12 +61,6 @@ const SCOPE_COPY = "Priorities apply to this mode in every language.";
 // story half the time. What is guaranteed either way is the order.
 const OFFERED_REFRESH_COPY =
   "Nothing here has been reordered. Applying keeps the saved order exactly as it is and rewrites the rest of the generated block — the resource descriptions and the disclosure line — from the catalog loaded above.";
-
-// Same sentence the Modes header uses for the same denial (see
-// NO_EDIT_RIGHTS_REASON in app/pages/modes.tsx). The header already gates the
-// button that opens this panel; this is the backstop, and it has to read
-// identically — one denial, one wording.
-const NO_EDIT_RIGHTS_REASON = "You don't have edit rights on this mode.";
 
 interface ResourcePriorityPanelProps {
   open: boolean;
@@ -233,7 +228,7 @@ function PanelBody({
   const applyBlockedReason = !canEdit
     ? NO_EDIT_RIGHTS_REASON
     : busy
-      ? "Another save is in flight. Try again in a moment."
+      ? SAVE_IN_FLIGHT_REASON
       : !data
         ? "Load the resource list before applying an order."
         : tooLong

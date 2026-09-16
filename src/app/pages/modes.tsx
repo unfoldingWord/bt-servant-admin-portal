@@ -8,7 +8,15 @@ import {
 } from "react";
 import { faSpinnerThird } from "@fortawesome/pro-light-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Download, ListOrdered, QrCode, Save, Upload, X } from "lucide-react";
+import {
+  Download,
+  ListOrdered,
+  QrCode,
+  Save,
+  Settings2,
+  Upload,
+  X,
+} from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { shouldAutoSaveDraft } from "@/lib/autosave-gate";
@@ -29,6 +37,12 @@ import { type ParsedModeImport, parseModeImport } from "@/lib/mode-import";
 import { classifyModeImport } from "@/lib/mode-import-gate";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { downloadBlob } from "@/lib/download-blob";
+import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
+import {
+  type ModeDetails,
+  type StoredModeDetails,
+  toModeDetailsBody,
+} from "@/lib/mode-details";
 import { isModeShareOpen } from "@/lib/mode-share-link";
 import { humanizeModeSlug, slugifyModeName } from "@/lib/mode-slug";
 import { runConfirmedAction } from "@/lib/run-confirmed-action";
@@ -76,6 +90,10 @@ import {
   type MarkdownEditorHandle,
 } from "@/components/markdown-editor";
 import { MarkdownToc } from "@/components/markdown-toc";
+import {
+  MODE_DETAILS_SHEET_ID,
+  ModeDetailsPanel,
+} from "@/components/mode-details-panel";
 import { ModeSelector } from "@/components/mode-selector";
 import {
   MODE_SHARE_DIALOG_ID,
@@ -89,11 +107,14 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 // One sentence, one meaning: the Save button and the group-chat switch
 // explain a denied edit with the SAME words, so a shepherd who can't act
 // on a mode reads the same reason wherever they look.
-const NO_EDIT_RIGHTS_REASON = "You don't have edit rights on this mode.";
 const REQUIRES_GROUP_HELP =
   "When on, this mode is only offered in group chats (Telegram groups) — hidden from WhatsApp, web, and DMs.";
 const RESOURCE_PRIORITIES_HELP =
   "Rank the resources this mode answers from first. Written into the mode document, under Tool Guidance.";
+// #328 — the details panel. Read-only without edit rights, so this is a
+// description of the surface, not a gate.
+const MODE_DETAILS_HELP =
+  "This mode's description and the welcome message sent on first contact.";
 
 export function ModesPage() {
   const user = useAuthStore((s) => s.user);
@@ -280,6 +301,11 @@ export function ModesPage() {
   // null/'' deletes it — so passing the server value through preserves it
   // across document autosaves and flag toggles that don't touch the field.
   const serverWelcomeMessage = modeQuery.data?.welcome_message;
+  // #328 - the same server truth the two lines above read, handed to the
+  // details panel whole. `PromptMode` already satisfies `StoredModeDetails`,
+  // so rebuilding a literal from its own fields would only be a second copy
+  // to keep in sync.
+  const storedDetails: StoredModeDetails | undefined = modeQuery.data;
 
   const syncedNameRef = useRef<string | null>(null);
   useEffect(() => {
@@ -533,6 +559,22 @@ export function ModesPage() {
   // The error lives here for the same reason, one step further: Radix unmounts
   // the sheet's subtree on close, so panel-local error state would let
   // close-then-reopen silently forget that the draft is unsaved.
+  // #328 — mode details panel (description + first-contact welcome). Same
+  // ownership split as the priorities panel: the page owns `open` and the
+  // last failed save, so a failure survives the sheet unmounting on close and
+  // a selection change can put everything back to "nothing open, nothing
+  // reported" from one place.
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsSaveError, setDetailsSaveError] = useState<string | null>(null);
+  const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const resetDetailsPanel = useCallback(() => {
+    setDetailsOpen(false);
+    setDetailsSaveError(null);
+  }, []);
+  useEffect(() => {
+    resetDetailsPanel();
+  }, [resetDetailsPanel, selectedMode]);
+
   const [prioritiesOpen, setPrioritiesOpen] = useState(false);
   const [priorityApplyError, setPriorityApplyError] = useState<string | null>(
     null
@@ -1026,7 +1068,7 @@ export function ModesPage() {
       // throw is the backstop for any caller that misses that gate, and it
       // surfaces inline in the unpublish dialog via `runConfirmedAction`.
       if (inFlightSavesRef.current > 0 || saveMode.isPending) {
-        throw new Error("Another save is in flight. Try again in a moment.");
+        throw new Error(SAVE_IN_FLIGHT_REASON);
       }
       const sent: ModeFlags = { ...lastSyncedFlagsRef.current, published };
       inFlightSavesRef.current += 1;
@@ -1075,7 +1117,7 @@ export function ModesPage() {
     async (requiresGroup: boolean) => {
       if (!selectedMode) return;
       if (inFlightSavesRef.current > 0 || saveMode.isPending) {
-        throw new Error("Another save is in flight. Try again in a moment.");
+        throw new Error(SAVE_IN_FLIGHT_REASON);
       }
       const target = selectedMode;
       const sent: ModeFlags = {
@@ -1112,6 +1154,92 @@ export function ModesPage() {
       serverDescription,
       serverLabel,
       serverWelcomeMessage,
+      trackersOwn,
+    ]
+  );
+
+  // #328 — save the details panel's description + welcome through the same
+  // PUT as every other write here (the worker has no partial update, so the
+  // live draft and the tracked flag pair ride along verbatim). Two things
+  // distinguish it from the flag toggles:
+  //  - `seed: true`. Neither field is a page-local tracker — every editor PUT
+  //    re-asserts `serverDescription` / `serverWelcomeMessage` straight from
+  //    the per-mode cache — so that cache must carry the new values before
+  //    `isPending` drops, or the next autosave would send the stale pair and
+  //    silently undo this save until the invalidate refetch landed. Exactly
+  //    the label-sync PUT's reasoning (#308, grok #315 rd-3).
+  //  - The body fragment comes from `toModeDetailsBody`, which sends '' to
+  //    clear a stored value (the worker's delete signal for BOTH fields) and
+  //    omits a never-set empty field so the BFF's verb diff sees no change.
+  const handleSaveModeDetails = useCallback(
+    async (next: ModeDetails) => {
+      if (!selectedMode) return;
+      // The button and the panel are already rights-gated; local mirror of
+      // the worker's gate, same as flushSave.
+      if (!canEditSelected) return;
+      // Reported inside the sheet rather than silently dropped: unlike the
+      // priorities Apply, the user has typed something here and needs to know
+      // why the click did nothing.
+      if (inFlightSavesRef.current > 0 || saveMode.isPending) {
+        setDetailsSaveError(SAVE_IN_FLIGHT_REASON);
+        return;
+      }
+      const target = selectedMode;
+      const sent = lastSyncedFlagsRef.current;
+      const document = draftRef.current;
+      setDetailsSaveError(null);
+      inFlightSavesRef.current += 1;
+      try {
+        const saved = await saveMode.mutateAsync({
+          name: target,
+          org: contextOrg,
+          seed: true,
+          body: {
+            label: serverLabel,
+            ...toModeDetailsBody(storedDetails, next),
+            document,
+            ...sent,
+          },
+        });
+        // Advance the trackers only if they still describe this slug (a
+        // switch can outlive the PUT), then close — on success only. A failed
+        // save keeps the panel open with the user's text intact.
+        if (trackersOwn(target)) {
+          setLastSyncedDoc(document);
+          setLastFailedDoc(null);
+          // Same clear every other success path on this page performs: a
+          // priorities failure is a claim about a document this PUT has just
+          // replaced, so leaving the banner up would describe a state that no
+          // longer exists.
+          setPriorityApplyError(null);
+          applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+          resetDetailsPanel();
+        }
+      } catch (err) {
+        // Recorded rather than rethrown: the promise contract with the panel
+        // is that it never rejects. Ownership-gated like every other write
+        // here — a failure from a save that outlived the selection must not be
+        // pinned on whatever mode the panel would now be showing.
+        if (trackersOwn(target)) {
+          setDetailsSaveError(
+            err instanceof Error && err.message
+              ? err.message
+              : "The mode details could not be saved."
+          );
+        }
+      } finally {
+        inFlightSavesRef.current -= 1;
+      }
+    },
+    [
+      applyLastSyncedFlags,
+      canEditSelected,
+      contextOrg,
+      resetDetailsPanel,
+      saveMode,
+      selectedMode,
+      serverLabel,
+      storedDetails,
       trackersOwn,
     ]
   );
@@ -1391,7 +1519,7 @@ export function ModesPage() {
         // the same slug would revert that write. Surfaces inline in the
         // dialog via runConfirmedAction.
         if (inFlightSavesRef.current > 0) {
-          throw new Error("Another save is in flight. Try again in a moment.");
+          throw new Error(SAVE_IN_FLIGHT_REASON);
         }
         const live = trackersOwn(target.name);
         const sent: ModeFlags = live
@@ -1620,6 +1748,28 @@ export function ModesPage() {
                 aria-live="polite"
               >
                 {saveStatus}
+              </span>
+              {/* #328 — description + first-contact welcome for THIS mode.
+                  Not edit-gated at the button: viewers may read the welcome
+                  copy; the panel disables the fields and Save without edit
+                  rights and says why. */}
+              <Button
+                ref={detailsButtonRef}
+                size="sm"
+                variant="outline"
+                onClick={() => setDetailsOpen(true)}
+                disabled={isSaving}
+                title={MODE_DETAILS_HELP}
+                aria-describedby="mode-details-help"
+                aria-haspopup="dialog"
+                aria-expanded={detailsOpen}
+                aria-controls={MODE_DETAILS_SHEET_ID}
+              >
+                <Settings2 className="mr-1.5 size-3.5" />
+                Details
+              </Button>
+              <span id="mode-details-help" className="sr-only">
+                {MODE_DETAILS_HELP}
               </span>
               {/* #277 — opens the ranking panel. Gated by the same right
                   the Save button and the group-chat switch are gated by; the
@@ -2053,6 +2203,34 @@ export function ModesPage() {
         isSaving={isSaving}
         onApply={handleApplyResourcePriorities}
         applyError={priorityApplyError}
+      />
+
+      {/* #328 — mode details. Mounted at page level like the priorities
+          panel, and for the same reasons: a failed save is rendered inside the
+          sheet (the page banner is under the modal overlay), and a cleared
+          selection closes it through `open` via the reset effect rather than
+          by unmounting it. Reads server truth for both fields, so a failed
+          save elsewhere can't show a value that never landed. */}
+      <ModeDetailsPanel
+        open={detailsOpen}
+        onOpenChange={(open) => {
+          // Same promise as the priorities panel: no dismissal mid-PUT.
+          if (!open && isSaving) return;
+          // Unlike the priorities panel, the failure DOES die with the sheet
+          // here: Radix unmounts the body on close, so reopening rebuilds the
+          // form from `stored` and the edits the banner promises are "still
+          // here" are gone. Keeping it would also leave Save enabled on an
+          // unchanged form, sending a no-op PUT.
+          if (!open) setDetailsSaveError(null);
+          setDetailsOpen(open);
+        }}
+        returnFocusTo={detailsButtonRef}
+        modeLabel={serverLabel}
+        stored={storedDetails}
+        canEdit={canEditSelected}
+        isSaving={isSaving}
+        onSave={handleSaveModeDetails}
+        saveError={detailsSaveError}
       />
 
       {/* #311 — WhatsApp QR + share link. Mounted at page level like the
