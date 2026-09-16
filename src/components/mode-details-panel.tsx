@@ -1,16 +1,16 @@
 import { type RefObject, useCallback, useId, useState } from "react";
 
+import { NO_EDIT_RIGHTS_REASON } from "@/lib/mode-copy";
 import {
   MODE_DETAILS_LIMITS,
   type ModeDetails,
   type StoredModeDetails,
+  describeModeDetailsSaveBlock,
   modeDetailsChanged,
   modeDetailsFromStored,
   modeDetailsOverLimit,
 } from "@/lib/mode-details";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import {
   Sheet,
   SheetContent,
@@ -19,11 +19,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Textarea } from "@/components/ui/textarea";
-
-// Same sentence the Modes header uses for the same denial (see
-// NO_EDIT_RIGHTS_REASON in app/pages/modes.tsx). One denial, one wording.
-const NO_EDIT_RIGHTS_REASON = "You don't have edit rights on this mode.";
+import { TextareaField } from "@/components/textarea-field";
 
 /** Content id, so the page's opener can point `aria-controls` at it. */
 export const MODE_DETAILS_SHEET_ID = "mode-details-sheet";
@@ -120,20 +116,13 @@ function PanelBody({
   const overLimit = modeDetailsOverLimit(form);
   const busy = isSaving || saving;
 
-  // `changed` stops blocking once a save has failed: the form still holds
-  // the edit the user wants, so "nothing has changed" would be precisely
-  // backwards on the retry path.
-  const saveBlockedReason = !canEdit
-    ? NO_EDIT_RIGHTS_REASON
-    : busy
-      ? "Another save is in flight. Try again in a moment."
-      : overLimit === "description"
-        ? `The description is over ${String(MODE_DETAILS_LIMITS.description)} characters.`
-        : overLimit === "welcomeMessage"
-          ? `The welcome message is over ${String(MODE_DETAILS_LIMITS.welcomeMessage)} characters.`
-          : !changed && saveError === null
-            ? "Nothing has changed."
-            : null;
+  const saveBlockedReason = describeModeDetailsSaveBlock({
+    canEdit,
+    busy,
+    changed,
+    overLimit,
+    hasSaveError: saveError !== null,
+  });
 
   // Saving — and recording a failed save — is the page's job (`saveError`
   // comes back down as a prop). The await only scopes the local busy state;
@@ -188,7 +177,7 @@ function PanelBody({
           </p>
         )}
 
-        <Field
+        <TextareaField
           id={descriptionId}
           label="Description"
           value={form.description}
@@ -202,9 +191,9 @@ function PanelBody({
           disabled={busy}
         />
 
-        {/* #311 (part 2) — the same field, helper copy and cap as the create
-            card, so authoring reads the same on both surfaces. */}
-        <Field
+        {/* #311 (part 2) — literally the same control the create card uses
+            for this field, so authoring and editing cannot drift apart. */}
+        <TextareaField
           id={welcomeId}
           label="First-contact welcome message"
           value={form.welcomeMessage}
@@ -294,72 +283,5 @@ function PanelBody({
         </div>
       </SheetFooter>
     </>
-  );
-}
-
-interface FieldProps {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  max: number;
-  rows: number;
-  placeholder: string;
-  help: string;
-  readOnly: boolean;
-  disabled: boolean;
-  describedBy?: string;
-}
-
-/** One labelled textarea with helper copy and a visible character budget. */
-function Field({
-  id,
-  label,
-  value,
-  onChange,
-  max,
-  rows,
-  placeholder,
-  help,
-  readOnly,
-  disabled,
-  describedBy,
-}: FieldProps) {
-  const helpId = `${id}-help`;
-  const nearCap = value.length >= max * 0.9;
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id} className="text-xs">
-        {label}
-      </Label>
-      <Textarea
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        rows={rows}
-        maxLength={max}
-        readOnly={readOnly}
-        disabled={disabled}
-        className="text-sm"
-        aria-describedby={[helpId, describedBy].filter(Boolean).join(" ")}
-      />
-      <div className="flex items-start justify-between gap-2">
-        <p id={helpId} className="text-muted-foreground text-xs">
-          {help}
-        </p>
-        {/* Visible awareness of the cap `maxLength` enforces, so hitting it
-            reads as a limit rather than a silent truncation. */}
-        <span
-          className={cn(
-            "text-muted-foreground shrink-0 text-xs tabular-nums",
-            nearCap && "text-foreground"
-          )}
-          aria-hidden="true"
-        >
-          {value.length}/{max}
-        </span>
-      </div>
-    </div>
   );
 }

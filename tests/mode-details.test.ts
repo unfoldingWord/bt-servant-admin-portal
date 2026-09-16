@@ -1,13 +1,23 @@
 import { describe, expect, it } from "vitest";
 
+import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
 import {
   MODE_DETAILS_LIMITS,
+  describeModeDetailsSaveBlock,
   modeDetailsChanged,
   modeDetailsFromStored,
   modeDetailsOverLimit,
   normalizeModeDetails,
   toModeDetailsBody,
 } from "@/lib/mode-details";
+
+const OPEN_GATE = {
+  canEdit: true,
+  busy: false,
+  changed: true,
+  overLimit: null,
+  hasSaveError: false,
+};
 
 describe("mode-details — stored ↔ form (#328)", () => {
   it("reads unset fields as empty strings", () => {
@@ -128,5 +138,64 @@ describe("mode-details — PUT body fragment", () => {
         { description: "d", welcomeMessage: "" }
       )
     ).toEqual({ description: "d" });
+  });
+});
+
+describe("mode-details — what blocks Save (#328)", () => {
+  it("allows the save when something changed and nothing is wrong", () => {
+    expect(describeModeDetailsSaveBlock(OPEN_GATE)).toBeNull();
+  });
+
+  it("reports missing edit rights ahead of everything else", () => {
+    expect(
+      describeModeDetailsSaveBlock({
+        ...OPEN_GATE,
+        canEdit: false,
+        busy: true,
+        changed: false,
+        overLimit: "description",
+      })
+    ).toBe(NO_EDIT_RIGHTS_REASON);
+  });
+
+  it("reports an in-flight save ahead of a length or no-op complaint", () => {
+    expect(
+      describeModeDetailsSaveBlock({
+        ...OPEN_GATE,
+        busy: true,
+        changed: false,
+        overLimit: "welcomeMessage",
+      })
+    ).toBe(SAVE_IN_FLIGHT_REASON);
+  });
+
+  it("names the field and its cap when one is over", () => {
+    expect(
+      describeModeDetailsSaveBlock({ ...OPEN_GATE, overLimit: "description" })
+    ).toBe("The description is over 500 characters.");
+    expect(
+      describeModeDetailsSaveBlock({
+        ...OPEN_GATE,
+        overLimit: "welcomeMessage",
+      })
+    ).toBe("The welcome message is over 1000 characters.");
+  });
+
+  it("blocks an unchanged form", () => {
+    expect(describeModeDetailsSaveBlock({ ...OPEN_GATE, changed: false })).toBe(
+      "Nothing has changed."
+    );
+  });
+
+  it("allows an unchanged form to be retried after a failed save", () => {
+    // The form still holds the edit the user wants; "nothing has changed"
+    // would be backwards on the retry path.
+    expect(
+      describeModeDetailsSaveBlock({
+        ...OPEN_GATE,
+        changed: false,
+        hasSaveError: true,
+      })
+    ).toBeNull();
   });
 });

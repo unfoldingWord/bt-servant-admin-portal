@@ -2,6 +2,7 @@ import {
   MAX_MODE_DESCRIPTION_LENGTH,
   MAX_MODE_WELCOME_MESSAGE_LENGTH,
 } from "@/types/prompt-override";
+import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
 
 // #328 — editing an existing mode's description and first-contact welcome.
 //
@@ -23,11 +24,12 @@ export interface StoredModeDetails {
   welcome_message?: string;
 }
 
-/** The PUT body fragment the page sends — undefined means "leave as is". */
-export interface ModeDetailsBody {
-  description?: string;
-  welcome_message?: string;
-}
+/**
+ * The PUT body fragment the page sends — an absent key means "leave as is".
+ * Same shape as what is stored, deliberately aliased rather than re-declared
+ * so the two cannot drift into silently-assignable-one-way twins.
+ */
+export type ModeDetailsBody = StoredModeDetails;
 
 export type ModeDetailsField = keyof ModeDetails;
 
@@ -35,6 +37,43 @@ export const MODE_DETAILS_LIMITS: Record<ModeDetailsField, number> = {
   description: MAX_MODE_DESCRIPTION_LENGTH,
   welcomeMessage: MAX_MODE_WELCOME_MESSAGE_LENGTH,
 };
+
+/** How each field is named to the user, for messages that mention one. */
+const FIELD_NOUN: Record<ModeDetailsField, string> = {
+  description: "description",
+  welcomeMessage: "welcome message",
+};
+
+/** Everything that can stop a details save, as the panel knows it. */
+export interface ModeDetailsSaveGate {
+  canEdit: boolean;
+  /** A save is in flight, here or elsewhere on the page. */
+  busy: boolean;
+  changed: boolean;
+  overLimit: ModeDetailsField | null;
+  /** A previous save failed and has not been resolved. */
+  hasSaveError: boolean;
+}
+
+/**
+ * Why Save is unavailable, or null when it is available.
+ *
+ * Ordered most-fundamental first, so a user without edit rights is told THAT
+ * rather than "nothing has changed". `changed` stops blocking once a save has
+ * failed: the form still holds the edit the user wants, so "nothing has
+ * changed" would be precisely backwards on the retry path.
+ */
+export function describeModeDetailsSaveBlock(
+  gate: ModeDetailsSaveGate
+): string | null {
+  if (!gate.canEdit) return NO_EDIT_RIGHTS_REASON;
+  if (gate.busy) return SAVE_IN_FLIGHT_REASON;
+  if (gate.overLimit) {
+    return `The ${FIELD_NOUN[gate.overLimit]} is over ${MODE_DETAILS_LIMITS[gate.overLimit]} characters.`;
+  }
+  if (!gate.changed && !gate.hasSaveError) return "Nothing has changed.";
+  return null;
+}
 
 /** Stored → form. An unset field reads as empty. */
 export function modeDetailsFromStored(
@@ -73,9 +112,10 @@ export function modeDetailsChanged(
 }
 
 /**
- * The first field over its worker cap, or null. `maxLength` on the textareas
- * already prevents typing past the cap; this is the backstop for pasted or
- * programmatic values, and mirrors the hard 400 the worker would return.
+ * The first field over its worker cap, or null. Browsers enforce `maxLength`
+ * on typing AND on paste, so the reachable case is a STORED value already
+ * over the cap — one written before the cap existed, or by import. Without
+ * this the panel would offer Save on a value the worker answers with a 400.
  */
 export function modeDetailsOverLimit(
   input: ModeDetails

@@ -37,6 +37,7 @@ import { type ParsedModeImport, parseModeImport } from "@/lib/mode-import";
 import { classifyModeImport } from "@/lib/mode-import-gate";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { downloadBlob } from "@/lib/download-blob";
+import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
 import {
   type ModeDetails,
   type StoredModeDetails,
@@ -106,7 +107,6 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 // One sentence, one meaning: the Save button and the group-chat switch
 // explain a denied edit with the SAME words, so a shepherd who can't act
 // on a mode reads the same reason wherever they look.
-const NO_EDIT_RIGHTS_REASON = "You don't have edit rights on this mode.";
 const REQUIRES_GROUP_HELP =
   "When on, this mode is only offered in group chats (Telegram groups) — hidden from WhatsApp, web, and DMs.";
 const RESOURCE_PRIORITIES_HELP =
@@ -301,6 +301,11 @@ export function ModesPage() {
   // null/'' deletes it — so passing the server value through preserves it
   // across document autosaves and flag toggles that don't touch the field.
   const serverWelcomeMessage = modeQuery.data?.welcome_message;
+  // #328 - the same server truth the two lines above read, handed to the
+  // details panel whole. `PromptMode` already satisfies `StoredModeDetails`,
+  // so rebuilding a literal from its own fields would only be a second copy
+  // to keep in sync.
+  const storedDetails: StoredModeDetails | undefined = modeQuery.data;
 
   const syncedNameRef = useRef<string | null>(null);
   useEffect(() => {
@@ -1063,7 +1068,7 @@ export function ModesPage() {
       // throw is the backstop for any caller that misses that gate, and it
       // surfaces inline in the unpublish dialog via `runConfirmedAction`.
       if (inFlightSavesRef.current > 0 || saveMode.isPending) {
-        throw new Error("Another save is in flight. Try again in a moment.");
+        throw new Error(SAVE_IN_FLIGHT_REASON);
       }
       const sent: ModeFlags = { ...lastSyncedFlagsRef.current, published };
       inFlightSavesRef.current += 1;
@@ -1112,7 +1117,7 @@ export function ModesPage() {
     async (requiresGroup: boolean) => {
       if (!selectedMode) return;
       if (inFlightSavesRef.current > 0 || saveMode.isPending) {
-        throw new Error("Another save is in flight. Try again in a moment.");
+        throw new Error(SAVE_IN_FLIGHT_REASON);
       }
       const target = selectedMode;
       const sent: ModeFlags = {
@@ -1176,18 +1181,12 @@ export function ModesPage() {
       // priorities Apply, the user has typed something here and needs to know
       // why the click did nothing.
       if (inFlightSavesRef.current > 0 || saveMode.isPending) {
-        setDetailsSaveError(
-          "Another save is in flight. Try again in a moment."
-        );
+        setDetailsSaveError(SAVE_IN_FLIGHT_REASON);
         return;
       }
       const target = selectedMode;
       const sent = lastSyncedFlagsRef.current;
       const document = draftRef.current;
-      const stored: StoredModeDetails = {
-        description: serverDescription,
-        welcome_message: serverWelcomeMessage,
-      };
       setDetailsSaveError(null);
       inFlightSavesRef.current += 1;
       try {
@@ -1197,7 +1196,7 @@ export function ModesPage() {
           seed: true,
           body: {
             label: serverLabel,
-            ...toModeDetailsBody(stored, next),
+            ...toModeDetailsBody(storedDetails, next),
             document,
             ...sent,
           },
@@ -1208,6 +1207,11 @@ export function ModesPage() {
         if (trackersOwn(target)) {
           setLastSyncedDoc(document);
           setLastFailedDoc(null);
+          // Same clear every other success path on this page performs: a
+          // priorities failure is a claim about a document this PUT has just
+          // replaced, so leaving the banner up would describe a state that no
+          // longer exists.
+          setPriorityApplyError(null);
           applyLastSyncedFlags(reconcileModeFlags(sent, saved));
           resetDetailsPanel();
         }
@@ -1234,9 +1238,8 @@ export function ModesPage() {
       resetDetailsPanel,
       saveMode,
       selectedMode,
-      serverDescription,
       serverLabel,
-      serverWelcomeMessage,
+      storedDetails,
       trackersOwn,
     ]
   );
@@ -1516,7 +1519,7 @@ export function ModesPage() {
         // the same slug would revert that write. Surfaces inline in the
         // dialog via runConfirmedAction.
         if (inFlightSavesRef.current > 0) {
-          throw new Error("Another save is in flight. Try again in a moment.");
+          throw new Error(SAVE_IN_FLIGHT_REASON);
         }
         const live = trackersOwn(target.name);
         const sent: ModeFlags = live
@@ -1606,12 +1609,6 @@ export function ModesPage() {
   const shareHelp = effectiveOrg
     ? "QR code and link that open this mode on WhatsApp."
     : "Choose an organization before generating a WhatsApp QR code.";
-
-  // #328 — opens for anyone who can see the mode (the panel is read-only
-  // without edit rights and says so), so the reason only changes wording.
-  const modeDetailsHelp = canEditSelected
-    ? MODE_DETAILS_HELP
-    : `${MODE_DETAILS_HELP} ${NO_EDIT_RIGHTS_REASON}`;
 
   const saveStatus = useMemo(() => {
     if (isSaving) return "Saving…";
@@ -1762,7 +1759,7 @@ export function ModesPage() {
                 variant="outline"
                 onClick={() => setDetailsOpen(true)}
                 disabled={isSaving}
-                title={modeDetailsHelp}
+                title={MODE_DETAILS_HELP}
                 aria-describedby="mode-details-help"
                 aria-haspopup="dialog"
                 aria-expanded={detailsOpen}
@@ -1772,7 +1769,7 @@ export function ModesPage() {
                 Details
               </Button>
               <span id="mode-details-help" className="sr-only">
-                {modeDetailsHelp}
+                {MODE_DETAILS_HELP}
               </span>
               {/* #277 — opens the ranking panel. Gated by the same right
                   the Save button and the group-chat switch are gated by; the
@@ -2223,10 +2220,7 @@ export function ModesPage() {
         }}
         returnFocusTo={detailsButtonRef}
         modeLabel={serverLabel}
-        stored={{
-          description: serverDescription,
-          welcome_message: serverWelcomeMessage,
-        }}
+        stored={storedDetails}
         canEdit={canEditSelected}
         isSaving={isSaving}
         onSave={handleSaveModeDetails}
