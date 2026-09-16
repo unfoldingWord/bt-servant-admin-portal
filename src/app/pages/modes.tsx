@@ -38,6 +38,7 @@ import { classifyModeImport } from "@/lib/mode-import-gate";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { downloadBlob } from "@/lib/download-blob";
 import {
+  DOCUMENT_UNSAVED_REASON,
   NO_EDIT_RIGHTS_REASON,
   SAVE_IN_FLIGHT_REASON,
   gatedHelp,
@@ -1206,12 +1207,20 @@ export function ModesPage() {
       // The button and the panel are already rights-gated; local mirror of
       // the worker's gate, same as flushSave.
       if (!canEditSelected) return;
-      // Backstop only: the sheet opens on a clean draft and is modal, so no
-      // autosave can start under it. Reported inside the sheet rather than
-      // silently dropped, in case that ever changes — the user has typed
-      // something here and needs to know why the click did nothing.
+      // Backstops, reported inside the sheet rather than silently dropped —
+      // the user has typed something here and needs to know why the click
+      // did nothing. In flight: the ref-vs-isPending macrotask gap the lock
+      // exists for. Dirty: the sheet opened on a clean draft, but focus can
+      // leak from a Radix modal (see the clone/rename dialogs' notes) and a
+      // keystroke reach the editor; a dirty draft must never ride this PUT
+      // (#337), since a rejected one would fail here with the document's
+      // error and the sheet would invite a retry.
       if (inFlightSavesRef.current > 0 || saveMode.isPending) {
         setDetailsSaveError(SAVE_IN_FLIGHT_REASON);
+        return;
+      }
+      if (isDirtyRef.current) {
+        setDetailsSaveError(DOCUMENT_UNSAVED_REASON);
         return;
       }
       const target = selectedMode;
@@ -1622,10 +1631,10 @@ export function ModesPage() {
     RESOURCE_PRIORITIES_HELP,
     rightsReason
   );
-  // #337 — Details opens only on a clean draft, like Clone and Import. A
-  // viewer without edit rights never has a dirty draft, so this never locks
-  // one out of the read-only sheet.
-  const detailsOpenBlock = describeModeDetailsOpenBlock({ isDirty });
+  // #337 — Details opens only on a clean draft with nothing in flight, like
+  // Clone and Import. A viewer without edit rights never has a dirty draft,
+  // so this never locks one out of the read-only sheet.
+  const detailsOpenBlock = describeModeDetailsOpenBlock({ isSaving, isDirty });
   const detailsHelp = gatedHelp(MODE_DETAILS_HELP, detailsOpenBlock);
 
   const shareHelp = effectiveOrg
@@ -1782,7 +1791,7 @@ export function ModesPage() {
                 size="sm"
                 variant="outline"
                 onClick={() => setDetailsOpen(true)}
-                disabled={isSaving || detailsOpenBlock !== null}
+                disabled={detailsOpenBlock !== null}
                 title={detailsHelp}
                 aria-describedby="mode-details-help"
                 aria-haspopup="dialog"

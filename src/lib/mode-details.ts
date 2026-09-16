@@ -2,7 +2,11 @@ import {
   MAX_MODE_DESCRIPTION_LENGTH,
   MAX_MODE_WELCOME_MESSAGE_LENGTH,
 } from "@/types/prompt-override";
-import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
+import {
+  DOCUMENT_UNSAVED_REASON,
+  NO_EDIT_RIGHTS_REASON,
+  SAVE_IN_FLIGHT_REASON,
+} from "@/lib/mode-copy";
 
 // #328 — editing an existing mode's description and first-contact welcome.
 //
@@ -52,16 +56,20 @@ const FIELD_NOUN: Record<ModeDetailsField, string> = {
  * merely untried, the details save would persist it as a side effect. The
  * page's other document-carrying actions (Clone, Import, switching modes)
  * gate on a dirty draft the same way. The sheet is modal, so a draft that is
- * clean when it opens is still clean when it saves — this is the whole fix.
+ * clean when it opens is normally still clean when it saves; the page's save
+ * handler keeps a dirty-draft backstop for the focus-leak case.
+ *
+ * In flight outranks dirty: an autosave that lands makes the draft clean.
  */
-export const DOCUMENT_UNSAVED_REASON =
-  "Save the mode document first — fixing or undoing your edits if the save was rejected — before changing the details.";
-
 export function describeModeDetailsOpenBlock(gate: {
+  /** A save is in flight somewhere on the page. */
+  isSaving: boolean;
   /** The editor's draft differs from what the server holds. */
   isDirty: boolean;
 }): string | null {
-  return gate.isDirty ? DOCUMENT_UNSAVED_REASON : null;
+  if (gate.isSaving) return SAVE_IN_FLIGHT_REASON;
+  if (gate.isDirty) return DOCUMENT_UNSAVED_REASON;
+  return null;
 }
 
 /** Everything that can stop a details save, as the panel knows it. */

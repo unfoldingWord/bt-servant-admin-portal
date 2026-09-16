@@ -21,9 +21,19 @@ export const SAVE_IN_FLIGHT_REASON =
   "Another save is in flight. Try again in a moment.";
 
 /**
+ * #337 — the Details sheet opens only on a saved document: its PUT carries
+ * the whole document, so on a rejected draft it would fail with the
+ * document's error and invite a retry, and on an untried one it would
+ * persist the draft as a side effect. Worded like the other dirty-gated
+ * controls; the editor's own "Save failed" banner says what was rejected.
+ */
+export const DOCUMENT_UNSAVED_REASON =
+  "Save your changes before editing the details.";
+
+/**
  * A gated header control's help text: its base description, plus the reason
- * it is gated off when there is one. One separator for every such control,
- * so the title and the sr-only help read alike across the toolbar.
+ * it is gated off when there is one — for the controls that append the
+ * reason to their description rather than replace it.
  */
 export function gatedHelp(help: string, reason: string | null): string {
   return reason ? `${help} ${reason}` : help;

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
 import {
   DOCUMENT_UNSAVED_REASON,
+  NO_EDIT_RIGHTS_REASON,
+  SAVE_IN_FLIGHT_REASON,
+} from "@/lib/mode-copy";
+import {
   MODE_DETAILS_LIMITS,
   describeModeDetailsOpenBlock,
   describeModeDetailsSaveBlock,
@@ -207,12 +210,20 @@ describe("mode-details — what blocks opening the sheet (#337)", () => {
     // A details save carries the whole document. On a rejected draft it
     // would fail with the document's error and invite a retry; on an untried
     // one it would persist the draft as a side effect.
-    expect(describeModeDetailsOpenBlock({ isDirty: true })).toBe(
-      DOCUMENT_UNSAVED_REASON
-    );
+    expect(
+      describeModeDetailsOpenBlock({ isSaving: false, isDirty: true })
+    ).toBe(DOCUMENT_UNSAVED_REASON);
   });
 
-  it("allows a clean draft", () => {
-    expect(describeModeDetailsOpenBlock({ isDirty: false })).toBeNull();
+  it("reports an in-flight save ahead of a dirty draft — it may land clean", () => {
+    expect(
+      describeModeDetailsOpenBlock({ isSaving: true, isDirty: true })
+    ).toBe(SAVE_IN_FLIGHT_REASON);
+  });
+
+  it("allows a clean draft with nothing in flight", () => {
+    expect(
+      describeModeDetailsOpenBlock({ isSaving: false, isDirty: false })
+    ).toBeNull();
   });
 });
