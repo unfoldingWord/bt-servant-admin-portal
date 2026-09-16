@@ -343,6 +343,10 @@ export function ModesPage() {
   );
 
   const isDirty = draft !== lastSyncedDoc;
+  // #337 — the draft the last save rejected, still unedited. Autosave already
+  // refuses to retry it (`shouldAutoSaveDraft`); the details panel must refuse
+  // too, since its PUT would carry this exact document.
+  const documentUnsaved = lastFailedDoc !== null && draft === lastFailedDoc;
   const isSaving = saveMode.isPending;
   const hasSelection = selectedMode !== null && modeQuery.data;
 
@@ -1187,6 +1191,10 @@ export function ModesPage() {
       const target = selectedMode;
       const sent = lastSyncedFlagsRef.current;
       const document = draftRef.current;
+      // #337 — never re-send a document the worker has already rejected. The
+      // panel disables Save and shows the reason for this case; this is the
+      // page-side mirror, so a stale render cannot ship the failed draft.
+      if (lastFailedDoc !== null && document === lastFailedDoc) return;
       setDetailsSaveError(null);
       inFlightSavesRef.current += 1;
       try {
@@ -1235,6 +1243,7 @@ export function ModesPage() {
       applyLastSyncedFlags,
       canEditSelected,
       contextOrg,
+      lastFailedDoc,
       resetDetailsPanel,
       saveMode,
       selectedMode,
@@ -2229,6 +2238,7 @@ export function ModesPage() {
         stored={storedDetails}
         canEdit={canEditSelected}
         isSaving={isSaving}
+        documentUnsaved={documentUnsaved}
         onSave={handleSaveModeDetails}
         saveError={detailsSaveError}
       />

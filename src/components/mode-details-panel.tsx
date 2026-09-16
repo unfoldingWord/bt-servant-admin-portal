@@ -5,6 +5,7 @@ import {
   MODE_DETAILS_LIMITS,
   type ModeDetails,
   type StoredModeDetails,
+  DOCUMENT_UNSAVED_REASON,
   describeModeDetailsSaveBlock,
   modeDetailsChanged,
   modeDetailsFromStored,
@@ -43,6 +44,12 @@ interface ModeDetailsPanelProps {
   canEdit: boolean;
   /** A save is in flight somewhere on the page; Save must wait it out. */
   isSaving?: boolean;
+  /**
+   * The editor's draft failed to save and still stands (#337). Save is
+   * refused and the sheet says why, since the details PUT would re-send that
+   * draft and the editor that could fix it is under this sheet's overlay.
+   */
+  documentUnsaved: boolean;
   /**
    * Saves the next details. The panel never saves; the page does, through
    * the same mode-save path as everything else, and NEVER rejects this
@@ -102,6 +109,7 @@ function PanelBody({
   stored,
   canEdit,
   isSaving = false,
+  documentUnsaved,
   onSave,
   onOpenChange,
   saveError,
@@ -119,6 +127,7 @@ function PanelBody({
   const saveBlockedReason = describeModeDetailsSaveBlock({
     canEdit,
     busy,
+    documentUnsaved,
     changed,
     overLimit,
     hasSaveError: saveError !== null,
@@ -237,14 +246,27 @@ function PanelBody({
       </div>
 
       <SheetFooter className="gap-3 border-t p-4 sm:px-5">
+        {/* #337 — shown in full, not only as the disabled button's title: a
+            disabled control gets no hover on touch, and this is the one block
+            the user cannot clear from inside the sheet. */}
+        {canEdit && documentUnsaved && (
+          <p
+            className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs leading-relaxed"
+            role="status"
+          >
+            {DOCUMENT_UNSAVED_REASON}
+          </p>
+        )}
         {saveError && (
           <p
             className="bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2 text-xs"
             role="alert"
           >
             <span className="font-medium">Save failed.</span> {saveError}{" "}
-            Nothing was saved — your changes are still here, so you can try
-            again.
+            Nothing was saved — your changes are still here
+            {/* No "try again" while the document block stands: a retry
+                cannot succeed until the editor's draft is fixed (#337). */}
+            {documentUnsaved ? "." : ", so you can try again."}
           </p>
         )}
 

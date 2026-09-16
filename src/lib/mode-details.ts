@@ -33,6 +33,15 @@ export type ModeDetailsBody = StoredModeDetails;
 
 export type ModeDetailsField = keyof ModeDetails;
 
+/**
+ * #337 — the editor's draft failed to save and still stands. Every mode PUT
+ * carries the whole document, so a details save would re-send that same
+ * rejected draft and fail the same way; the sheet cannot fix it, because the
+ * editor sits under its overlay.
+ */
+export const DOCUMENT_UNSAVED_REASON =
+  "The mode document didn't save. Close this panel and fix it, or undo your edits, before changing the details.";
+
 export const MODE_DETAILS_LIMITS: Record<ModeDetailsField, number> = {
   description: MAX_MODE_DESCRIPTION_LENGTH,
   welcomeMessage: MAX_MODE_WELCOME_MESSAGE_LENGTH,
@@ -49,6 +58,12 @@ export interface ModeDetailsSaveGate {
   canEdit: boolean;
   /** A save is in flight, here or elsewhere on the page. */
   busy: boolean;
+  /**
+   * The editor's draft failed to save and has not changed since (#337). A
+   * details save would carry that draft verbatim, so it is refused up front
+   * rather than failing with the document's error and inviting a retry.
+   */
+  documentUnsaved: boolean;
   changed: boolean;
   overLimit: ModeDetailsField | null;
   /** A previous save failed and has not been resolved. */
@@ -59,15 +74,18 @@ export interface ModeDetailsSaveGate {
  * Why Save is unavailable, or null when it is available.
  *
  * Ordered most-fundamental first, so a user without edit rights is told THAT
- * rather than "nothing has changed". `changed` stops blocking once a save has
- * failed: the form still holds the edit the user wants, so "nothing has
- * changed" would be precisely backwards on the retry path.
+ * rather than "nothing has changed". A rejected document outranks a field
+ * cap, because no edit inside the sheet can clear it. `changed` stops
+ * blocking once a save has failed: the form still holds the edit the user
+ * wants, so "nothing has changed" would be precisely backwards on the retry
+ * path.
  */
 export function describeModeDetailsSaveBlock(
   gate: ModeDetailsSaveGate
 ): string | null {
   if (!gate.canEdit) return NO_EDIT_RIGHTS_REASON;
   if (gate.busy) return SAVE_IN_FLIGHT_REASON;
+  if (gate.documentUnsaved) return DOCUMENT_UNSAVED_REASON;
   if (gate.overLimit) {
     return `The ${FIELD_NOUN[gate.overLimit]} is over ${MODE_DETAILS_LIMITS[gate.overLimit]} characters.`;
   }
