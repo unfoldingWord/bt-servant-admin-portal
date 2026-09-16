@@ -158,7 +158,7 @@ describe("mode-details — what blocks Save (#328)", () => {
         changed: false,
         overLimit: "description",
       })
-    ).toBe(NO_EDIT_RIGHTS_REASON);
+    ).toEqual({ kind: "rights", message: NO_EDIT_RIGHTS_REASON });
   });
 
   it("reports an in-flight save ahead of a length or no-op complaint", () => {
@@ -170,7 +170,7 @@ describe("mode-details — what blocks Save (#328)", () => {
         changed: false,
         overLimit: "welcomeMessage",
       })
-    ).toBe(SAVE_IN_FLIGHT_REASON);
+    ).toEqual({ kind: "busy", message: SAVE_IN_FLIGHT_REASON });
   });
 
   it("refuses to re-send a rejected document ahead of a cap or no-op (#337)", () => {
@@ -185,25 +185,31 @@ describe("mode-details — what blocks Save (#328)", () => {
         overLimit: "description",
         hasSaveError: true,
       })
-    ).toBe(DOCUMENT_UNSAVED_REASON);
+    ).toEqual({ kind: "document", message: DOCUMENT_UNSAVED_REASON });
   });
 
   it("names the field and its cap when one is over", () => {
     expect(
       describeModeDetailsSaveBlock({ ...OPEN_GATE, overLimit: "description" })
-    ).toBe("The description is over 500 characters.");
+    ).toEqual({
+      kind: "limit",
+      message: "The description is over 500 characters.",
+    });
     expect(
       describeModeDetailsSaveBlock({
         ...OPEN_GATE,
         overLimit: "welcomeMessage",
       })
-    ).toBe("The welcome message is over 1000 characters.");
+    ).toEqual({
+      kind: "limit",
+      message: "The welcome message is over 1000 characters.",
+    });
   });
 
   it("blocks an unchanged form", () => {
-    expect(describeModeDetailsSaveBlock({ ...OPEN_GATE, changed: false })).toBe(
-      "Nothing has changed."
-    );
+    expect(
+      describeModeDetailsSaveBlock({ ...OPEN_GATE, changed: false })
+    ).toEqual({ kind: "unchanged", message: "Nothing has changed." });
   });
 
   it("allows an unchanged form to be retried after a failed save", () => {

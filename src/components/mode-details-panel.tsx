@@ -5,7 +5,6 @@ import {
   MODE_DETAILS_LIMITS,
   type ModeDetails,
   type StoredModeDetails,
-  DOCUMENT_UNSAVED_REASON,
   describeModeDetailsSaveBlock,
   modeDetailsChanged,
   modeDetailsFromStored,
@@ -21,6 +20,10 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { TextareaField } from "@/components/textarea-field";
+
+/** The muted footer/body callout every notice in this sheet uses. */
+const CALLOUT_CLASS =
+  "bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs leading-relaxed";
 
 /** Content id, so the page's opener can point `aria-controls` at it. */
 export const MODE_DETAILS_SHEET_ID = "mode-details-sheet";
@@ -124,7 +127,7 @@ function PanelBody({
   const overLimit = modeDetailsOverLimit(form);
   const busy = isSaving || saving;
 
-  const saveBlockedReason = describeModeDetailsSaveBlock({
+  const saveBlock = describeModeDetailsSaveBlock({
     canEdit,
     busy,
     documentUnsaved,
@@ -132,11 +135,14 @@ function PanelBody({
     overLimit,
     hasSaveError: saveError !== null,
   });
-  // #337 — the one block the user cannot clear from inside the sheet, so it
-  // is written out in the footer rather than left to the disabled button's
-  // title (no hover on touch). Read off the gate, not re-derived, so the
-  // ranking lives in `describeModeDetailsSaveBlock` alone.
-  const blockIsDocument = saveBlockedReason === DOCUMENT_UNSAVED_REASON;
+  // #337 — the one block the user cannot clear from inside the sheet: it is
+  // written out in the footer rather than left to the disabled button's
+  // title (no hover on touch), and the fields are held while it stands, so
+  // nobody types details into a form that cannot save them. Read off the
+  // gate, so the ranking lives in `describeModeDetailsSaveBlock` alone.
+  const blockIsDocument = saveBlock?.kind === "document";
+  const fieldsHeld = busy || blockIsDocument;
+  const failureTail = blockIsDocument ? "." : ", so you can try again.";
 
   // Saving — and recording a failed save — is the page's job (`saveError`
   // comes back down as a prop). The await only scopes the local busy state;
@@ -182,11 +188,7 @@ function PanelBody({
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:px-5">
         {!canEdit && (
-          <p
-            id={readOnlyHelpId}
-            className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs leading-relaxed"
-            role="status"
-          >
+          <p id={readOnlyHelpId} className={CALLOUT_CLASS} role="status">
             Read-only. {NO_EDIT_RIGHTS_REASON}
           </p>
         )}
@@ -202,7 +204,7 @@ function PanelBody({
           help="Optional. A short note on what this mode is for."
           readOnly={!canEdit}
           describedBy={canEdit ? undefined : readOnlyHelpId}
-          disabled={busy}
+          disabled={fieldsHeld}
         />
 
         {/* #311 (part 2) — literally the same control the create card uses
@@ -218,7 +220,7 @@ function PanelBody({
           help="Optional. Your welcome copy only — the WhatsApp share link is added automatically, so leave it out."
           readOnly={!canEdit}
           describedBy={canEdit ? undefined : readOnlyHelpId}
-          disabled={busy}
+          disabled={fieldsHeld}
         />
 
         {/* How it lands: the welcome is a WhatsApp message, so show it as one.
@@ -251,24 +253,33 @@ function PanelBody({
       </div>
 
       <SheetFooter className="gap-3 border-t p-4 sm:px-5">
-        {blockIsDocument && (
-          <p
-            id={saveHelpId}
-            className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs leading-relaxed"
-          >
-            {saveBlockedReason}
-          </p>
-        )}
         {saveError && (
           <p
             className="bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2 text-xs"
             role="alert"
           >
             <span className="font-medium">Save failed.</span> {saveError}{" "}
-            Nothing was saved — your changes are still here
-            {/* No "try again" while the document block stands: a retry
-                cannot succeed until the editor's draft is fixed (#337). */}
-            {documentUnsaved ? "." : ", so you can try again."}
+            Nothing was saved — your changes are still here{failureTail}
+          </p>
+        )}
+        {/* One element carries the reason Save is unavailable, under the id
+            the button's aria-describedby names — a disabled button is out of
+            the tab order and gets no hover on touch, so the title alone can't
+            carry it (same idiom the Modes header uses for its gated controls).
+            Visible only for the document block, after the alert so the
+            diagnosis precedes the prescription; the rest stay for assistive
+            tech alone. `canEdit` gates it so a read-only viewer isn't read an
+            orphaned rights notice twice. */}
+        {canEdit && saveBlock && (
+          <p
+            id={saveHelpId}
+            role={blockIsDocument ? "status" : undefined}
+            className={blockIsDocument ? CALLOUT_CLASS : "sr-only"}
+          >
+            {saveBlock.message}
+            {blockIsDocument &&
+              changed &&
+              " Anything typed here won't be kept."}
           </p>
         )}
 
@@ -288,21 +299,12 @@ function PanelBody({
                 onClick={() => {
                   void submit();
                 }}
-                disabled={saveBlockedReason !== null}
-                title={saveBlockedReason ?? undefined}
-                aria-describedby={saveBlockedReason ? saveHelpId : undefined}
+                disabled={saveBlock !== null}
+                title={saveBlock?.message}
+                aria-describedby={saveBlock ? saveHelpId : undefined}
               >
                 {busy ? "Saving…" : "Save changes"}
               </Button>
-              {/* A disabled button is out of the tab order and gets no hover
-                  on touch, so the title alone can't carry the reason. Same
-                  idiom the Modes header uses for its gated controls. The
-                  document block is already visible above under this id. */}
-              {saveBlockedReason && !blockIsDocument && (
-                <span id={saveHelpId} className="sr-only">
-                  {saveBlockedReason}
-                </span>
-              )}
             </>
           )}
         </div>

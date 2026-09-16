@@ -245,14 +245,17 @@ export function ModesPage() {
   // the shared flag pair refuse to start while the count is non-zero,
   // which is the truth the `disabled` props merely reflect.
   const inFlightSavesRef = useRef(0);
-  // The document the last PUT that carried it was rejected with — for ANY
-  // reason, a validation error or a network blip alike. Pauses autosave on
-  // that draft, so a failed save doesn't loop on every isPending → false
-  // transition (Frank P2 on PR #122), and (#337) stops the Details sheet
-  // from re-sending it under a message that blames the details. Those two
-  // are the only refusals: the editor's manual Save (`flushSave`), the flag
-  // toggles and label sync all send it again on purpose — that IS the
-  // recovery, alongside editing further. Every successful PUT clears it.
+  // A dirty document whose own save was rejected — for ANY reason, a
+  // validation error or a network blip alike. Recorded by exactly two paths,
+  // the ones that change the draft or exist to persist it: `performSave`
+  // (autosave and the editor's Save) and the priorities Apply. The flag
+  // toggles, label sync and the Details save carry the draft but do not
+  // record a rejection; the autosave re-fire on isPending → false does, and
+  // once it has, autosave stops retrying (Frank P2 on PR #122) and the
+  // Details sheet refuses to carry it (#337). Those two are the only
+  // refusals — the editor's Save, the toggles and label sync send it again
+  // on purpose; that is the recovery, alongside editing further. Every
+  // success path clears it through `markModeSynced`.
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
@@ -346,11 +349,36 @@ export function ModesPage() {
     []
   );
 
+  // The one success path for every PUT that carries the document. Advances
+  // the trackers only if they still describe `target` (a switch can outlive
+  // the PUT) and says whether they did, so a caller finishes its own success
+  // work under the same ownership answer. One place on purpose: PR #339
+  // round 1 found two hand-copied versions of this cluster each missing the
+  // `lastFailedDoc` clear, which locked the Details sheet on a document that
+  // had in fact been saved.
+  const markModeSynced = useCallback(
+    (
+      target: string,
+      doc: string,
+      sent: ModeFlags,
+      saved: Parameters<typeof reconcileModeFlags>[1]
+    ): boolean => {
+      if (!trackersOwn(target)) return false;
+      setLastSyncedDoc(doc);
+      setLastFailedDoc(null);
+      // A priorities failure is a claim about a document this PUT has just
+      // replaced; leaving the banner up would describe a state that no
+      // longer exists.
+      setPriorityApplyError(null);
+      applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+      return true;
+    },
+    [applyLastSyncedFlags, trackersOwn]
+  );
+
   const isDirty = draft !== lastSyncedDoc;
-  // #337 — see `lastFailedDoc`. Gated on `isDirty` because a flag toggle can
-  // save the very draft that failed earlier, and a saved document is not one
-  // the Details sheet should refuse to carry.
-  const documentUnsaved = isDirty && draft === lastFailedDoc;
+  // #337 — see `lastFailedDoc`; the same predicate `shouldAutoSaveDraft` uses.
+  const documentUnsaved = draft === lastFailedDoc;
   const isSaving = saveMode.isPending;
   const hasSelection = selectedMode !== null && modeQuery.data;
 
@@ -407,14 +435,7 @@ export function ModesPage() {
         },
         {
           onSuccess: (saved) => {
-            if (!trackersOwn(target)) return;
-            setLastSyncedDoc(doc);
-            setLastFailedDoc(null);
-            // Any successful document sync retires a stale priority-apply
-            // failure — the draft it complained about is now persisted, and a
-            // reopened panel must not claim otherwise.
-            setPriorityApplyError(null);
-            applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+            markModeSynced(target, doc, sent, saved);
           },
           onError: () => {
             if (!trackersOwn(target)) return;
@@ -427,8 +448,8 @@ export function ModesPage() {
       );
     },
     [
-      applyLastSyncedFlags,
       contextOrg,
+      markModeSynced,
       saveMode,
       selectedMode,
       serverDescription,
@@ -1092,17 +1113,13 @@ export function ModesPage() {
             ...sent,
           },
         });
-        if (!trackersOwn(name)) return;
-        setLastSyncedDoc(draft);
-        setLastFailedDoc(null);
-        setPriorityApplyError(null);
-        applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+        markModeSynced(name, draft, sent, saved);
       } finally {
         inFlightSavesRef.current -= 1;
       }
     },
     [
-      applyLastSyncedFlags,
+      markModeSynced,
       contextOrg,
       draft,
       saveMode,
@@ -1110,7 +1127,6 @@ export function ModesPage() {
       serverDescription,
       serverLabel,
       serverWelcomeMessage,
-      trackersOwn,
     ]
   );
 
@@ -1146,17 +1162,13 @@ export function ModesPage() {
             ...sent,
           },
         });
-        if (!trackersOwn(target)) return;
-        setLastSyncedDoc(draft);
-        setLastFailedDoc(null);
-        setPriorityApplyError(null);
-        applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+        markModeSynced(target, draft, sent, saved);
       } finally {
         inFlightSavesRef.current -= 1;
       }
     },
     [
-      applyLastSyncedFlags,
+      markModeSynced,
       contextOrg,
       draft,
       saveMode,
@@ -1164,7 +1176,6 @@ export function ModesPage() {
       serverDescription,
       serverLabel,
       serverWelcomeMessage,
-      trackersOwn,
     ]
   );
 
@@ -1211,18 +1222,10 @@ export function ModesPage() {
             ...sent,
           },
         });
-        // Advance the trackers only if they still describe this slug (a
-        // switch can outlive the PUT), then close — on success only. A failed
-        // save keeps the panel open with the user's text intact.
-        if (trackersOwn(target)) {
-          setLastSyncedDoc(document);
-          setLastFailedDoc(null);
-          // Same clear every other success path on this page performs: a
-          // priorities failure is a claim about a document this PUT has just
-          // replaced, so leaving the banner up would describe a state that no
-          // longer exists.
-          setPriorityApplyError(null);
-          applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+        // Close on success only, and only if the trackers still describe
+        // this slug (a switch can outlive the PUT). A failed save keeps the
+        // panel open with the user's text intact.
+        if (markModeSynced(target, document, sent, saved)) {
           resetDetailsPanel();
         }
       } catch (err) {
@@ -1231,10 +1234,6 @@ export function ModesPage() {
         // here — a failure from a save that outlived the selection must not be
         // pinned on whatever mode the panel would now be showing.
         if (trackersOwn(target)) {
-          // #337 — this PUT carried `document` too. If that was a dirty
-          // draft it is now a rejected one: autosave must not retry it
-          // unprompted, and a second Details save must not re-send it.
-          setLastFailedDoc(document);
           setDetailsSaveError(
             err instanceof Error && err.message
               ? err.message
@@ -1246,7 +1245,7 @@ export function ModesPage() {
       }
     },
     [
-      applyLastSyncedFlags,
+      markModeSynced,
       canEditSelected,
       contextOrg,
       resetDetailsPanel,
@@ -1296,18 +1295,16 @@ export function ModesPage() {
             ...sent,
           },
         });
-        if (trackersOwn(target)) {
-          setLastSyncedDoc(nextDocument);
-          setLastFailedDoc(null);
-          applyLastSyncedFlags(reconcileModeFlags(sent, saved));
-          // Also retires the error a second Apply click recorded after this
-          // attempt cleared it (the lost-the-in-flight-race case is same-mode
-          // by construction, so the ownership guard keeps it covered). Then
-          // close — but only on success: a failed save keeps the panel open
-          // with the user's ordering intact and the failure reported inside
-          // the sheet. Both stay ownership-gated so a save that outlives the
-          // selection can't close (or repaint) a panel now showing another
-          // mode; the selection-change effect already reset panel state.
+        // `markModeSynced` also retires the error a second Apply click
+        // recorded after this attempt cleared it (the lost-the-in-flight-race
+        // case is same-mode by construction, so the ownership guard keeps it
+        // covered). Then close — but only on success: a failed save keeps
+        // the panel open with the user's ordering intact and the failure
+        // reported inside the sheet. Both stay ownership-gated so a save
+        // that outlives the selection can't close (or repaint) a panel now
+        // showing another mode; the selection-change effect already reset
+        // panel state.
+        if (markModeSynced(target, nextDocument, sent, saved)) {
           resetPrioritiesPanel();
         }
       } catch (err) {
@@ -1334,7 +1331,7 @@ export function ModesPage() {
       }
     },
     [
-      applyLastSyncedFlags,
+      markModeSynced,
       canEditSelected,
       contextOrg,
       resetPrioritiesPanel,
@@ -1569,11 +1566,8 @@ export function ModesPage() {
           });
           // Advance the trackers only if this PUT was built from them AND
           // they still describe this slug (a switch can outlive the PUT).
-          if (live && trackersOwn(target.name)) {
-            setLastSyncedDoc(document);
-            setLastFailedDoc(null);
-            setPriorityApplyError(null);
-            applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+          if (live) {
+            markModeSynced(target.name, document, sent, saved);
           }
         } finally {
           inFlightSavesRef.current -= 1;
@@ -1587,10 +1581,10 @@ export function ModesPage() {
       "Failed to update the display name."
     );
   }, [
-    applyLastSyncedFlags,
     contextOrg,
     labelSync,
     labelSyncValue,
+    markModeSynced,
     saveMode,
     trackersOwn,
   ]);

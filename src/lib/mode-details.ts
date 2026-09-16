@@ -55,6 +55,12 @@ const FIELD_NOUN: Record<ModeDetailsField, string> = {
   welcomeMessage: "welcome message",
 };
 
+/** Why Save is unavailable. `kind` is for layout decisions, `message` for people. */
+export interface ModeDetailsSaveBlock {
+  kind: "rights" | "busy" | "document" | "limit" | "unchanged";
+  message: string;
+}
+
 /** Everything that can stop a details save, as the panel knows it. */
 export interface ModeDetailsSaveGate {
   canEdit: boolean;
@@ -84,14 +90,21 @@ export interface ModeDetailsSaveGate {
  */
 export function describeModeDetailsSaveBlock(
   gate: ModeDetailsSaveGate
-): string | null {
-  if (!gate.canEdit) return NO_EDIT_RIGHTS_REASON;
-  if (gate.busy) return SAVE_IN_FLIGHT_REASON;
-  if (gate.documentUnsaved) return DOCUMENT_UNSAVED_REASON;
-  if (gate.overLimit) {
-    return `The ${FIELD_NOUN[gate.overLimit]} is over ${MODE_DETAILS_LIMITS[gate.overLimit]} characters.`;
+): ModeDetailsSaveBlock | null {
+  if (!gate.canEdit) return { kind: "rights", message: NO_EDIT_RIGHTS_REASON };
+  if (gate.busy) return { kind: "busy", message: SAVE_IN_FLIGHT_REASON };
+  if (gate.documentUnsaved) {
+    return { kind: "document", message: DOCUMENT_UNSAVED_REASON };
   }
-  if (!gate.changed && !gate.hasSaveError) return "Nothing has changed.";
+  if (gate.overLimit) {
+    return {
+      kind: "limit",
+      message: `The ${FIELD_NOUN[gate.overLimit]} is over ${MODE_DETAILS_LIMITS[gate.overLimit]} characters.`,
+    };
+  }
+  if (!gate.changed && !gate.hasSaveError) {
+    return { kind: "unchanged", message: "Nothing has changed." };
+  }
   return null;
 }
 
