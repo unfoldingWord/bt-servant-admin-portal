@@ -245,10 +245,14 @@ export function ModesPage() {
   // the shared flag pair refuse to start while the count is non-zero,
   // which is the truth the `disabled` props merely reflect.
   const inFlightSavesRef = useRef(0);
-  // Pauses autosave on a draft that already failed once, so a failed save
-  // doesn't loop on every isPending → false transition (Frank P2 on
-  // PR #122). User recovers by editing further (changes debouncedDraft) or
-  // by clicking Save manually (which routes through `flushSave`).
+  // The document the last PUT that carried it was rejected with — for ANY
+  // reason, a validation error or a network blip alike. Pauses autosave on
+  // that draft, so a failed save doesn't loop on every isPending → false
+  // transition (Frank P2 on PR #122), and (#337) stops the Details sheet
+  // from re-sending it under a message that blames the details. Those two
+  // are the only refusals: the editor's manual Save (`flushSave`), the flag
+  // toggles and label sync all send it again on purpose — that IS the
+  // recovery, alongside editing further. Every successful PUT clears it.
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
@@ -343,10 +347,10 @@ export function ModesPage() {
   );
 
   const isDirty = draft !== lastSyncedDoc;
-  // #337 — the draft the last save rejected, still unedited. Autosave already
-  // refuses to retry it (`shouldAutoSaveDraft`); the details panel must refuse
-  // too, since its PUT would carry this exact document.
-  const documentUnsaved = lastFailedDoc !== null && draft === lastFailedDoc;
+  // #337 — see `lastFailedDoc`. Gated on `isDirty` because a flag toggle can
+  // save the very draft that failed earlier, and a saved document is not one
+  // the Details sheet should refuse to carry.
+  const documentUnsaved = isDirty && draft === lastFailedDoc;
   const isSaving = saveMode.isPending;
   const hasSelection = selectedMode !== null && modeQuery.data;
 
@@ -1090,6 +1094,7 @@ export function ModesPage() {
         });
         if (!trackersOwn(name)) return;
         setLastSyncedDoc(draft);
+        setLastFailedDoc(null);
         setPriorityApplyError(null);
         applyLastSyncedFlags(reconcileModeFlags(sent, saved));
       } finally {
@@ -1143,6 +1148,7 @@ export function ModesPage() {
         });
         if (!trackersOwn(target)) return;
         setLastSyncedDoc(draft);
+        setLastFailedDoc(null);
         setPriorityApplyError(null);
         applyLastSyncedFlags(reconcileModeFlags(sent, saved));
       } finally {
@@ -1191,10 +1197,6 @@ export function ModesPage() {
       const target = selectedMode;
       const sent = lastSyncedFlagsRef.current;
       const document = draftRef.current;
-      // #337 — never re-send a document the worker has already rejected. The
-      // panel disables Save and shows the reason for this case; this is the
-      // page-side mirror, so a stale render cannot ship the failed draft.
-      if (lastFailedDoc !== null && document === lastFailedDoc) return;
       setDetailsSaveError(null);
       inFlightSavesRef.current += 1;
       try {
@@ -1229,6 +1231,10 @@ export function ModesPage() {
         // here — a failure from a save that outlived the selection must not be
         // pinned on whatever mode the panel would now be showing.
         if (trackersOwn(target)) {
+          // #337 — this PUT carried `document` too. If that was a dirty
+          // draft it is now a rejected one: autosave must not retry it
+          // unprompted, and a second Details save must not re-send it.
+          setLastFailedDoc(document);
           setDetailsSaveError(
             err instanceof Error && err.message
               ? err.message
@@ -1243,7 +1249,6 @@ export function ModesPage() {
       applyLastSyncedFlags,
       canEditSelected,
       contextOrg,
-      lastFailedDoc,
       resetDetailsPanel,
       saveMode,
       selectedMode,

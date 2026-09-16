@@ -154,6 +154,7 @@ describe("mode-details — what blocks Save (#328)", () => {
         ...OPEN_GATE,
         canEdit: false,
         busy: true,
+        documentUnsaved: true,
         changed: false,
         overLimit: "description",
       })
@@ -165,48 +166,24 @@ describe("mode-details — what blocks Save (#328)", () => {
       describeModeDetailsSaveBlock({
         ...OPEN_GATE,
         busy: true,
+        documentUnsaved: true,
         changed: false,
         overLimit: "welcomeMessage",
       })
     ).toBe(SAVE_IN_FLIGHT_REASON);
   });
 
-  it("refuses to re-send a rejected document (#337)", () => {
-    // Even with an unchanged form after a failed details save: the block is
-    // about the document under the sheet, not the fields inside it.
-    expect(
-      describeModeDetailsSaveBlock({ ...OPEN_GATE, documentUnsaved: true })
-    ).toBe(DOCUMENT_UNSAVED_REASON);
+  it("refuses to re-send a rejected document ahead of a cap or no-op (#337)", () => {
+    // The block is about the document under the sheet, not the fields inside
+    // it — so it outranks a field cap, and an unchanged form after a failed
+    // details save is still refused.
     expect(
       describeModeDetailsSaveBlock({
         ...OPEN_GATE,
         documentUnsaved: true,
         changed: false,
-        hasSaveError: true,
-      })
-    ).toBe(DOCUMENT_UNSAVED_REASON);
-  });
-
-  it("ranks a rejected document below rights and in-flight, above a cap (#337)", () => {
-    expect(
-      describeModeDetailsSaveBlock({
-        ...OPEN_GATE,
-        canEdit: false,
-        documentUnsaved: true,
-      })
-    ).toBe(NO_EDIT_RIGHTS_REASON);
-    expect(
-      describeModeDetailsSaveBlock({
-        ...OPEN_GATE,
-        busy: true,
-        documentUnsaved: true,
-      })
-    ).toBe(SAVE_IN_FLIGHT_REASON);
-    expect(
-      describeModeDetailsSaveBlock({
-        ...OPEN_GATE,
-        documentUnsaved: true,
         overLimit: "description",
+        hasSaveError: true,
       })
     ).toBe(DOCUMENT_UNSAVED_REASON);
   });

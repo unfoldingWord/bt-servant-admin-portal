@@ -45,9 +45,9 @@ interface ModeDetailsPanelProps {
   /** A save is in flight somewhere on the page; Save must wait it out. */
   isSaving?: boolean;
   /**
-   * The editor's draft failed to save and still stands (#337). Save is
+   * The editor's draft is unsaved and its last save failed (#337). Save is
    * refused and the sheet says why, since the details PUT would re-send that
-   * draft and the editor that could fix it is under this sheet's overlay.
+   * draft and the editor that could resolve it is under this sheet's overlay.
    */
   documentUnsaved: boolean;
   /**
@@ -132,6 +132,11 @@ function PanelBody({
     overLimit,
     hasSaveError: saveError !== null,
   });
+  // #337 — the one block the user cannot clear from inside the sheet, so it
+  // is written out in the footer rather than left to the disabled button's
+  // title (no hover on touch). Read off the gate, not re-derived, so the
+  // ranking lives in `describeModeDetailsSaveBlock` alone.
+  const blockIsDocument = saveBlockedReason === DOCUMENT_UNSAVED_REASON;
 
   // Saving — and recording a failed save — is the page's job (`saveError`
   // comes back down as a prop). The await only scopes the local busy state;
@@ -246,15 +251,12 @@ function PanelBody({
       </div>
 
       <SheetFooter className="gap-3 border-t p-4 sm:px-5">
-        {/* #337 — shown in full, not only as the disabled button's title: a
-            disabled control gets no hover on touch, and this is the one block
-            the user cannot clear from inside the sheet. */}
-        {canEdit && documentUnsaved && (
+        {blockIsDocument && (
           <p
+            id={saveHelpId}
             className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs leading-relaxed"
-            role="status"
           >
-            {DOCUMENT_UNSAVED_REASON}
+            {saveBlockedReason}
           </p>
         )}
         {saveError && (
@@ -294,8 +296,9 @@ function PanelBody({
               </Button>
               {/* A disabled button is out of the tab order and gets no hover
                   on touch, so the title alone can't carry the reason. Same
-                  idiom the Modes header uses for its gated controls. */}
-              {saveBlockedReason && (
+                  idiom the Modes header uses for its gated controls. The
+                  document block is already visible above under this id. */}
+              {saveBlockedReason && !blockIsDocument && (
                 <span id={saveHelpId} className="sr-only">
                   {saveBlockedReason}
                 </span>
