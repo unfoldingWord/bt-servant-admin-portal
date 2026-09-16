@@ -19,21 +19,29 @@ name: CI
 # already run lint + typecheck + build, and this repo opens a PR straight after
 # pushing, so pre-PR push coverage buys little.
 #
-# `edited` is here so retargeting a stacked PR onto `main` re-runs CI against
-# the new merge base without needing a follow-up push. GitHub fires `edited`
-# for title and body edits too, so every job gates on `changes.base.ref.from`,
-# which is present only when the BASE changed.
+# `edited` is deliberately NOT in `types`, and `types` is therefore left at its
+# default. It was tried first, so that retargeting a stacked PR onto `main`
+# would re-run CI without a follow-up push. But GitHub fires `edited` for title
+# and body edits too, and a run is created BEFORE any job-level `if:` is
+# evaluated, so an ordinary description edit did two harmful things at once: it
+# cancelled the in-flight real run through the `concurrency` group below, and
+# it published `skipped` check runs over the previous verdict for an unchanged
+# SHA. The net effect was a PR that looked green while its CI had been killed.
+# After a base retarget, re-run CI explicitly (`gh run rerun`) or push.
 on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, edited]
 
-# Supersede stale runs rather than letting a fix -> push -> re-review cycle
+# Supersede stale PR runs rather than letting a fix -> push -> re-review cycle
 # stack them up (dev-practices; `deploy-staging.yml` already does this).
+#
+# Never cancel a `main` run. `deploy-staging.yml` fires on the merge itself and
+# is not gated on CI, so cancelling would leave a commit that reached staging
+# with no CI verdict at all — two merges a few minutes apart would do it.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ==========================================
@@ -42,13 +50,6 @@ jobs:
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-latest
-    # Only a BASE retarget re-runs CI on `edited`; a title or body edit must
-    # not rebuild an unchanged SHA. `changes.base.ref.from` is set only on a
-    # base change, and dereferencing it is empty for any other edit.
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.action != 'edited' ||
-      github.event.changes.base.ref.from != ''
     steps:
       - uses: actions/checkout@v6
         with:
@@ -64,13 +65,6 @@ jobs:
   quality:
     name: Code Quality
     runs-on: ubuntu-latest
-    # Only a BASE retarget re-runs CI on `edited`; a title or body edit must
-    # not rebuild an unchanged SHA. `changes.base.ref.from` is set only on a
-    # base change, and dereferencing it is empty for any other edit.
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.action != 'edited' ||
-      github.event.changes.base.ref.from != ''
 
     steps:
       - uses: actions/checkout@v6
