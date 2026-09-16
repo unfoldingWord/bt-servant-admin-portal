@@ -12,7 +12,12 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened]
+    # `edited` mirrors `ci.yml` (#330): a stacked PR retargeted onto `main`
+    # emits only `edited`, never `synchronize`, so without it the PR would go
+    # green on CI while never getting its preview worker — a review-ready PR
+    # with no dev URL. The job gates on `changes.base.ref.from` so title and
+    # body edits do not redeploy.
+    types: [opened, synchronize, reopened, edited]
     # Skip the deploy when only docs/mockups change — no build artefacts
     # depend on those, so a Worker redeploy is wasted CI time.
     paths-ignore:
@@ -25,6 +30,10 @@ jobs:
   deploy:
     name: Deploy to Cloudflare Workers
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.action != 'edited' ||
+      github.event.changes.base.ref.from != ''
     permissions:
       contents: read
       pull-requests: write

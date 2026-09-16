@@ -1,15 +1,39 @@
 name: CI
 
-# Branch filters use `**`, not `*`: in Actions filter globs `*` does not match
-# `/`, so `"*"` silently excluded every `feat/...`, `fix/...`, `docs/...` branch
-# from push CI and gave stacked PRs (any base other than `main`) no CI at all
-# (#330). `edited` is included so a base retarget re-runs CI without a new push.
+# Trigger shape is the uW standard (dev-practices `ci-cd-workflows.md`):
+# `pull_request` with NO base filter, plus `push` on `main` only.
+#
+# The `pull_request` filter is absent on purpose — that was the #330 bug. In an
+# Actions filter glob `*` does not match `/`, so `branches: ["*"]` excluded any
+# PR whose BASE contained a slash: a PR stacked on `docs/...` or `feat/...` got
+# no checks at all, which is how #329 sat at "no checks reported" on 2026-09-11.
+# An absent filter fires for every base, slashed or not. (Slash-free bases such
+# as `docs-eod-2026-08-19` did match the old glob, so this was never literally
+# "main-only" for PRs.)
+#
+# `push` is deliberately `main`-only rather than `"**"`. Running both events on
+# every feature-branch push doubles the whole matrix — two gitleaks history
+# scans and four `npm ci` installs per commit — for identical code, and posts
+# two same-named checks whose gitleaks commit ranges differ (push scans only
+# that push's commits; pull_request scans the whole PR). Local pre-commit hooks
+# already run lint + typecheck + build, and this repo opens a PR straight after
+# pushing, so pre-PR push coverage buys little.
+#
+# `edited` is here so retargeting a stacked PR onto `main` re-runs CI against
+# the new merge base without needing a follow-up push. GitHub fires `edited`
+# for title and body edits too, so every job gates on `changes.base.ref.from`,
+# which is present only when the BASE changed.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
-    branches: ["**"]
     types: [opened, synchronize, reopened, edited]
+
+# Supersede stale runs rather than letting a fix -> push -> re-review cycle
+# stack them up (dev-practices; `deploy-staging.yml` already does this).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ==========================================
@@ -18,6 +42,13 @@ jobs:
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-latest
+    # Only a BASE retarget re-runs CI on `edited`; a title or body edit must
+    # not rebuild an unchanged SHA. `changes.base.ref.from` is set only on a
+    # base change, and dereferencing it is empty for any other edit.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.action != 'edited' ||
+      github.event.changes.base.ref.from != ''
     steps:
       - uses: actions/checkout@v6
         with:
@@ -33,6 +64,13 @@ jobs:
   quality:
     name: Code Quality
     runs-on: ubuntu-latest
+    # Only a BASE retarget re-runs CI on `edited`; a title or body edit must
+    # not rebuild an unchanged SHA. `changes.base.ref.from` is set only on a
+    # base change, and dereferencing it is empty for any other edit.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.action != 'edited' ||
+      github.event.changes.base.ref.from != ''
 
     steps:
       - uses: actions/checkout@v6
