@@ -1,10 +1,15 @@
 name: CI
 
+# Branch filters use `**`, not `*`: in Actions filter globs `*` does not match
+# `/`, so `"*"` silently excluded every `feat/...`, `fix/...`, `docs/...` branch
+# from push CI and gave stacked PRs (any base other than `main`) no CI at all
+# (#330). `edited` is included so a base retarget re-runs CI without a new push.
 on:
   push:
-    branches: ["*"]
+    branches: ["**"]
   pull_request:
-    branches: ["*"]
+    branches: ["**"]
+    types: [opened, synchronize, reopened, edited]
 
 jobs:
   # ==========================================
