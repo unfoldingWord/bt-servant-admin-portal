@@ -19,9 +19,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
 import { TextareaField } from "@/components/textarea-field";
 
-/** The muted footer/body callout every notice in this sheet uses. */
+/** The muted notice style, shared by the read-only note and the document block. */
 const CALLOUT_CLASS =
   "bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs leading-relaxed";
 
@@ -135,14 +136,15 @@ function PanelBody({
     overLimit,
     hasSaveError: saveError !== null,
   });
-  // #337 — the one block the user cannot clear from inside the sheet: it is
-  // written out in the footer rather than left to the disabled button's
-  // title (no hover on touch), and the fields are held while it stands, so
-  // nobody types details into a form that cannot save them. Read off the
-  // gate, so the ranking lives in `describeModeDetailsSaveBlock` alone.
+  // #337 — the one block the user cannot clear from inside the sheet (the
+  // opener is gated on it; this is the backstop for a draft that fails while
+  // the sheet is open). Written out in the footer rather than left to the
+  // disabled button's title (no hover on touch). The fields go read-only
+  // rather than disabled: text already typed stays selectable, so it can be
+  // copied out before the sheet is closed. Read off the gate, so the ranking
+  // lives in `describeModeDetailsSaveBlock` alone.
   const blockIsDocument = saveBlock?.kind === "document";
-  const fieldsHeld = busy || blockIsDocument;
-  const failureTail = blockIsDocument ? "." : ", so you can try again.";
+  const fieldsReadOnly = !canEdit || blockIsDocument;
 
   // Saving — and recording a failed save — is the page's job (`saveError`
   // comes back down as a prop). The await only scopes the local busy state;
@@ -166,6 +168,11 @@ function PanelBody({
   const welcomeId = `${ids}-welcome`;
   const saveHelpId = `${ids}-save-help`;
   const readOnlyHelpId = `${ids}-read-only`;
+  const fieldsDescribedBy = !canEdit
+    ? readOnlyHelpId
+    : blockIsDocument
+      ? saveHelpId
+      : undefined;
   const welcomeTrimmed = form.welcomeMessage.trim();
 
   return (
@@ -202,9 +209,9 @@ function PanelBody({
           rows={3}
           placeholder="Optional description for this mode..."
           help="Optional. A short note on what this mode is for."
-          readOnly={!canEdit}
-          describedBy={canEdit ? undefined : readOnlyHelpId}
-          disabled={fieldsHeld}
+          readOnly={fieldsReadOnly}
+          describedBy={fieldsDescribedBy}
+          disabled={busy}
         />
 
         {/* #311 (part 2) — literally the same control the create card uses
@@ -218,9 +225,9 @@ function PanelBody({
           rows={5}
           placeholder="Sent once, the first time someone messages this mode…"
           help="Optional. Your welcome copy only — the WhatsApp share link is added automatically, so leave it out."
-          readOnly={!canEdit}
-          describedBy={canEdit ? undefined : readOnlyHelpId}
-          disabled={fieldsHeld}
+          readOnly={fieldsReadOnly}
+          describedBy={fieldsDescribedBy}
+          disabled={busy}
         />
 
         {/* How it lands: the welcome is a WhatsApp message, so show it as one.
@@ -258,8 +265,11 @@ function PanelBody({
             className="bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2 text-xs"
             role="alert"
           >
-            <span className="font-medium">Save failed.</span> {saveError}{" "}
-            Nothing was saved — your changes are still here{failureTail}
+            <span className="font-medium">Save failed.</span> {saveError}
+            {/* The retry offer is withdrawn while the document block stands:
+                the status line below says what has to happen first. */}
+            {!blockIsDocument &&
+              " Nothing was saved — your changes are still here, so you can try again."}
           </p>
         )}
         {/* One element carries the reason Save is unavailable, under the id
@@ -274,7 +284,7 @@ function PanelBody({
           <p
             id={saveHelpId}
             role={blockIsDocument ? "status" : undefined}
-            className={blockIsDocument ? CALLOUT_CLASS : "sr-only"}
+            className={cn(blockIsDocument ? CALLOUT_CLASS : "sr-only")}
           >
             {saveBlock.message}
             {blockIsDocument &&

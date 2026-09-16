@@ -39,6 +39,7 @@ import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { downloadBlob } from "@/lib/download-blob";
 import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
 import {
+  DOCUMENT_UNSAVED_REASON,
   type ModeDetails,
   type StoredModeDetails,
   toModeDetailsBody,
@@ -245,17 +246,16 @@ export function ModesPage() {
   // the shared flag pair refuse to start while the count is non-zero,
   // which is the truth the `disabled` props merely reflect.
   const inFlightSavesRef = useRef(0);
-  // A dirty document whose own save was rejected — for ANY reason, a
-  // validation error or a network blip alike. Recorded by exactly two paths,
-  // the ones that change the draft or exist to persist it: `performSave`
-  // (autosave and the editor's Save) and the priorities Apply. The flag
-  // toggles, label sync and the Details save carry the draft but do not
-  // record a rejection; the autosave re-fire on isPending → false does, and
-  // once it has, autosave stops retrying (Frank P2 on PR #122) and the
-  // Details sheet refuses to carry it (#337). Those two are the only
-  // refusals — the editor's Save, the toggles and label sync send it again
-  // on purpose; that is the recovery, alongside editing further. Every
-  // success path clears it through `markModeSynced`.
+  // A dirty document whose save was rejected — for ANY reason, a validation
+  // error or a network blip alike. Recorded by three paths: `performSave`
+  // (autosave and the editor's Save), the priorities Apply, and the Details
+  // save when the draft it carried was dirty (#337). The flag toggles and
+  // label sync carry the draft but do not record a rejection; the autosave
+  // re-fire on isPending → false does. Once recorded, autosave stops
+  // retrying it (Frank P2 on PR #122) and the Details sheet refuses to carry
+  // it (#337). Those are the only refusals — the editor's Save, the toggles
+  // and label sync send it again on purpose; that is the recovery, alongside
+  // editing further. Every success path clears it through `markModeSynced`.
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
@@ -361,7 +361,7 @@ export function ModesPage() {
       target: string,
       doc: string,
       sent: ModeFlags,
-      saved: Parameters<typeof reconcileModeFlags>[1]
+      saved: PromptMode
     ): boolean => {
       if (!trackersOwn(target)) return false;
       setLastSyncedDoc(doc);
@@ -377,8 +377,11 @@ export function ModesPage() {
   );
 
   const isDirty = draft !== lastSyncedDoc;
-  // #337 — see `lastFailedDoc`; the same predicate `shouldAutoSaveDraft` uses.
-  const documentUnsaved = draft === lastFailedDoc;
+  // #337 — see `lastFailedDoc`. The dirty term matters: a priorities Apply
+  // can restore the synced document and then fail on a network blip, which
+  // records a document the server already holds — nothing the editor could
+  // save again, so nothing the Details sheet should refuse.
+  const documentUnsaved = isDirty && draft === lastFailedDoc;
   const isSaving = saveMode.isPending;
   const hasSelection = selectedMode !== null && modeQuery.data;
 
@@ -603,6 +606,16 @@ export function ModesPage() {
   useEffect(() => {
     resetDetailsPanel();
   }, [resetDetailsPanel, selectedMode]);
+  // #337 — an in-flight refusal the sheet recorded is moot once the document
+  // block engages: nothing is in flight and Save is disabled, so "try again
+  // in a moment" would be the wrong instruction. A real failure stays; it is
+  // the diagnosis the block's prescription follows.
+  useEffect(() => {
+    if (!documentUnsaved) return;
+    setDetailsSaveError((current) =>
+      current === SAVE_IN_FLIGHT_REASON ? null : current
+    );
+  }, [documentUnsaved]);
 
   const [prioritiesOpen, setPrioritiesOpen] = useState(false);
   const [priorityApplyError, setPriorityApplyError] = useState<string | null>(
@@ -1208,6 +1221,7 @@ export function ModesPage() {
       const target = selectedMode;
       const sent = lastSyncedFlagsRef.current;
       const document = draftRef.current;
+      const documentDirty = isDirtyRef.current;
       setDetailsSaveError(null);
       inFlightSavesRef.current += 1;
       try {
@@ -1234,6 +1248,11 @@ export function ModesPage() {
         // here — a failure from a save that outlived the selection must not be
         // pinned on whatever mode the panel would now be showing.
         if (trackersOwn(target)) {
+          // #337 — a dirty draft this PUT carried is now a rejected one, the
+          // same as if autosave had sent it: recording it here means autosave
+          // does not re-send it unprompted and the sheet locks now, instead
+          // of after a second rejected PUT.
+          if (documentDirty) setLastFailedDoc(document);
           setDetailsSaveError(
             err instanceof Error && err.message
               ? err.message
@@ -1613,6 +1632,13 @@ export function ModesPage() {
   const resourcePrioritiesHelp = canEditSelected
     ? RESOURCE_PRIORITIES_HELP
     : `${RESOURCE_PRIORITIES_HELP} ${NO_EDIT_RIGHTS_REASON}`;
+  // #337 — the refusal lives at the opener, like the other gated controls;
+  // the sheet's own block is the backstop for a draft that fails while it
+  // is open. `documentUnsaved` implies edit rights (every path that records
+  // `lastFailedDoc` is rights-gated), so this never locks out a viewer.
+  const detailsHelp = documentUnsaved
+    ? `${MODE_DETAILS_HELP} ${DOCUMENT_UNSAVED_REASON}`
+    : MODE_DETAILS_HELP;
 
   const shareHelp = effectiveOrg
     ? "QR code and link that open this mode on WhatsApp."
@@ -1760,14 +1786,15 @@ export function ModesPage() {
               {/* #328 — description + first-contact welcome for THIS mode.
                   Not edit-gated at the button: viewers may read the welcome
                   copy; the panel disables the fields and Save without edit
-                  rights and says why. */}
+                  rights and says why. Gated on an unsaved document (#337):
+                  its PUT would carry the rejected draft. */}
               <Button
                 ref={detailsButtonRef}
                 size="sm"
                 variant="outline"
                 onClick={() => setDetailsOpen(true)}
-                disabled={isSaving}
-                title={MODE_DETAILS_HELP}
+                disabled={isSaving || documentUnsaved}
+                title={detailsHelp}
                 aria-describedby="mode-details-help"
                 aria-haspopup="dialog"
                 aria-expanded={detailsOpen}
@@ -1777,7 +1804,7 @@ export function ModesPage() {
                 Details
               </Button>
               <span id="mode-details-help" className="sr-only">
-                {MODE_DETAILS_HELP}
+                {detailsHelp}
               </span>
               {/* #277 — opens the ranking panel. Gated by the same right
                   the Save button and the group-chat switch are gated by; the

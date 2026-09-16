@@ -36,13 +36,13 @@ export type ModeDetailsField = keyof ModeDetails;
 /**
  * #337 — the editor's draft failed to save and still stands. Every mode PUT
  * carries the whole document, so a details save would re-send that same
- * rejected draft and fail the same way. The sheet cannot resolve it — the
- * editor sits under its overlay — so the copy names the route that does:
- * the editor's own Save, which sends the draft again (a transient failure
- * needs nothing more; a rejected one needs the edits fixed or undone first).
+ * rejected draft and fail the same way. Read at the Details opener and, as a
+ * backstop, inside the sheet, so it names the route that resolves it: the
+ * editor's own Save, which sends the draft again (a transient failure needs
+ * nothing more; a rejected one needs the edits fixed or undone first).
  */
 export const DOCUMENT_UNSAVED_REASON =
-  "The mode document hasn't been saved. Close this panel and save it from the editor first, fixing or undoing your edits if it was rejected.";
+  "The mode document hasn't been saved. Save it from the editor first — fixing or undoing your edits if it was rejected — before changing the details.";
 
 export const MODE_DETAILS_LIMITS: Record<ModeDetailsField, number> = {
   description: MAX_MODE_DESCRIPTION_LENGTH,
