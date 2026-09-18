@@ -114,6 +114,33 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ## Session Log
 
+### 2026-09-16 (evening) — #337 fixed (PR #339, v1.16.1, awaiting merge); #336 researched and answered (it's worker#143 vs worker#379, not a regression); workspace cleaned
+
+Started from the SOD sweep. Seth: check into the items needing attention, post the #336 findings, clean the workspace, then proceed with #337.
+
+**#336 — Elsy's "non-uW modes invisible in chat" (research only, no build).** Not a regression: the chat path loads exactly one KV key, `<org>:modes` (`readAllOrgKV`, worker `src/index.ts:2142`), and both clients hard-send `unfoldingWord`. Confirmed against staging KV (read-only): `PBT` has published `obt-coach`, `Test Organization` has published `translation-coach` — the same slug as uW's, so a flat cross-org list would break `switch_mode` on the first shared name (exactly portal#169's open question). Design tension: worker#143 (Elsy, April: all published modes across all orgs, no org selection) vs worker#379 (Elsy, from the 08-25 roadmap meeting: orgs must NOT see each other's modes; V2 stopgap is everything under uW). Posted the findings with a decision request to Elsy and Ian: which model wins, and the slug prefix. If #143 as interim, the build is worker-only (read all `*:modes`, prefix non-default-org slugs, teach the trigger/`switch_mode` the prefixed form). No reply yet.
+
+**Workspace.** Removed eight merged worktrees (portal #334/#335/#338; web-client #44/#55/#56/#57/#59) and their local branches, pruned two stale `/private/tmp` entries, deleted four unreferenced web-client scratch files from May/June, the gateway's stray `KV` note and the site's `.DS_Store`; fast-forwarded gateway (+5) and site (+120). Kept worker `fix-432` (open PR #435) and `fix-215` (7 uncommitted files, no PR, last commit May 13 — Seth to decide). The guard denied compound `git worktree remove` commands; one plain command per call works.
+
+**#337 — Details save re-sent a rejected document (PR #339, v1.16.0 → v1.16.1, CI green, NOT merged).**
+
+- Built the issue's option 1 first (block the Details save when the draft equals `lastFailedDoc`). Then **eight `code-review` rounds** pushed it through an in-sheet "document block" — a stale marker locking the sheet on a saved document (real, round 1: the Publish/Requires-group toggles never cleared `lastFailedDoc`), copy blaming the document for a network blip, focus dropping to the page body, a deferred-click flag hidden behind a prior error — each round's mechanism creating the next round's defects, and rounds 3–6 contradicting each other.
+- Round 7 proposed the simple cut, taken in `f1bb925`: **gate the Details opener on a dirty draft** (plus in-flight, `766d47b`), the page's existing idiom for Clone/Import/mode-switch. The sheet is modal, so a clean draft at open is clean at save; no rejected draft can ride a Details PUT. Copy: "Save your changes before editing the details." The sheet component's net diff against main is the shared notice classes alone. A dirty-draft backstop stays in the save handler for the Radix focus-leak case the file already documents.
+- Kept from the rounds: one success path (`syncTrackers`/`markModeSynced`) for every document-carrying PUT (the round-1 toggle bug), `gatedHelp`, `lib/notice-classes`.
+- Evidence: three opener-gate tests fail on the old lib; suite 1085/1085. Not verified in a browser (staging login blocked: the 1Password token file in `/workspace/temp` is empty).
+- **Stopped the loop** at round 8: the tool returns a ranked top-10 by construction and never "approves", so the portal rule's "repeat until approved" is unbounded. Saved as memory. Residuals recorded on the PR: the toggles and the priorities Apply still carry a dirty draft ungated (same root cause, other controls — follow-up issue candidate, with permission); a stored document that later fails validation would still get a retry invitation (unreachable today).
+
+**Assigned to me now:** #337 (PR open), #336 (waiting on Elsy/Ian), #278, #170, #153; worker#432 (PR #435 waiting on Ian), worker#422.
+
+**Blockers.** Staging browser pass for #335/#339: needs a portal login from 1Password (token file empty). #336: needs the Elsy/Ian decision. #292/#278/#435: no replies today.
+
+**Next:**
+
+1. Seth's merge call on **#339**; then a browser pass of Details on staging once a login is available.
+2. #336: act on the Elsy/Ian decision (scope in the issue is ready for either branch).
+3. Follow-up issue for the toggles/priorities dirty-draft gap, with permission.
+4. Elsy's #292 verify → portal prod promotion scope; Ian on #278/#435/#432 item 2.
+
 ### 2026-09-16 — #328 mode details + a BFF edit-rights fix shipped (v1.16.0); #330 CI fix merged; #311 and #277 closed; worker#432 warning built (PR #435)
 
 Started as the 09-15 start-of-day (no work that day beyond the SOD sweep) and ran into 09-16. Seth set the plan: merge #331, ship #330, close #311/#277, build #328 with evidence-first research, nudge the #292/#278 prod path carefully, research worker#432. Later: merge #334/#335, file follow-ups, build worker#432 item 1 for Ian.
