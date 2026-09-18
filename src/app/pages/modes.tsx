@@ -37,10 +37,16 @@ import { type ParsedModeImport, parseModeImport } from "@/lib/mode-import";
 import { classifyModeImport } from "@/lib/mode-import-gate";
 import { MODE_DOCUMENT_SCAFFOLD } from "@/lib/mode-scaffold";
 import { downloadBlob } from "@/lib/download-blob";
-import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
+import {
+  DOCUMENT_UNSAVED_REASON,
+  NO_EDIT_RIGHTS_REASON,
+  SAVE_IN_FLIGHT_REASON,
+  gatedHelp,
+} from "@/lib/mode-copy";
 import {
   type ModeDetails,
   type StoredModeDetails,
+  describeModeDetailsOpenBlock,
   toModeDetailsBody,
 } from "@/lib/mode-details";
 import { isModeShareOpen } from "@/lib/mode-share-link";
@@ -245,10 +251,17 @@ export function ModesPage() {
   // the shared flag pair refuse to start while the count is non-zero,
   // which is the truth the `disabled` props merely reflect.
   const inFlightSavesRef = useRef(0);
-  // Pauses autosave on a draft that already failed once, so a failed save
-  // doesn't loop on every isPending → false transition (Frank P2 on
-  // PR #122). User recovers by editing further (changes debouncedDraft) or
-  // by clicking Save manually (which routes through `flushSave`).
+  // A dirty document whose save was rejected — for ANY reason, a validation
+  // error or a network blip alike. Recorded by the two paths that exist to
+  // persist or change the draft: `performSave` (autosave and the editor's
+  // Save) and the priorities Apply. The flag toggles and label sync carry
+  // the draft but record nothing on failure — a failure there may be theirs,
+  // not the document's, and the autosave re-fire on isPending → false
+  // settles which. Once recorded, autosave stops retrying it (Frank P2 on
+  // PR #122); that is the only refusal — the editor's Save, the toggles and
+  // label sync send it again on purpose, which is the recovery, alongside
+  // editing further. Every success path clears it through `syncTrackers`
+  // (directly, or via `markModeSynced`).
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
   const [activeLine, setActiveLine] = useState(-1);
@@ -342,6 +355,41 @@ export function ModesPage() {
     []
   );
 
+  // The success path for every PUT that carries the current draft. The
+  // tracker writes are one cluster (`syncTrackers`) on purpose: PR #339
+  // round 1 found two hand-copied versions of it each missing the
+  // `lastFailedDoc` clear, which locked the Details sheet on a document that
+  // had in fact been saved. `markModeSynced` adds the ownership test — the
+  // trackers advance only if they still describe `target` (a switch can
+  // outlive the PUT) — and says whether they did, so a caller finishes its
+  // own success work under the same answer. The import, which has already
+  // decided ownership with an org-aware test, calls `syncTrackers` directly.
+  const syncTrackers = useCallback(
+    (doc: string, sent: ModeFlags, saved: PromptMode) => {
+      setLastSyncedDoc(doc);
+      setLastFailedDoc(null);
+      // A priorities failure is a claim about a document this PUT has just
+      // replaced; leaving the banner up would describe a state that no
+      // longer exists.
+      setPriorityApplyError(null);
+      applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+    },
+    [applyLastSyncedFlags]
+  );
+  const markModeSynced = useCallback(
+    (
+      target: string,
+      doc: string,
+      sent: ModeFlags,
+      saved: PromptMode
+    ): boolean => {
+      if (!trackersOwn(target)) return false;
+      syncTrackers(doc, sent, saved);
+      return true;
+    },
+    [syncTrackers, trackersOwn]
+  );
+
   const isDirty = draft !== lastSyncedDoc;
   const isSaving = saveMode.isPending;
   const hasSelection = selectedMode !== null && modeQuery.data;
@@ -399,14 +447,7 @@ export function ModesPage() {
         },
         {
           onSuccess: (saved) => {
-            if (!trackersOwn(target)) return;
-            setLastSyncedDoc(doc);
-            setLastFailedDoc(null);
-            // Any successful document sync retires a stale priority-apply
-            // failure — the draft it complained about is now persisted, and a
-            // reopened panel must not claim otherwise.
-            setPriorityApplyError(null);
-            applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+            markModeSynced(target, doc, sent, saved);
           },
           onError: () => {
             if (!trackersOwn(target)) return;
@@ -419,8 +460,8 @@ export function ModesPage() {
       );
     },
     [
-      applyLastSyncedFlags,
       contextOrg,
+      markModeSynced,
       saveMode,
       selectedMode,
       serverDescription,
@@ -756,14 +797,11 @@ export function ModesPage() {
         // draft/lastSyncedDoc/flags stay pre-import and the next autosave
         // silently reverts the import (#302/#303 class).
         setDraft(mode.document);
-        setLastSyncedDoc(mode.document);
-        applyLastSyncedFlags(
-          reconcileModeFlags(
-            { published: mode.published, requires_group: mode.requires_group },
-            saved
-          )
+        syncTrackers(
+          mode.document,
+          { published: mode.published, requires_group: mode.requires_group },
+          saved
         );
-        setLastFailedDoc(null);
         syncedNameRef.current = mode.name;
         // #308 P3 — an open priority panel's unapplied local ranking was built
         // from the pre-import draft; close and reset it exactly as a selection
@@ -784,7 +822,7 @@ export function ModesPage() {
         `Imported “${mode.name}” — select it from the mode list to edit.${aliasNote}`
       );
     },
-    [applyLastSyncedFlags, resetPrioritiesPanel]
+    [resetPrioritiesPanel, syncTrackers]
   );
 
   const handleImportFileChange = useCallback(
@@ -1084,16 +1122,13 @@ export function ModesPage() {
             ...sent,
           },
         });
-        if (!trackersOwn(name)) return;
-        setLastSyncedDoc(draft);
-        setPriorityApplyError(null);
-        applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+        markModeSynced(name, draft, sent, saved);
       } finally {
         inFlightSavesRef.current -= 1;
       }
     },
     [
-      applyLastSyncedFlags,
+      markModeSynced,
       contextOrg,
       draft,
       saveMode,
@@ -1101,7 +1136,6 @@ export function ModesPage() {
       serverDescription,
       serverLabel,
       serverWelcomeMessage,
-      trackersOwn,
     ]
   );
 
@@ -1137,16 +1171,13 @@ export function ModesPage() {
             ...sent,
           },
         });
-        if (!trackersOwn(target)) return;
-        setLastSyncedDoc(draft);
-        setPriorityApplyError(null);
-        applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+        markModeSynced(target, draft, sent, saved);
       } finally {
         inFlightSavesRef.current -= 1;
       }
     },
     [
-      applyLastSyncedFlags,
+      markModeSynced,
       contextOrg,
       draft,
       saveMode,
@@ -1154,7 +1185,6 @@ export function ModesPage() {
       serverDescription,
       serverLabel,
       serverWelcomeMessage,
-      trackersOwn,
     ]
   );
 
@@ -1177,11 +1207,20 @@ export function ModesPage() {
       // The button and the panel are already rights-gated; local mirror of
       // the worker's gate, same as flushSave.
       if (!canEditSelected) return;
-      // Reported inside the sheet rather than silently dropped: unlike the
-      // priorities Apply, the user has typed something here and needs to know
-      // why the click did nothing.
+      // Backstops, reported inside the sheet rather than silently dropped —
+      // the user has typed something here and needs to know why the click
+      // did nothing. In flight: the ref-vs-isPending macrotask gap the lock
+      // exists for. Dirty: the sheet opened on a clean draft, but focus can
+      // leak from a Radix modal (see the clone/rename dialogs' notes) and a
+      // keystroke reach the editor; a dirty draft must never ride this PUT
+      // (#337), since a rejected one would fail here with the document's
+      // error and the sheet would invite a retry.
       if (inFlightSavesRef.current > 0 || saveMode.isPending) {
         setDetailsSaveError(SAVE_IN_FLIGHT_REASON);
+        return;
+      }
+      if (isDirtyRef.current) {
+        setDetailsSaveError(DOCUMENT_UNSAVED_REASON);
         return;
       }
       const target = selectedMode;
@@ -1201,18 +1240,10 @@ export function ModesPage() {
             ...sent,
           },
         });
-        // Advance the trackers only if they still describe this slug (a
-        // switch can outlive the PUT), then close — on success only. A failed
-        // save keeps the panel open with the user's text intact.
-        if (trackersOwn(target)) {
-          setLastSyncedDoc(document);
-          setLastFailedDoc(null);
-          // Same clear every other success path on this page performs: a
-          // priorities failure is a claim about a document this PUT has just
-          // replaced, so leaving the banner up would describe a state that no
-          // longer exists.
-          setPriorityApplyError(null);
-          applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+        // Close on success only, and only if the trackers still describe
+        // this slug (a switch can outlive the PUT). A failed save keeps the
+        // panel open with the user's text intact.
+        if (markModeSynced(target, document, sent, saved)) {
           resetDetailsPanel();
         }
       } catch (err) {
@@ -1232,7 +1263,7 @@ export function ModesPage() {
       }
     },
     [
-      applyLastSyncedFlags,
+      markModeSynced,
       canEditSelected,
       contextOrg,
       resetDetailsPanel,
@@ -1282,18 +1313,16 @@ export function ModesPage() {
             ...sent,
           },
         });
-        if (trackersOwn(target)) {
-          setLastSyncedDoc(nextDocument);
-          setLastFailedDoc(null);
-          applyLastSyncedFlags(reconcileModeFlags(sent, saved));
-          // Also retires the error a second Apply click recorded after this
-          // attempt cleared it (the lost-the-in-flight-race case is same-mode
-          // by construction, so the ownership guard keeps it covered). Then
-          // close — but only on success: a failed save keeps the panel open
-          // with the user's ordering intact and the failure reported inside
-          // the sheet. Both stay ownership-gated so a save that outlives the
-          // selection can't close (or repaint) a panel now showing another
-          // mode; the selection-change effect already reset panel state.
+        // `markModeSynced` also retires the error a second Apply click
+        // recorded after this attempt cleared it (the lost-the-in-flight-race
+        // case is same-mode by construction, so the ownership guard keeps it
+        // covered). Then close — but only on success: a failed save keeps
+        // the panel open with the user's ordering intact and the failure
+        // reported inside the sheet. Both stay ownership-gated so a save
+        // that outlives the selection can't close (or repaint) a panel now
+        // showing another mode; the selection-change effect already reset
+        // panel state.
+        if (markModeSynced(target, nextDocument, sent, saved)) {
           resetPrioritiesPanel();
         }
       } catch (err) {
@@ -1320,7 +1349,7 @@ export function ModesPage() {
       }
     },
     [
-      applyLastSyncedFlags,
+      markModeSynced,
       canEditSelected,
       contextOrg,
       resetPrioritiesPanel,
@@ -1555,11 +1584,8 @@ export function ModesPage() {
           });
           // Advance the trackers only if this PUT was built from them AND
           // they still describe this slug (a switch can outlive the PUT).
-          if (live && trackersOwn(target.name)) {
-            setLastSyncedDoc(document);
-            setLastFailedDoc(null);
-            setPriorityApplyError(null);
-            applyLastSyncedFlags(reconcileModeFlags(sent, saved));
+          if (live) {
+            markModeSynced(target.name, document, sent, saved);
           }
         } finally {
           inFlightSavesRef.current -= 1;
@@ -1573,10 +1599,10 @@ export function ModesPage() {
       "Failed to update the display name."
     );
   }, [
-    applyLastSyncedFlags,
     contextOrg,
     labelSync,
     labelSyncValue,
+    markModeSynced,
     saveMode,
     trackersOwn,
   ]);
@@ -1599,12 +1625,17 @@ export function ModesPage() {
 
   // Base description, plus the reason when the switch is gated off. See
   // the sr-only span below for why the title isn't enough on its own.
-  const requiresGroupHelp = canEditSelected
-    ? REQUIRES_GROUP_HELP
-    : `${REQUIRES_GROUP_HELP} ${NO_EDIT_RIGHTS_REASON}`;
-  const resourcePrioritiesHelp = canEditSelected
-    ? RESOURCE_PRIORITIES_HELP
-    : `${RESOURCE_PRIORITIES_HELP} ${NO_EDIT_RIGHTS_REASON}`;
+  const rightsReason = canEditSelected ? null : NO_EDIT_RIGHTS_REASON;
+  const requiresGroupHelp = gatedHelp(REQUIRES_GROUP_HELP, rightsReason);
+  const resourcePrioritiesHelp = gatedHelp(
+    RESOURCE_PRIORITIES_HELP,
+    rightsReason
+  );
+  // #337 — Details opens only on a clean draft with nothing in flight, like
+  // Clone and Import. A viewer without edit rights never has a dirty draft,
+  // so this never locks one out of the read-only sheet.
+  const detailsOpenBlock = describeModeDetailsOpenBlock({ isSaving, isDirty });
+  const detailsHelp = gatedHelp(MODE_DETAILS_HELP, detailsOpenBlock);
 
   const shareHelp = effectiveOrg
     ? "QR code and link that open this mode on WhatsApp."
@@ -1752,14 +1783,16 @@ export function ModesPage() {
               {/* #328 — description + first-contact welcome for THIS mode.
                   Not edit-gated at the button: viewers may read the welcome
                   copy; the panel disables the fields and Save without edit
-                  rights and says why. */}
+                  rights and says why. Gated on a dirty draft (#337): the
+                  sheet's PUT carries the whole document, and the sheet is
+                  modal, so a draft that is clean at open is clean at save. */}
               <Button
                 ref={detailsButtonRef}
                 size="sm"
                 variant="outline"
                 onClick={() => setDetailsOpen(true)}
-                disabled={isSaving}
-                title={MODE_DETAILS_HELP}
+                disabled={detailsOpenBlock !== null}
+                title={detailsHelp}
                 aria-describedby="mode-details-help"
                 aria-haspopup="dialog"
                 aria-expanded={detailsOpen}
@@ -1769,7 +1802,7 @@ export function ModesPage() {
                 Details
               </Button>
               <span id="mode-details-help" className="sr-only">
-                {MODE_DETAILS_HELP}
+                {detailsHelp}
               </span>
               {/* #277 — opens the ranking panel. Gated by the same right
                   the Save button and the group-chat switch are gated by; the

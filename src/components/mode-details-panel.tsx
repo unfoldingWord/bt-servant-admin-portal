@@ -19,6 +19,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  DESTRUCTIVE_NOTICE_CLASS,
+  MUTED_NOTICE_CLASS,
+} from "@/lib/notice-classes";
 import { TextareaField } from "@/components/textarea-field";
 
 /** Content id, so the page's opener can point `aria-controls` at it. */
@@ -168,11 +172,7 @@ function PanelBody({
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:px-5">
         {!canEdit && (
-          <p
-            id={readOnlyHelpId}
-            className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs leading-relaxed"
-            role="status"
-          >
+          <p id={readOnlyHelpId} className={MUTED_NOTICE_CLASS} role="status">
             Read-only. {NO_EDIT_RIGHTS_REASON}
           </p>
         )}
@@ -238,10 +238,7 @@ function PanelBody({
 
       <SheetFooter className="gap-3 border-t p-4 sm:px-5">
         {saveError && (
-          <p
-            className="bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2 text-xs"
-            role="alert"
-          >
+          <p className={DESTRUCTIVE_NOTICE_CLASS} role="alert">
             <span className="font-medium">Save failed.</span> {saveError}{" "}
             Nothing was saved — your changes are still here, so you can try
             again.

@@ -31,6 +31,10 @@ import {
 } from "@/lib/resource-servers";
 import { NO_EDIT_RIGHTS_REASON, SAVE_IN_FLIGHT_REASON } from "@/lib/mode-copy";
 import { useUiStore } from "@/lib/ui-store";
+import {
+  DESTRUCTIVE_NOTICE_CLASS,
+  MUTED_NOTICE_CLASS,
+} from "@/lib/notice-classes";
 import { cn } from "@/lib/utils";
 import { useResources } from "@/hooks/use-resources";
 import { Badge } from "@/components/ui/badge";
@@ -458,10 +462,7 @@ function PanelBody({
         )}
 
         {resources.error && (
-          <div
-            className="bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2.5 text-xs"
-            role="alert"
-          >
+          <div className={cn(DESTRUCTIVE_NOTICE_CLASS, "py-2.5")} role="alert">
             {resources.error.message}
           </div>
         )}
@@ -683,10 +684,7 @@ function PanelBody({
         </details>
 
         {lengthVerdict === "over-from-edit" && (
-          <p
-            className="bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2 text-xs"
-            role="alert"
-          >
+          <p className={DESTRUCTIVE_NOTICE_CLASS} role="alert">
             This ranking would push the mode document past the 64,000-character
             limit. Rank fewer resources, or trim the document.
           </p>
@@ -695,10 +693,7 @@ function PanelBody({
             user's fault and "rank fewer resources" is not their lever. Say what
             is true and what would help, without the alarm. */}
         {lengthVerdict === "over-untouched" && (
-          <p
-            className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs"
-            role="status"
-          >
+          <p className={MUTED_NOTICE_CLASS} role="status">
             This document is already too close to the 64,000-character limit to
             rewrite its priorities block. The saved ranking is untouched — trim
             the document elsewhere, and it can be updated again.
@@ -706,19 +701,13 @@ function PanelBody({
         )}
 
         {isOfferedRefresh && (
-          <p
-            className="bg-muted/40 text-muted-foreground border-border rounded-r-md border-l-2 px-3 py-2 text-xs leading-relaxed"
-            role="status"
-          >
+          <p className={MUTED_NOTICE_CLASS} role="status">
             {OFFERED_REFRESH_COPY}
           </p>
         )}
 
         {applyError && (
-          <p
-            className="bg-destructive/10 text-destructive border-destructive rounded-r-md border-l-2 px-3 py-2 text-xs"
-            role="alert"
-          >
+          <p className={DESTRUCTIVE_NOTICE_CLASS} role="alert">
             <span className="font-medium">Save failed.</span> {applyError}{" "}
             Nothing was saved — your ranking is still here, so you can apply
             again.
