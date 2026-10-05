@@ -6,7 +6,7 @@
 
 **Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **2026-07-31 was the first ultracode batch day**: three features shipped same-day through the new batch pipeline (parallel implement lanes → independent verify → dual external review via **codex + grok CLIs** → authorized merges) — **#209 group-chat toggle (PR #267), #261 MCP topology map (PR #268), #249 language admin trump + org-wide visibility (PR #271, −888 net lines via #247 carve-out deletion)**. #249 went design→decided→spec→shipped in one day after Elsy's morning +1. Review loops earned their keep: 5 confirmed defects fixed post-verification, including a real BFF authz gap (`requires_group` invisible to the verb-rights gate) caught only by the deep-tree lens in _untouched_ code. #195 premise-check stopped a half-feature; exact worker ask filed as worker#346. #254 eval harness built (9 scenarios / 32 checks over baruch's real prompt assembly, `claude-sonnet-4-6` vs `claude-opus-4-8`); blocked only on an API credential (Ian's lane). **2026-08-10 was ultracode day 2**: #277 resource prioritization went design→decided→built→dual-external-approved same day (**PR #282**, awaiting merge) via a mechanism pivot that un-gated it from worker#257 item 2 — the ordering persists as a generated block in the mode document's `## Tool Guidance` section (the document IS the injection; zero worker changes). Same session: #269/#279 root-caused by live MCP probes as a worker adapter gap (worker#354 filed — TC Helps has enumeration on both endpoints; the issues' premises were wrong), #278 scoped with a recommendation (global server "library" key; partner orgs currently get zero MCP fan-out even in chat), and the #264 five-movements mode document drafted from the live obs-5m-mcp server and posted for Tim/Elsy review.
 **2026-08-11 was ultracode day 3 — the fastest full cycle yet**: Ian settled the worker#236 org-default-language contract in the morning; by mid-afternoon **four PRs were built, adversarially verified, dual-external-reviewed to convergence, and merged** — #288 (#286 org default language + #272 cleanups, contract-first against the not-yet-implemented worker route), #289 (#230 follow-up: one server-attribution join across all three resource surfaces, emission bytes frozen), #290 (#281 outside-priority disclosure riding the #277 Tool Guidance block, zero worker changes), #287 (gitleaks-action v2→v3, the last Node-20 action runtime). Review pipeline: per-lane adversarial verify → 3 codex+grok rounds → final delta pass; ~20 confirmed findings fixed, including a dual-confirmed P1 data-loss path in orphan repair, a CommonMark lazy-continuation bug that would have inverted the disclosure's meaning for the model, an Apply/autosave revert race, and a grok-forced design reversal (emission frozen, hardening display-only). Also merged same morning: **PR #282 (#277) and the 08-10 docs PR**; Elsy's dupe re-files #284/#285 got diagnosis cross-links; follow-ups filed as #293/#294.
-**Last Updated**: 2026-09-18
+**Last Updated**: 2026-10-05
 **Demo target**: June 9 (passed) — outcome to be summarized
 **Last prod deploy**: **Worker prod is v2.54.0** — Ian's `Deploy` run on 2026-09-11 at `3311e89` (Signal voice fixes), which already includes #311's first-contact welcome (worker #423, v2.52.0). Before that, 2026-09-09: worker → v2.50.0 (run `34352633458`) and web-client → v1.12.2 (run `34373280525`), putting the pt-BR interface live in prod. **Portal prod is still v1.12.0** (2026-08-17, `36ad8ca`). `main` is now **v1.16.1**; a promotion would carry #198 import, #303/#307 editor fixes, #308, #311 (QR + welcome authoring), #278 copy, #292 MCP server page, #328 mode details, #337 and the #330 CI change. Scoping is waiting on Elsy's #292 verify (nudged 2026-09-16). _(Prior: 2026-08-05 portal v1.11.0 + worker 2.29→2.37; portal later reached v1.12.0 on 08-17.)_
 
@@ -113,6 +113,35 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-10-05 — worker PR refresh without force-pushes; a new braces advisory turned every worker PR red (fix: worker #445); #432 item 2 split to #444; gateway #45 deferred
+
+**Lane:** Ian leads the BT Servant repos. Everything here is contributor upkeep on our own PRs. No merges, and nothing touched prod.
+
+- **The version collision on #436 is resolved.** main reached 2.55.1 in #441 (abelpz, 09-30), the same number #436 carried. Per the DRI ("not my favorite" to force-pushes), branches now take main through **a merge commit, not a rebase**. Each push is a fast-forward.
+  - **#436 → 2.55.2** at `adefc50` (merge `e8cd2a6` + bump). Local checks passed: lint, typecheck, 1608/1608 tests.
+  - **#435 → 2.55.4** is prepared the same way at `d08385e` (1605/1605 tests). **Not pushed**: it would just redeploy staging into the red audit below.
+  - **#437 (2.56.0)** is still CONFLICTING, but only on version files. It gets the same merge treatment after #445.
+  - **#443 (2.55.3)** is untouched.
+  - Version map (provisional; re-bumped on the post-merge update if the order changes): #436 2.55.2, #443 2.55.3, #435 2.55.4, #445 2.55.5, #437 2.56.0.
+- **A new advisory: worker #445** (`chore(deps): lint-staged 15 → 17`, v2.55.5).
+  - **The problem:** GHSA-vfj7-8cjw-p6xm (high; braces ≤3.0.3 stack-exhaustion; published 09-18; no patched release) fails the `Security Audit` job. Every later job is skipped, so every worker PR shows red.
+  - **Where `braces` comes from:** dev tooling only (`lint-staged 15 → micromatch → braces`).
+  - **The fix:** lint-staged 17 uses picomatch, so `braces` leaves the lockfile. `audit:all` is clean, and 1597 tests pass locally.
+  - **Order:** merging #445 first turns the others green.
+  - **Not verified in CI:** GitHub Actions had an incident on 10-05 (degraded, then a major outage). #445's CI jobs were cancelled before getting a runner.
+- **Worker #432 item 2 is split to worker #444** (409 on `PUT []`). Correction found while scoping: the portal never sends `PUT`; removing the last server goes through `DELETE` (worker `src/index.ts:643`), which writes `[]`. So a `PUT`-only guard misses that path, and a guard that also covers `DELETE` would block the portal. #444 recommends not building it. #432 closes by hand when #435 merges, since #435 says "Addresses", not "Closes".
+- **Gateway #45: deferred (DRI)** until worker #443 merges and its lock-hold timing is seen on staging. The fix is gateway-only: the worker already treats a non-2xx `sendWelcome` as a failure. Awaiting the Meta send would make every progress POST synchronous. Scope comment posted.
+- **Not done:** the reply to abelpz on #436, the status notes, the #435/#436 title updates and requesting Ian on #435. All of them wait for green CI to cite.
+
+**Next:** when Actions recovers, re-run #445 and #436 CI. Then, after #445 merges (Ian), give #435 and #437 a merge from main and push them one at a time, pacing on CI because each push redeploys staging. Then post the abelpz reply and the status notes.
+
+### 2026-10-02 — worker #443 opened (#422 welcome hardening, v2.55.3); portal follow-ups #344 and #345 filed
+
+Recorded from the tc-mobile tracker's 2026-10-02 entry, under "Other repos, contributor hygiene only":
+- **Worker PR #443** (#422) opened: atomic welcome record, complete-mode fold, pending marker, v2.55.3. It waits on Ian's Codex pass. Codex had hit its usage limit that day, so it only had grok r3 APPROVE.
+- **Portal #344** filed (follow-up to #337: three ungated controls; the toggles and the priorities Apply send a dirty draft ungated).
+- **Portal #345** filed (follow-up to #336: the share panel, blocked on worker #437).
 
 ### 2026-09-18 — #339/#340 merged (v1.16.1); #341 diagnosed on staging logs + worker fix PR #436; #336 scoped and built as worker PR #437 (v2.56.0); both review-clean; tc-mobile #457 review handed off
 
