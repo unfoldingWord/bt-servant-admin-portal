@@ -139,6 +139,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 ### 2026-10-02 — worker #443 opened (#422 welcome hardening, v2.55.3); portal follow-ups #344 and #345 filed
 
 Recorded from the tc-mobile tracker's 2026-10-02 entry, under "Other repos, contributor hygiene only":
+
 - **Worker PR #443** (#422) opened: atomic welcome record, complete-mode fold, pending marker, v2.55.3. It waits on Ian's Codex pass. Codex had hit its usage limit that day, so it only had grok r3 APPROVE.
 - **Portal #344** filed (follow-up to #337: three ungated controls; the toggles and the priorities Apply send a dirty draft ungated).
 - **Portal #345** filed (follow-up to #336: the share panel, blocked on worker #437).
