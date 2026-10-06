@@ -40,7 +40,11 @@ import { downloadBlob } from "@/lib/download-blob";
 import {
   DOCUMENT_UNSAVED_REASON,
   NO_EDIT_RIGHTS_REASON,
+  PUBLISH_UNSAVED_REASON,
+  REQUIRES_GROUP_UNSAVED_REASON,
+  RESOURCE_PRIORITIES_UNSAVED_REASON,
   SAVE_IN_FLIGHT_REASON,
+  describeDraftCarryingBlock,
   gatedHelp,
 } from "@/lib/mode-copy";
 import {
@@ -258,9 +262,11 @@ export function ModesPage() {
   // the draft but record nothing on failure — a failure there may be theirs,
   // not the document's, and the autosave re-fire on isPending → false
   // settles which. Once recorded, autosave stops retrying it (Frank P2 on
-  // PR #122); that is the only refusal — the editor's Save, the toggles and
-  // label sync send it again on purpose, which is the recovery, alongside
-  // editing further. Every success path clears it through `syncTrackers`
+  // PR #122); that is the only refusal — the editor's Save and label sync
+  // send it again on purpose, which is the recovery, alongside editing
+  // further. The flag toggles and the Details and priorities openers do not:
+  // they are gated off on any dirty draft (#337, #344), so recovery runs
+  // through the editor. Every success path clears it through `syncTrackers`
   // (directly, or via `markModeSynced`).
   const [lastFailedDoc, setLastFailedDoc] = useState<string | null>(null);
   const [headings, setHeadings] = useState<MarkdownHeading[]>([]);
@@ -1108,6 +1114,10 @@ export function ModesPage() {
       if (inFlightSavesRef.current > 0 || saveMode.isPending) {
         throw new Error(SAVE_IN_FLIGHT_REASON);
       }
+      // #344 — a dirty draft never rides a flag PUT: the publish controls
+      // are gated off on one, and this is the backstop for focus leaking
+      // from the unpublish dialog to the editor, reported inline the same way.
+      if (isDirtyRef.current) throw new Error(PUBLISH_UNSAVED_REASON);
       const sent: ModeFlags = { ...lastSyncedFlagsRef.current, published };
       inFlightSavesRef.current += 1;
       try {
@@ -1153,6 +1163,8 @@ export function ModesPage() {
       if (inFlightSavesRef.current > 0 || saveMode.isPending) {
         throw new Error(SAVE_IN_FLIGHT_REASON);
       }
+      // #344 — same dirty-draft backstop as Publish; the switch is gated off.
+      if (isDirtyRef.current) throw new Error(REQUIRES_GROUP_UNSAVED_REASON);
       const target = selectedMode;
       const sent: ModeFlags = {
         ...lastSyncedFlagsRef.current,
@@ -1293,6 +1305,10 @@ export function ModesPage() {
       // flight, and an error here is about no document in particular — the
       // draft-divergence effect below would clear it on the next paint anyway.
       if (inFlightSavesRef.current > 0 || saveMode.isPending) return;
+      // No dirty-draft check here, unlike the toggles: the opener is gated on
+      // a clean draft (#344) and the sheet is modal, but a failed Apply
+      // leaves its own document in the draft, and Apply again must still
+      // send it.
       const target = selectedMode;
       const sent = lastSyncedFlagsRef.current;
       // Show the edit immediately; the flush below is what persists it. On
@@ -1626,10 +1642,27 @@ export function ModesPage() {
   // Base description, plus the reason when the switch is gated off. See
   // the sr-only span below for why the title isn't enough on its own.
   const rightsReason = canEditSelected ? null : NO_EDIT_RIGHTS_REASON;
-  const requiresGroupHelp = gatedHelp(REQUIRES_GROUP_HELP, rightsReason);
+  // #344 — the other controls whose PUT carries the draft, gated like
+  // Details below. Rights outrank them: a viewer never has a dirty draft.
+  const publishBlock = describeDraftCarryingBlock(
+    { isSaving, isDirty },
+    PUBLISH_UNSAVED_REASON
+  );
+  const requiresGroupBlock = describeDraftCarryingBlock(
+    { isSaving, isDirty },
+    REQUIRES_GROUP_UNSAVED_REASON
+  );
+  const prioritiesOpenBlock = describeDraftCarryingBlock(
+    { isSaving, isDirty },
+    RESOURCE_PRIORITIES_UNSAVED_REASON
+  );
+  const requiresGroupHelp = gatedHelp(
+    REQUIRES_GROUP_HELP,
+    rightsReason ?? requiresGroupBlock
+  );
   const resourcePrioritiesHelp = gatedHelp(
     RESOURCE_PRIORITIES_HELP,
-    rightsReason
+    rightsReason ?? prioritiesOpenBlock
   );
   // #337 — Details opens only on a clean draft with nothing in flight, like
   // Clone and Import. A viewer without edit rights never has a dirty draft,
@@ -1680,6 +1713,7 @@ export function ModesPage() {
               // the publish controls against EVERY in-flight save, which
               // is what keeps two flag-carrying PUTs from overlapping.
               isSettingPublished={isSaving}
+              publishDisabledReason={publishBlock}
               showDrafts={showDrafts}
               onToggleShowDrafts={setShowDrafts}
               canCreate={canCreate}
@@ -1757,7 +1791,7 @@ export function ModesPage() {
                   onCheckedChange={(checked) => {
                     handleSetRequiresGroup(checked).catch(() => {});
                   }}
-                  disabled={!canEditSelected || isSaving}
+                  disabled={!canEditSelected || requiresGroupBlock !== null}
                 />
                 <Label
                   htmlFor="mode-requires-group"
@@ -1806,12 +1840,14 @@ export function ModesPage() {
               </span>
               {/* #277 — opens the ranking panel. Gated by the same right
                   the Save button and the group-chat switch are gated by; the
-                  panel itself refuses to apply without it as a backstop. */}
+                  panel itself refuses to apply without it as a backstop.
+                  Gated on a dirty draft too (#344), like Details: Apply
+                  splices into the draft, and the sheet is modal. */}
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => setPrioritiesOpen(true)}
-                disabled={!canEditSelected || isSaving}
+                disabled={!canEditSelected || prioritiesOpenBlock !== null}
                 title={resourcePrioritiesHelp}
                 aria-describedby="mode-resource-priorities-help"
               >

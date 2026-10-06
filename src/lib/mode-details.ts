@@ -6,6 +6,7 @@ import {
   DOCUMENT_UNSAVED_REASON,
   NO_EDIT_RIGHTS_REASON,
   SAVE_IN_FLIGHT_REASON,
+  describeDraftCarryingBlock,
 } from "@/lib/mode-copy";
 
 // #328 — editing an existing mode's description and first-contact welcome.
@@ -67,9 +68,7 @@ export function describeModeDetailsOpenBlock(gate: {
   /** The editor's draft differs from what the server holds. */
   isDirty: boolean;
 }): string | null {
-  if (gate.isSaving) return SAVE_IN_FLIGHT_REASON;
-  if (gate.isDirty) return DOCUMENT_UNSAVED_REASON;
-  return null;
+  return describeDraftCarryingBlock(gate, DOCUMENT_UNSAVED_REASON);
 }
 
 /** Everything that can stop a details save, as the panel knows it. */

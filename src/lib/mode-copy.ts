@@ -38,3 +38,37 @@ export const DOCUMENT_UNSAVED_REASON =
 export function gatedHelp(help: string, reason: string | null): string {
   return reason ? `${help} ${reason}` : help;
 }
+
+/**
+ * #344 — the same rule as the Details opener (#337), for the other header
+ * controls whose PUT carries the editor's draft: Publish / Unpublish, the
+ * Requires-group switch, and the Resource-priorities opener. On a rejected
+ * draft each would fail with the document's error; on an untried one it
+ * would persist the draft as a side effect. Recovery is the editor's own
+ * Save (or fixing the document), not re-sending it through a toggle.
+ */
+export const PUBLISH_UNSAVED_REASON =
+  "Save your changes before publishing or unpublishing.";
+export const REQUIRES_GROUP_UNSAVED_REASON =
+  "Save your changes before changing the group-chat setting.";
+export const RESOURCE_PRIORITIES_UNSAVED_REASON =
+  "Save your changes before ranking resources.";
+
+/**
+ * Why a control that sends the editor's draft is gated off, or null when it
+ * is not: a save in flight, else an unsaved draft, worded for that control.
+ * In flight outranks dirty: an autosave that lands makes the draft clean.
+ */
+export function describeDraftCarryingBlock(
+  gate: {
+    /** A save is in flight somewhere on the page. */
+    isSaving: boolean;
+    /** The editor's draft differs from what the server holds. */
+    isDirty: boolean;
+  },
+  unsavedReason: string
+): string | null {
+  if (gate.isSaving) return SAVE_IN_FLIGHT_REASON;
+  if (gate.isDirty) return unsavedReason;
+  return null;
+}

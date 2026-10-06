@@ -117,6 +117,12 @@ interface ModeSelectorProps {
       route through `handleSelectMode` in modes.tsx defends the race
       window when focus escapes the modal. */
   retireDisabledReason: string | null;
+  /** Non-null disables the Publish button and the Unpublish trigger and
+      shows the string as their tooltip. The flag PUT carries the editor's
+      draft, so it is held while that draft is unsaved or a save is in
+      flight (#344) — a rejected draft would fail it with the document's
+      error. */
+  publishDisabledReason: string | null;
   /** Per-row edit predicate for the retire dialog's "Forward to" list
       (#257). The worker requires EDIT rights on the CANONICAL forward
       target (retire widens its alias array), so the dialog must not
@@ -157,6 +163,7 @@ export function ModeSelector({
   renameDisabledReason,
   cloneDisabledReason,
   retireDisabledReason,
+  publishDisabledReason,
   canEditTargetMode,
 }: ModeSelectorProps) {
   const [showCreate, setShowCreate] = useState(false);
@@ -460,7 +467,10 @@ export function ModeSelector({
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={isSettingPublished}
+                      disabled={
+                        isSettingPublished || publishDisabledReason !== null
+                      }
+                      title={publishDisabledReason ?? undefined}
                     >
                       <SendHorizontal className="mr-1.5 size-3.5" />
                       Unpublish
@@ -500,7 +510,10 @@ export function ModeSelector({
                 <Button
                   variant="ghost"
                   size="sm"
-                  disabled={isSettingPublished}
+                  disabled={
+                    isSettingPublished || publishDisabledReason !== null
+                  }
+                  title={publishDisabledReason ?? undefined}
                   onClick={() => {
                     // No confirmation dialog on the publish path, so no
                     // inline UI to render an error into. Catch the
