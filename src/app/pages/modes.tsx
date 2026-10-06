@@ -1309,10 +1309,14 @@ export function ModesPage() {
       // flight, and an error here is about no document in particular — the
       // draft-divergence effect below would clear it on the next paint anyway.
       if (inFlightSavesRef.current > 0 || saveMode.isPending) return;
-      // No dirty-draft check here, unlike the toggles: the opener is gated on
-      // a clean draft (#344) and the sheet is modal, but a failed Apply
-      // leaves its own document in the draft, and Apply again must still
-      // send it.
+      // #344 — the opener is gated on a clean draft and the sheet is modal,
+      // so a dirty draft here is either this sheet's own failed Apply (it
+      // left `nextDocument` in the draft as `lastFailedDoc`, and Apply again
+      // must still send it) or an edit that leaked to the editor through
+      // the modal, which must not ride the ranking PUT. Silent for the same
+      // reason as the in-flight refusal: the divergence effect would clear
+      // an error on the next paint.
+      if (isDirtyRef.current && draftRef.current !== lastFailedDoc) return;
       const target = selectedMode;
       const sent = lastSyncedFlagsRef.current;
       // Show the edit immediately; the flush below is what persists it. On
@@ -1372,6 +1376,7 @@ export function ModesPage() {
       markModeSynced,
       canEditSelected,
       contextOrg,
+      lastFailedDoc,
       resetPrioritiesPanel,
       saveMode,
       selectedMode,
