@@ -471,6 +471,9 @@ export function ModeSelector({
                         isSettingPublished || publishDisabledReason !== null
                       }
                       title={publishDisabledReason ?? undefined}
+                      aria-describedby={
+                        publishDisabledReason ? "mode-publish-help" : undefined
+                      }
                     >
                       <SendHorizontal className="mr-1.5 size-3.5" />
                       Unpublish
@@ -514,6 +517,9 @@ export function ModeSelector({
                     isSettingPublished || publishDisabledReason !== null
                   }
                   title={publishDisabledReason ?? undefined}
+                  aria-describedby={
+                    publishDisabledReason ? "mode-publish-help" : undefined
+                  }
                   onClick={() => {
                     // No confirmation dialog on the publish path, so no
                     // inline UI to render an error into. Catch the
@@ -528,6 +534,14 @@ export function ModeSelector({
                   Publish
                 </Button>
               ))}
+            {/* #344 — the title alone can't carry the reason: a disabled
+                button has pointer-events off, leaves the tab order, and gets
+                no hover on touch. Same sr-only idiom as the page's switch. */}
+            {canPublishSelected && publishDisabledReason && (
+              <span id="mode-publish-help" className="sr-only">
+                {publishDisabledReason}
+              </span>
+            )}
 
             {canRenameSelected && (
               <AlertDialog
