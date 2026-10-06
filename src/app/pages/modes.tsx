@@ -1117,7 +1117,10 @@ export function ModesPage() {
       // #344 — a dirty draft never rides a flag PUT: the publish controls
       // are gated off on one, and this is the backstop for focus leaking
       // from the unpublish dialog to the editor, reported inline the same way.
-      if (isDirtyRef.current) throw new Error(PUBLISH_UNSAVED_REASON);
+      // Editors only, like the gate (see `publishBlock`).
+      if (canEditSelected && isDirtyRef.current) {
+        throw new Error(PUBLISH_UNSAVED_REASON);
+      }
       const sent: ModeFlags = { ...lastSyncedFlagsRef.current, published };
       inFlightSavesRef.current += 1;
       try {
@@ -1138,6 +1141,7 @@ export function ModesPage() {
       }
     },
     [
+      canEditSelected,
       markModeSynced,
       contextOrg,
       draft,
@@ -1643,9 +1647,13 @@ export function ModesPage() {
   // the sr-only span below for why the title isn't enough on its own.
   const rightsReason = canEditSelected ? null : NO_EDIT_RIGHTS_REASON;
   // #344 — the other controls whose PUT carries the draft, gated like
-  // Details below. Rights outrank them: a viewer never has a dirty draft.
+  // Details below. The switch and the priorities opener are edit-gated
+  // first. Publish is not: publish rights don't imply edit rights, and a
+  // read-only draft can still differ from the server's (CodeMirror rewrites
+  // CRLF to LF on load) with no way for that user to save it, so only an
+  // editor's dirty draft holds Publish.
   const publishBlock = describeDraftCarryingBlock(
-    { isSaving, isDirty },
+    { isSaving, isDirty: canEditSelected && isDirty },
     PUBLISH_UNSAVED_REASON
   );
   const requiresGroupBlock = describeDraftCarryingBlock(
