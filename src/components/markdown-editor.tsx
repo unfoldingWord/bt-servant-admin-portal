@@ -208,8 +208,10 @@ export const MarkdownEditor = forwardRef<
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
     // Seed TOC + active line on mount so consumers don't need a
-    // separate effect for the initial render.
-    const initialHeadings = parseHeadings(value);
+    // separate effect for the initial render. Parsed from the editor's own
+    // text, not `value`: the line numbers must be CodeMirror's, and a value
+    // with CR line endings counts lines differently (#347).
+    const initialHeadings = parseHeadings(view.state.doc.toString());
     headingsRef.current = initialHeadings;
     onHeadingsChangeRef.current?.(initialHeadings);
     onActiveLineChangeRef.current?.(computeActiveLine(view, initialHeadings));
