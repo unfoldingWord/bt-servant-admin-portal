@@ -41,13 +41,13 @@ export function planExternalValueSync(
   state: EditorState,
   value: string
 ): TransactionSpec | null {
-  const shown = state.doc.toString();
   // The typing round trip (onChange → parent → value) lands here on every
   // keystroke with the editor's own text; one string compare settles it.
-  if (shown === value) return null;
-  if (state.toText(value).toString() === shown) return null;
+  if (state.doc.toString() === value) return null;
+  const next = state.toText(value);
+  if (next.eq(state.doc)) return null;
   return {
-    changes: { from: 0, to: state.doc.length, insert: value },
+    changes: { from: 0, to: state.doc.length, insert: next },
     annotations: externalValueSync.of(true),
   };
 }

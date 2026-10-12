@@ -2,6 +2,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
 } from "react";
@@ -230,7 +231,13 @@ export const MarkdownEditor = forwardRef<
   // (typing → onChange → parent state → value prop → here). "Already shows"
   // ignores line endings, which CodeMirror always stores as LF; see
   // `lib/editor-value-sync`.
-  useEffect(() => {
+  //
+  // A layout effect, so it runs inside the commit that carries the new
+  // `value`. CodeMirror takes input outside React; as a passive effect this
+  // left a gap after the commit in which a keystroke could reach the old
+  // text and, now that applying `value` is not echoed back, have that old
+  // text plus the keystroke become the parent's draft for the new document.
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     const sync = planExternalValueSync(view.state, value);
