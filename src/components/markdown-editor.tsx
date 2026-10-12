@@ -23,6 +23,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 
 import { cn } from "@/lib/utils";
+import { hasUserEdit, planExternalValueSync } from "@/lib/editor-value-sync";
 import { parseHeadings } from "@/lib/markdown-headings";
 import { findCommentRanges } from "@/lib/markdown-comment-ranges";
 import type { MarkdownHeading } from "@/types/markdown";
@@ -180,7 +181,11 @@ export const MarkdownEditor = forwardRef<
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           const text = update.state.doc.toString();
-          onChangeRef.current(text);
+          // Only edits the parent has not seen. Applying the `value` prop
+          // (the sync effect below) is not one: reporting it back would
+          // replace the parent's copy with CodeMirror's LF text, and a CRLF
+          // document would look edited the moment it loaded (#347).
+          if (hasUserEdit(update.transactions)) onChangeRef.current(text);
           const headings = parseHeadings(text);
           headingsRef.current = headings;
           onHeadingsChangeRef.current?.(headings);
@@ -218,16 +223,16 @@ export const MarkdownEditor = forwardRef<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // External value → editor sync. The guard prevents this from
-  // overwriting in-flight user edits (typing → onChange → parent state
-  // → value prop → here, where value already matches the editor's doc).
+  // External value → editor sync. The plan is null when the editor already
+  // shows `value`, which keeps this from overwriting in-flight user edits
+  // (typing → onChange → parent state → value prop → here). "Already shows"
+  // ignores line endings, which CodeMirror always stores as LF; see
+  // `lib/editor-value-sync`.
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    if (view.state.doc.toString() === value) return;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: value },
-    });
+    const sync = planExternalValueSync(view.state, value);
+    if (sync !== null) view.dispatch(sync);
   }, [value]);
 
   // ReadOnly toggle → reconfigure compartment in place. No remount,
