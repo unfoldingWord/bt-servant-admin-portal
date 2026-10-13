@@ -1654,9 +1654,9 @@ export function ModesPage() {
   // #344 — the other controls whose PUT carries the draft, gated like
   // Details below. The switch and the priorities opener are edit-gated
   // first. Publish is not: publish rights don't imply edit rights, and a
-  // read-only draft can still differ from the server's (CodeMirror rewrites
-  // CRLF to LF on load) with no way for that user to save it, so only an
-  // editor's dirty draft holds Publish.
+  // user who cannot save must never be told to, so only an editor's dirty
+  // draft holds Publish. (Until #347 a read-only draft did differ from the
+  // server's on a CRLF document: the editor handed it back as LF on load.)
   const publishBlock = describeDraftCarryingBlock(
     { isSaving, isDirty: canEditSelected && isDirty },
     PUBLISH_UNSAVED_REASON
