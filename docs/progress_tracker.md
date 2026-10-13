@@ -6,9 +6,9 @@
 
 **Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **2026-07-31 was the first ultracode batch day**: three features shipped same-day through the new batch pipeline (parallel implement lanes → independent verify → dual external review via **codex + grok CLIs** → authorized merges) — **#209 group-chat toggle (PR #267), #261 MCP topology map (PR #268), #249 language admin trump + org-wide visibility (PR #271, −888 net lines via #247 carve-out deletion)**. #249 went design→decided→spec→shipped in one day after Elsy's morning +1. Review loops earned their keep: 5 confirmed defects fixed post-verification, including a real BFF authz gap (`requires_group` invisible to the verb-rights gate) caught only by the deep-tree lens in _untouched_ code. #195 premise-check stopped a half-feature; exact worker ask filed as worker#346. #254 eval harness built (9 scenarios / 32 checks over baruch's real prompt assembly, `claude-sonnet-4-6` vs `claude-opus-4-8`); blocked only on an API credential (Ian's lane). **2026-08-10 was ultracode day 2**: #277 resource prioritization went design→decided→built→dual-external-approved same day (**PR #282**, awaiting merge) via a mechanism pivot that un-gated it from worker#257 item 2 — the ordering persists as a generated block in the mode document's `## Tool Guidance` section (the document IS the injection; zero worker changes). Same session: #269/#279 root-caused by live MCP probes as a worker adapter gap (worker#354 filed — TC Helps has enumeration on both endpoints; the issues' premises were wrong), #278 scoped with a recommendation (global server "library" key; partner orgs currently get zero MCP fan-out even in chat), and the #264 five-movements mode document drafted from the live obs-5m-mcp server and posted for Tim/Elsy review.
 **2026-08-11 was ultracode day 3 — the fastest full cycle yet**: Ian settled the worker#236 org-default-language contract in the morning; by mid-afternoon **four PRs were built, adversarially verified, dual-external-reviewed to convergence, and merged** — #288 (#286 org default language + #272 cleanups, contract-first against the not-yet-implemented worker route), #289 (#230 follow-up: one server-attribution join across all three resource surfaces, emission bytes frozen), #290 (#281 outside-priority disclosure riding the #277 Tool Guidance block, zero worker changes), #287 (gitleaks-action v2→v3, the last Node-20 action runtime). Review pipeline: per-lane adversarial verify → 3 codex+grok rounds → final delta pass; ~20 confirmed findings fixed, including a dual-confirmed P1 data-loss path in orphan repair, a CommonMark lazy-continuation bug that would have inverted the disclosure's meaning for the model, an Apply/autosave revert race, and a grok-forced design reversal (emission frozen, hardening display-only). Also merged same morning: **PR #282 (#277) and the 08-10 docs PR**; Elsy's dupe re-files #284/#285 got diagnosis cross-links; follow-ups filed as #293/#294.
-**Last Updated**: 2026-10-05
+**Last Updated**: 2026-10-13
 **Demo target**: June 9 (passed) — outcome to be summarized
-**Last prod deploy**: **Worker prod is v2.54.0** — Ian's `Deploy` run on 2026-09-11 at `3311e89` (Signal voice fixes), which already includes #311's first-contact welcome (worker #423, v2.52.0). Before that, 2026-09-09: worker → v2.50.0 (run `34352633458`) and web-client → v1.12.2 (run `34373280525`), putting the pt-BR interface live in prod. **Portal prod is still v1.12.0** (2026-08-17, `36ad8ca`). `main` is now **v1.16.1**; a promotion would carry #198 import, #303/#307 editor fixes, #308, #311 (QR + welcome authoring), #278 copy, #292 MCP server page, #328 mode details, #337 and the #330 CI change. Scoping is waiting on Elsy's #292 verify (nudged 2026-09-16). _(Prior: 2026-08-05 portal v1.11.0 + worker 2.29→2.37; portal later reached v1.12.0 on 08-17.)_
+**Last prod deploy**: _2026-10-12 correction, from GitHub runs only (prod was not read):_ a worker production `Deploy` run succeeded on 2026-10-12 at 16:12Z on `5c6f76b` (v2.56.1, run `38275727380`), so the v2.54.0 figure below is out of date; that deploy predates the #341 fix (v2.56.2). Portal `main` is **v1.16.2** (#344 fix, PR #346), not v1.16.1. _Earlier record:_ **Worker prod is v2.54.0** — Ian's `Deploy` run on 2026-09-11 at `3311e89` (Signal voice fixes), which already includes #311's first-contact welcome (worker #423, v2.52.0). Before that, 2026-09-09: worker → v2.50.0 (run `34352633458`) and web-client → v1.12.2 (run `34373280525`), putting the pt-BR interface live in prod. **Portal prod is still v1.12.0** (2026-08-17, `36ad8ca`). `main` is now **v1.16.1**; a promotion would carry #198 import, #303/#307 editor fixes, #308, #311 (QR + welcome authoring), #278 copy, #292 MCP server page, #328 mode details, #337 and the #330 CI change. Scoping is waiting on Elsy's #292 verify (nudged 2026-09-16). _(Prior: 2026-08-05 portal v1.11.0 + worker 2.29→2.37; portal later reached v1.12.0 on 08-17.)_
 
 ## Milestones
 
@@ -113,6 +113,47 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-10-12 — #347 CRLF fix built (PR #348, v1.16.3, review-clean, awaiting merge); #310 answered (not blocked, premise corrected); #292 pass acknowledged; worker #436 merged by Ian; #445 superseded; #446 refreshed to 2.56.3
+
+**Lane:** Ian leads the BT Servant repos. Four parallel lanes, comments drafted first and posted on Seth's approval through the picker. No merges by us, and nothing touched prod. The review and this entry were finished on 2026-10-13.
+
+**Not recorded before, from 2026-10-06:** PR #346 (#344: gate Publish, Requires-group and priorities on a clean draft, v1.16.2) merged to `main` at `37f51ac`. #347 was filed for its residuals. Worker PRs #445 (deps) and #446 (#342 fabricated resource availability, with research posted on #342) were opened.
+
+**#347 — mode editor residuals from #346.**
+
+- **CRLF: confirmed and fixed in PR #348** (`fix/347-crlf-dirty-and-focus-leak`, head `86d63a8`, v1.16.3).
+  - **It was worse than filed.** On `main`, opening a CRLF mode document with edit rights autosaves it back as LF, so stored bytes change just by opening it. A publish-only user sees "Unsaved changes" permanently.
+  - **Cause:** the editor's sync effect compared its LF text to the CRLF prop byte for byte, replaced the document, and reported that replace through `onChange` as an edit.
+  - **Fix:** new `src/lib/editor-value-sync.ts` treats a line-ending-only difference as no change and keeps prop-driven syncs out of `onChange`. Stored bytes are untouched until a real edit. Tests 1094 → 1116.
+  - **Review:** code-review skill 2 rounds (4 findings fixed), then codex and grok one round each at `86d63a8`, both clean. CI green. Review record is on the PR.
+  - **The `uwreview` bench** was assigned and posted nothing in about 17 hours. Its coverage of this repo is unconfirmed.
+  - **Merge:** approved by Seth on clean and green. The agent's `gh pr merge` was blocked by the permission classifier, so the merge is Seth's to run.
+- **Priorities-sheet focus leak: not reproducible, no code** (Seth's pick). Typing, tabbing and scripted focus never reached the editor in Chromium; only a scripted paste event did. Note posted on #347, which stays open.
+- **Still true after #348:** a real edit to a CRLF document saves the whole document as LF. Whether CRLF documents exist in stored modes was not checked.
+- **New: #349** — Ctrl+Z straight after a mode loads empties the editor and autosave sends the empty document. Present on `main`. Seen against a mocked API only; the real worker's response is unknown.
+
+**#310 — "are we blocked?" (Elsy, 10-12).** Answered: no issue blocks it. The premise needed a correction: language drafts are stored per org (`{org}:languages`) and chat loads only the requesting org's list, so two orgs' drafts for one language do not collide. The exception is WhatsApp, where all traffic arrives as org `unfoldingWord`. No worker route can say "another org has this language" today, so a guard needs one worker PR and one portal PR, both ours. Six product questions are with Elsy (where partners author, whether the rule should span orgs, how "same language" is decided, existing duplicates, override, naming the owner).
+
+**#292 — MCP server management.** abelpz ran the staging pass as an org admin (list, add, edit, enable and use, disable: all OK). Reply posted mapping it to the 09-16 checklist. Left: delete (super-admin; `test-292-abel` is still in the staging pool, disabled), token set/keep/remove, partner-org view. His point that a mistyped id cannot be fixed by its owner is confirmed in code (`mcp-server-dialog.tsx:216`, `worker/config.ts:1426`) and put to Elsy as two options. The staging `obs-5m` error is his to look into.
+
+**#341 — resource priority.** Ian merged worker #436 (v2.56.2) on 10-12. Note posted for Elsy: the mode-text edit and the staging re-test are hers, ideally tested before and after the edit. Hard enforcement stays as worker #438.
+
+**Worker PRs (contributor upkeep).**
+
+- **#445 is superseded.** Ian's #447 (10-11) moved lint-staged to 16.4.0, the MCP SDK to 1.32.1 and added the overrides; Security Audit is green on `main`. Only a vitest 4.1.11 bump (moderate, dev-only advisory, below the CI gate) would remain. Asked Ian whether to close or shrink it. The 10-05 line saying every worker PR is red until #445 lands no longer holds.
+- **#446 (#342)** took `main` through a merge commit and a separate bump to **2.56.3**, pushed at `28ad197`. All seven checks pass. Staging was redeployed from it (PR head merged with `main`, so the #341 fix is still served). The status note for Ian is drafted, not posted, and the PR title still says v2.55.6.
+- **#443, #435, #437** are merged with `main` and bumped locally (2.56.5, 2.56.6, 2.57.0), all local gates green, **not pushed**. Worktrees: `fix-422-welcome-hardening`, `fix-432-empty-pool-warn`, `lane-437-refresh`. The numbering leaves 2.56.4 unused now that #446 took 2.56.3.
+- **Stale local state in the worker checkout:** `feat-336-cross-org-modes` holds an unpushed 10-05 rebase that would need a force-push (discard it); `fix-215-retire-org-prompt-overrides` has uncommitted changes (not examined).
+
+**Next:**
+
+1. Seth: merge PR #348, then this tracker PR.
+2. Seth: OK the #446 status note for Ian; decide whether to push #443, #435 and #437 (one staging redeploy each).
+3. Elsy: the six #310 questions; the #292 id/delete choice and the `test-292-abel` delete; the #341 mode-text edit and re-test.
+4. Ian: close or shrink #445; Codex pass and merge calls on #446, #443, #437, #435.
+5. #349 is the next unblocked portal fix. It needs a decision on whether a priorities Apply stays undoable.
+6. Remove the merged portal worktrees (`lane-p-344`, and `lane-p-347` after #348 merges).
 
 ### 2026-10-05 — worker PR refresh without force-pushes; a new braces advisory turned every worker PR red (fix: worker #445); #432 item 2 split to #444; gateway #45 deferred
 
