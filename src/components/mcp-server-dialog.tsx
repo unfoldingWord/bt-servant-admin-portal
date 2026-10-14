@@ -220,7 +220,8 @@ export function McpServerDialog({
               />
               {!isEdit && (
                 <p className="text-muted-foreground text-xs">
-                  A stable identifier. Can&rsquo;t be changed later.
+                  A stable identifier. Can&rsquo;t be changed later, and only
+                  unfoldingWord can delete a server, so check it before adding.
                 </p>
               )}
             </div>
