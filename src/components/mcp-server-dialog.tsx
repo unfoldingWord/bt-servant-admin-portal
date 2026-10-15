@@ -41,6 +41,9 @@ interface McpServerDialogProps {
   // Ids already in the pool — an add dialog rejects a duplicate before the
   // request so the user gets an inline reason, not a round-trip.
   existingIds: string[];
+  // Whether this user can delete pool entries (super-admins only). Others are
+  // warned in Add mode that a mistyped id can only be removed by unfoldingWord.
+  canDelete: boolean;
 }
 
 // A slug the worker will accept as an id/url segment. The worker validates
@@ -60,6 +63,7 @@ export function McpServerDialog({
   open,
   onOpenChange,
   existingIds,
+  canDelete,
 }: McpServerDialogProps) {
   const upsert = useUpsertMcpServer();
   const isEdit = server !== null;
@@ -217,11 +221,13 @@ export function McpServerDialog({
                 // so it's fixed once created (edit the name instead).
                 disabled={isEdit}
                 required
+                aria-describedby={isEdit ? undefined : "mcp-id-hint"}
               />
               {!isEdit && (
-                <p className="text-muted-foreground text-xs">
-                  A stable identifier. Can&rsquo;t be changed later, and only
-                  unfoldingWord can delete a server, so check it before adding.
+                <p id="mcp-id-hint" className="text-muted-foreground text-xs">
+                  {canDelete
+                    ? "A stable identifier. Can\u2019t be changed later."
+                    : "A stable identifier. Can\u2019t be changed later, and only unfoldingWord can delete a server, so check it before adding."}
                 </p>
               )}
             </div>
