@@ -275,7 +275,6 @@ export function McpServersPage() {
           if (!open) setEditingId(null);
         }}
         existingIds={existingIds}
-        canDelete={isSuperAdmin}
       />
 
       <AlertDialog

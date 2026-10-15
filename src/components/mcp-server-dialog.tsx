@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import type {
   McpServer,
@@ -41,9 +41,11 @@ interface McpServerDialogProps {
   // Ids already in the pool — an add dialog rejects a duplicate before the
   // request so the user gets an inline reason, not a round-trip.
   existingIds: string[];
-  // Whether this user can delete pool entries (super-admins only). Others are
-  // warned in Add mode that a mistyped id can only be removed by unfoldingWord.
-  canDelete: boolean;
+  // Add mode only: whether this user can delete pool entries (super-admins
+  // only). Anyone else is warned that a mistyped id can only be removed by
+  // unfoldingWord. Defaults to false so the warning shows unless the caller
+  // knows otherwise.
+  canDelete?: boolean;
 }
 
 // A slug the worker will accept as an id/url segment. The worker validates
@@ -63,10 +65,11 @@ export function McpServerDialog({
   open,
   onOpenChange,
   existingIds,
-  canDelete,
+  canDelete = false,
 }: McpServerDialogProps) {
   const upsert = useUpsertMcpServer();
   const isEdit = server !== null;
+  const idHintId = useId();
 
   // Initialised once per mount from the target. The parent keys this component
   // on the target, so switching servers (or opening Add) remounts with fresh
@@ -221,13 +224,14 @@ export function McpServerDialog({
                 // so it's fixed once created (edit the name instead).
                 disabled={isEdit}
                 required
-                aria-describedby={isEdit ? undefined : "mcp-id-hint"}
+                aria-describedby={isEdit ? undefined : idHintId}
               />
               {!isEdit && (
-                <p id="mcp-id-hint" className="text-muted-foreground text-xs">
+                <p id={idHintId} className="text-muted-foreground text-xs">
+                  A stable identifier. Can&rsquo;t be changed later
                   {canDelete
-                    ? "A stable identifier. Can\u2019t be changed later."
-                    : "A stable identifier. Can\u2019t be changed later, and only unfoldingWord can delete a server, so check it before adding."}
+                    ? "."
+                    : ", and only unfoldingWord can delete a server, so check it before adding."}
                 </p>
               )}
             </div>
