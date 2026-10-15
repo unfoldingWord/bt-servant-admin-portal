@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import type {
   McpServer,
@@ -41,6 +41,11 @@ interface McpServerDialogProps {
   // Ids already in the pool — an add dialog rejects a duplicate before the
   // request so the user gets an inline reason, not a round-trip.
   existingIds: string[];
+  // Add mode only: whether this user can delete pool entries (super-admins
+  // only). Anyone else is warned that a mistyped id can only be removed by
+  // unfoldingWord. Defaults to false so the warning shows unless the caller
+  // knows otherwise.
+  canDelete?: boolean;
 }
 
 // A slug the worker will accept as an id/url segment. The worker validates
@@ -60,9 +65,11 @@ export function McpServerDialog({
   open,
   onOpenChange,
   existingIds,
+  canDelete = false,
 }: McpServerDialogProps) {
   const upsert = useUpsertMcpServer();
   const isEdit = server !== null;
+  const idHintId = useId();
 
   // Initialised once per mount from the target. The parent keys this component
   // on the target, so switching servers (or opening Add) remounts with fresh
@@ -217,10 +224,14 @@ export function McpServerDialog({
                 // so it's fixed once created (edit the name instead).
                 disabled={isEdit}
                 required
+                aria-describedby={isEdit ? undefined : idHintId}
               />
               {!isEdit && (
-                <p className="text-muted-foreground text-xs">
-                  A stable identifier. Can&rsquo;t be changed later.
+                <p id={idHintId} className="text-muted-foreground text-xs">
+                  A stable identifier. Can&rsquo;t be changed later
+                  {canDelete
+                    ? "."
+                    : ", and only unfoldingWord can delete a server, so check it before adding."}
                 </p>
               )}
             </div>

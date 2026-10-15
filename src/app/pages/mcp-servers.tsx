@@ -259,6 +259,7 @@ export function McpServersPage() {
         open={addOpen}
         onOpenChange={setAddOpen}
         existingIds={existingIds}
+        canDelete={isSuperAdmin}
       />
 
       <McpServerDialog
