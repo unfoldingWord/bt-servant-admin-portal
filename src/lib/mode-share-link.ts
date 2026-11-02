@@ -19,9 +19,8 @@
 // merge and classifier and says whether `#<code>` really opens this mode
 // (cross-org slug collisions, the per-turn org cap, skipped orgs, the
 // exact-key home rule). The portal builds a link only from a code the
-// worker says resolves. On a worker without that route, only a home-org
-// mode is shared, by its bare slug, which has worked since the hashtag
-// mechanism shipped.
+// worker says resolves. On a worker without that route no code is offered
+// for any mode; the panel says a newer BT Servant is needed.
 //
 // Both inputs are treated as untrusted: the number is an operator-set env
 // var (typo-prone), the slug is user-authored config. Nothing reaches the
@@ -126,9 +125,8 @@ export type ModeShareLinkResult =
 
 /**
  * Build the share link for a code: the worker's code when it says the code
- * resolves (bare or `<orgslug>/<slug>`), or a home mode's own bare slug on
- * a worker without the share-code route (already through
- * `validateModeShareSlug`). The code is trusted as given; this is the one
+ * resolves (bare or `<orgslug>/<slug>`). The code is trusted as given;
+ * this is the one
  * place that checks it can be carried in a URL (`isUrlSafeShareCode`).
  */
 export function buildShareLinkFromCode(
@@ -204,10 +202,13 @@ export function isModeShareOpen(
 
 /** What the share-config query currently knows. */
 export interface ShareConfigSnapshot {
+  /** First load: nothing known yet. */
   pending: boolean;
+  /**
+   * The last fetch failed and there is no answer to fall back on. A failed
+   * or running background refetch over an answer blocks nothing.
+   */
   error: boolean;
-  /** A (re)fetch is in flight, e.g. after Try again. */
-  fetching: boolean;
   /** `false` when the BFF route is absent (older deploy). */
   supported: boolean;
   whatsappNumber: string | null;
@@ -401,8 +402,7 @@ export type RetryTarget = "config" | "share-code";
  * The Try again control: shown for a retryable state (the settings error
  * re-asks share-config; everything else the share code), and for a
  * background refresh that failed under an answer on the card. While the
- * re-ask it started runs (`busy`, set from the click until its refetch
- * promise settles) it stays on screen, disabled ("Checking…"), even if
+ * re-ask it started runs (`busy`, see `nextRetryClick`) it stays on screen, disabled ("Checking…"), even if
  * the state behind it turns to "loading", so it can't queue repeated
  * calls.
  */
@@ -422,6 +422,34 @@ export function retryControl(
     return { target: "share-code", busy: false };
   }
   return null;
+}
+
+/** A Try again click, tied to the (open, mode) pair it was made in. */
+export interface RetryClick {
+  /** The pair's key; a click from another pair (or a closed panel) is void. */
+  pair: string;
+  target: RetryTarget;
+  /** The retried query has been seen fetching (or its refetch settled). */
+  started: boolean;
+}
+
+/**
+ * The click still in force for this render, or null. Busy is the retried
+ * query's own fetching: it lasts from the click until that query has
+ * fetched and stopped, so a refetch cancelled and restarted under it (a
+ * mode write) stays busy. A click from another pair (closed, or switched
+ * mode) is dropped. Returns `prev` itself when nothing changed.
+ */
+export function nextRetryClick(
+  prev: RetryClick | null,
+  pair: string | null,
+  fetching: Record<RetryTarget, boolean>
+): RetryClick | null {
+  if (prev === null) return null;
+  if (prev.pair !== pair) return null;
+  const isFetching = fetching[prev.target];
+  if (isFetching) return prev.started ? prev : { ...prev, started: true };
+  return prev.started ? null : prev;
 }
 
 /**
@@ -454,16 +482,11 @@ function unhandled(value: never): never {
  * 3. query lifecycle: share-config loading or failed, then the share code
  *    checking (see ShareCodeSnapshot) or failed with nothing to show;
  * 4. the worker's answer, as is: configuration (WHATSAPP_ORG unset or
- *    unusable, a worker without the route for a partner mode), a definite
+ *    unusable, a worker without the share-code route), a definite
  *    failure, no code at all, a link if the code resolves, else why not.
  *    A draft / group-only answer here means the worker hasn't seen the
  *    page's latest save ("behind");
  * 5. the number: missing or invalid.
- *
- * On a worker without the share-code route, a HOME mode is shared by its
- * bare slug: home modes resolve bare on every worker version, and the BFF
- * decided "home" on the exact org the worker reads. A partner mode is
- * refused, never guessed.
  */
 export function resolveModeSharePanelState(
   config: ShareConfigSnapshot,
@@ -476,7 +499,8 @@ export function resolveModeSharePanelState(
   if (slugVerdict !== "ok") return { kind: slugVerdict };
   const eligibility = modeShareState(flags);
   if (eligibility !== "ready") return { kind: eligibility };
-  if (config.pending || config.fetching) return { kind: "loading" };
+  // Only a first load blocks: a background refetch keeps a ready QR.
+  if (config.pending) return { kind: "loading" };
   if (config.error) return { kind: "error" };
   if (shareCode.checking) return { kind: "loading" };
   const { answer } = shareCode;
@@ -492,12 +516,8 @@ export function resolveModeSharePanelState(
       return { kind: "not-found" };
     case "unconfigured":
       return { kind: "org-unconfigured" };
-    case "absent":
-      if (!answer.home) return { kind: "upgrade-needed" };
-      return withNumber(buildShareLinkFromCode(number, modeName), {
-        trigger: modeShareTrigger(modeName),
-        partnerOrg: null,
-      });
+    case "upgrade-needed":
+      return { kind: "upgrade-needed" };
     case "present":
       return fromWorkerAnswer(answer, number, modeOrg);
     default:

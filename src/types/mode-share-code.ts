@@ -57,12 +57,10 @@ export type ModeShareCodeResponse =
   /** The worker answered. `home_org` (WHATSAPP_ORG) is added by the BFF. */
   | ({ capability: "present"; home_org: string } & ShareCodeAnswer)
   /**
-   * The worker predates the route (a 404 without its `mode_not_found`
-   * body). `home` is true when the mode's org is the gateway org, by the
-   * worker's own exact-key rule on the org the BFF resolved.
+   * WHATSAPP_ORG is unusable for this environment: unset or caught by the
+   * BFF's guard (the worker isn't asked), or rejected by the worker as
+   * `invalid_org` with `field: "home_org"`.
    */
-  | { capability: "absent"; home: boolean }
-  /** WHATSAPP_ORG is unset for this environment; the worker isn't asked. */
   | { capability: "unconfigured" };
 
 /** Error bodies the route can answer with, besides the 200s above. */
@@ -73,8 +71,17 @@ export const SHARE_CODE_ERRORS = {
   corruptModesRecord: "corrupt_modes_record",
   /** 400 from the worker: the mode name fails its pattern. */
   invalidModeName: "invalid_mode_name",
-  /** 400 from the worker: `:org` or `home_org` is empty or too long for a KV key. */
+  /**
+   * 400 from the worker: `:org` or `home_org` is empty or too long for a KV
+   * key. Its `field` says which (`"org"` | `"home_org"`); the BFF answers
+   * `home_org` as `unconfigured` and passes the rest through.
+   */
   invalidOrg: "invalid_org",
+  /**
+   * 404 from the BFF: the worker has no share-code route (any 404 without
+   * `mode_not_found`). The panel says a newer BT Servant is needed.
+   */
+  shareCodeUnsupported: "share_code_unsupported",
   /** 400 from the BFF: a mode-name path segment it couldn't decode. */
   bffInvalidModeName: "Invalid mode name",
   /**
@@ -103,7 +110,10 @@ export function parseShareCodeAnswer(body: unknown): ShareCodeAnswer | null {
     resolved_org_uncertain,
     home_has_modes,
   } = body as Record<string, unknown>;
-  if (code !== null && typeof code !== "string") return null;
+  // An empty code can't be a trigger: malformed, like a non-string.
+  if (code !== null && (typeof code !== "string" || code === "")) {
+    return null;
+  }
   if (typeof resolves !== "boolean") return null;
   if (reason !== undefined && typeof reason !== "string") return null;
   if (resolved_org !== undefined && typeof resolved_org !== "string") {

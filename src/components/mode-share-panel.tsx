@@ -20,7 +20,9 @@ import {
   retryControl,
   shownTrigger,
   validateModeShareSlug,
+  nextRetryClick,
   type ModeSharePanelState,
+  type RetryClick,
   type RetryTarget,
 } from "@/lib/mode-share-link";
 import {
@@ -140,8 +142,8 @@ export function ModeSharePanel({
     return resolveModeSharePanelState(
       {
         pending: shareConfig.isPending,
-        error: shareConfig.isError,
-        fetching: shareConfig.isFetching,
+        // A failed refetch over an answer keeps it (TanStack keeps `data`).
+        error: shareConfig.isError && data === undefined,
         supported: data?.supported === true,
         whatsappNumber: data?.supported ? data.config.whatsappNumber : null,
       },
@@ -157,7 +159,6 @@ export function ModeSharePanel({
     shareCodeSnapshot,
     shareConfig.data,
     shareConfig.isError,
-    shareConfig.isFetching,
     shareConfig.isPending,
   ]);
 
@@ -179,21 +180,43 @@ export function ModeSharePanel({
     : null;
   const showRefreshFailed = refreshFailed(state, shareCodeSnapshot);
 
-  // Try again (see `retryControl`): busy from the click until that
-  // refetch's promise settles.
-  const [retryBusy, setRetryBusy] = useState<RetryTarget | null>(null);
-  const retry = retryControl(state, shareCodeSnapshot, retryBusy);
+  // Try again (see `retryControl`). Busy follows the retried query's own
+  // fetching, for the (open, mode) pair it was clicked in: on from the
+  // click, off once that query has fetched and stopped. A refetch that a
+  // mode write cancels and restarts stays busy; closing the panel or
+  // switching modes drops it.
+  const retryPair = open ? JSON.stringify([org, modeName]) : null;
+  const [retryClick, setRetryClick] = useState<RetryClick | null>(null);
+  const liveClick = nextRetryClick(retryClick, retryPair, {
+    config: shareConfig.isFetching,
+    "share-code": shareCode.fetching,
+  });
+  if (liveClick !== retryClick) setRetryClick(liveClick);
+  const retry = retryControl(
+    state,
+    shareCodeSnapshot,
+    liveClick?.target ?? null
+  );
   const runRetry = (target: RetryTarget) => {
-    setRetryBusy(target);
+    if (retryPair === null) return;
+    setRetryClick({ pair: retryPair, target, started: false });
     const refetch =
       target === "config" ? shareConfig.refetch() : shareCode.refetch();
-    void refetch.finally(() => setRetryBusy(null));
+    // Fallback for a refetch that never showed as fetching: once it has
+    // settled, the next render clears busy unless the query is (still or
+    // again) fetching.
+    void refetch.finally(() =>
+      setRetryClick((c) =>
+        c !== null && c.pair === retryPair && c.target === target
+          ? { ...c, started: true }
+          : c
+      )
+    );
   };
 
   const title = modeLabel?.trim() || humanizeModeSlug(modeName);
   // What every surface shows (card, QR label, SVG title, copy): only ever
-  // a code the worker returned (or a home mode's bare slug on a worker
-  // without the share-code route). Null otherwise, so no guessed trigger.
+  // a code the worker returned. Null otherwise, so no guessed trigger.
   const shown = shownTrigger(state);
   const trigger = shown?.trigger ?? null;
   const partnerOrg = shown?.partnerOrg ?? null;
@@ -603,7 +626,7 @@ function describe(state: ModeSharePanelState, modeName: string): string {
     case "invalid-mode":
       return "This mode's saved settings are damaged, so BT Servant on WhatsApp can't open it. Ask unfoldingWord to check the mode.";
     case "upgrade-needed":
-      return "Share codes for other orgs' modes need a newer BT Servant version.";
+      return "Share codes need a newer BT Servant version.";
     case "slug-invalid":
       return "This mode's name can't be encoded as a trigger. Rename it to lowercase letters, digits, and hyphens to share it by QR.";
     case "slug-reserved":

@@ -1,5 +1,6 @@
-import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 // Client for the BFF's read-only share config (#311, `worker/share-config.ts`).
+
+import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
 export interface ShareConfig {
   /** Operator-entered WhatsApp number, not yet normalised. `null` = unset. */

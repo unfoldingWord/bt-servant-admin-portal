@@ -11,6 +11,7 @@ import {
   resolveModeSharePanelState,
   answerUncertain,
   homeOrgWithoutModes,
+  nextRetryClick,
   refreshFailed,
   retryControl,
   workerBehindPage,
@@ -265,11 +266,37 @@ describe("buildModeShareFilename", () => {
 // (bt-servant-worker#477). These pin that every answer maps to one state,
 // that a link is built only from a code that resolves, and that no state
 // shows a trigger the worker didn't hand back.
+describe("nextRetryClick", () => {
+  const idle = { config: false, "share-code": false };
+  const busy = { config: false, "share-code": true };
+  const click = { pair: "A", target: "share-code", started: false } as const;
+
+  it("stays busy from the click until the retried query has fetched and stopped", () => {
+    // Click render: not fetching yet, still busy.
+    expect(nextRetryClick(click, "A", idle)).toBe(click);
+    const started = nextRetryClick(click, "A", busy);
+    expect(started).toEqual({ ...click, started: true });
+    // A cancel-and-restart (mode write) keeps it fetching: still busy.
+    expect(nextRetryClick(started, "A", busy)).toBe(started);
+    expect(nextRetryClick(started, "A", idle)).toBeNull();
+  });
+
+  it("drops a click from another (open, mode) pair: closed or switched", () => {
+    expect(nextRetryClick(click, null, busy)).toBeNull();
+    expect(nextRetryClick(click, "B", busy)).toBeNull();
+  });
+
+  it("follows the target's own query, not the other one", () => {
+    const config = { ...click, target: "config", started: true } as const;
+    expect(nextRetryClick(config, "A", busy)).toBeNull();
+    expect(nextRetryClick(null, "A", busy)).toBeNull();
+  });
+});
+
 describe("resolveModeSharePanelState", () => {
   const config: ShareConfigSnapshot = {
     pending: false,
     error: false,
-    fetching: false,
     supported: true,
     whatsappNumber: "+57 300 123 4567",
   };
@@ -497,7 +524,7 @@ describe("resolveModeSharePanelState", () => {
     expect(run(code({ capability: "unconfigured" }))).toEqual({
       kind: "org-unconfigured",
     });
-    expect(run(code({ capability: "absent", home: false }))).toEqual({
+    expect(run(code({ capability: "upgrade-needed" }))).toEqual({
       kind: "upgrade-needed",
     });
     for (const failure of [
@@ -515,23 +542,30 @@ describe("resolveModeSharePanelState", () => {
     }
   });
 
-  it("keeps sharing a home mode by its bare slug on a worker without the route", () => {
-    const absentHome = code({ capability: "absent", home: true });
-    expect(run(absentHome, { org: "acme", name: "fia" })).toEqual({
-      kind: "ready",
-      url: "https://wa.me/573001234567?text=%23fia",
-      trigger: "#fia",
-      partnerOrg: null,
-    });
+  it("offers no code for any mode on a worker without the route, home included", () => {
+    const upgrade = code({ capability: "upgrade-needed" });
+    for (const org of ["acme", "unfoldingWord", "PBT"]) {
+      const state = run(upgrade, { org, name: "fia" });
+      expect(state).toEqual({ kind: "upgrade-needed" });
+      expect(shownTrigger(state)).toBeNull();
+    }
   });
 
   it("checks while there is no current answer and a fetch runs (first load, reopen)", () => {
     expect(run({ ...settled, checking: true })).toEqual({ kind: "loading" });
-    expect(run(partner, { config: { ...config, fetching: true } })).toEqual({
-      kind: "loading",
-    });
     expect(run(partner, { config: { ...config, pending: true } })).toEqual({
       kind: "loading",
+    });
+  });
+
+  it("keeps a ready QR through a share-config background refetch or its failure", () => {
+    // Only a first load (no data) blocks; the panel passes `error` only
+    // when there is nothing to fall back on.
+    const before = run(partner);
+    expect(before.kind).toBe("ready");
+    expect(run(partner, { config: { ...config } })).toEqual(before);
+    expect(run(partner, { config: { ...config, error: true } })).toEqual({
+      kind: "error",
     });
   });
 
@@ -760,7 +794,6 @@ describe("open-detection: nextOpenMark and shareCodeSnapshot", () => {
         {
           pending: false,
           error: false,
-          fetching: false,
           supported: true,
           whatsappNumber: "15550100100",
         },

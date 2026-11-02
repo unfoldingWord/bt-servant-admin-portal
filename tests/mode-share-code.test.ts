@@ -155,6 +155,11 @@ describe("share-code route — mapping the worker's answer", () => {
     });
   });
 
+  it("treats an empty code as a malformed answer", async () => {
+    workerReplies({ code: "", resolves: true });
+    expect((await call()).status).toBe(502);
+  });
+
   it("passes resolved_org_uncertain through, and only as true", async () => {
     workerReplies({
       code: "pbt/x",
@@ -232,32 +237,27 @@ describe("share-code route — mapping the worker's answer", () => {
     expect(res.status).toBe(404);
   });
 
-  it("maps a route-level 404 (older worker) to capability absent, with the home verdict", async () => {
-    workerReplies("404 Not Found", 404);
-    expect(await (await call()).json()).toEqual({
-      capability: "absent",
-      home: false,
-    });
-    vi.restoreAllMocks();
-    workerReplies("404 Not Found", 404);
-    const home = await call({ session: makeSession({ org: GATEWAY }) });
-    expect(await home.json()).toEqual({ capability: "absent", home: true });
+  it("answers every other 404 as share_code_unsupported, home org included", async () => {
+    // A worker without the route (Hono's plain "404 Not Found"), an empty
+    // body, or any JSON 404 other than mode_not_found: one state, no
+    // bare-slug fallback for any mode.
+    const bodies: unknown[] = [
+      "404 Not Found",
+      "",
+      { error: "something_else" },
+    ];
+    for (const body of bodies) {
+      for (const org of ["PBT", GATEWAY]) {
+        workerReplies(body, 404);
+        const res = await call({ session: makeSession({ org }) });
+        expect(res.status, `${JSON.stringify(body)} ${org}`).toBe(404);
+        expect(await res.json()).toEqual({ error: "share_code_unsupported" });
+        vi.restoreAllMocks();
+      }
+    }
   });
 
-  it("never reads a JSON 404 other than mode_not_found as an older worker", async () => {
-    // Only a body without a JSON `error` (Hono's plain "404 Not Found") means
-    // the route is absent; anything else must not reach the bare-slug fallback.
-    workerReplies({ error: "something_else" }, 404);
-    const res = await call({ session: makeSession({ org: GATEWAY }) });
-    expect(res.status).toBe(502);
-    vi.restoreAllMocks();
-    workerReplies("", 404);
-    expect(
-      await (await call({ session: makeSession({ org: GATEWAY }) })).json()
-    ).toEqual({ capability: "absent", home: true });
-  });
-
-  it("uses a padded WHATSAPP_ORG exactly, for home_org and the home check", async () => {
+  it("uses a padded WHATSAPP_ORG exactly, for home_org", async () => {
     const padded = { ...env, WHATSAPP_ORG: " unfoldingWord" } as Env;
     const spy = workerReplies({ code: "x", resolves: true });
     const res = await call({ env: padded });
@@ -265,16 +265,6 @@ describe("share-code route — mapping the worker's answer", () => {
       "home_org=%20unfoldingWord"
     );
     expect(await res.json()).toMatchObject({ home_org: " unfoldingWord" });
-    vi.restoreAllMocks();
-    workerReplies("404 Not Found", 404);
-    const homeExact = await call({
-      env: padded,
-      session: makeSession({ org: GATEWAY }),
-    });
-    expect(await homeExact.json()).toEqual({
-      capability: "absent",
-      home: false,
-    });
   });
 
   it("passes the worker's 400 invalid_org through for the org copy", async () => {
@@ -284,12 +274,26 @@ describe("share-code route — mapping the worker's answer", () => {
     expect(await res.json()).toEqual({ error: "invalid_org" });
   });
 
-  it("decides home on the exact org, like the worker", async () => {
-    workerReplies("404 Not Found", 404);
-    const padded = await call({
-      session: makeSession({ org: ` ${GATEWAY}` }),
-    });
-    expect(await padded.json()).toEqual({ capability: "absent", home: false });
+  it("passes invalid_org with field org (or no field) through for the org copy", async () => {
+    workerReplies(
+      { error: "invalid_org", field: "org", message: "too long" },
+      400
+    );
+    const res = await call();
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_org" });
+  });
+
+  it("answers invalid_org with field home_org as WHATSAPP_ORG unconfigured", async () => {
+    // The worker is authoritative on home_org; the BFF's guard only skips
+    // a round trip for values it already knows are unusable.
+    workerReplies(
+      { error: "invalid_org", field: "home_org", message: "too long" },
+      400
+    );
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ capability: "unconfigured" });
   });
 
   it("maps every 503 detail to 503, the panel's retry state", async () => {
@@ -338,16 +342,12 @@ describe("share-code route — mapping the worker's answer", () => {
     expect(await res.json()).toEqual({ error: "Engine timeout" });
   });
 
-  it("passes the client's request signal through to the upstream call", async () => {
+  it("bounds the upstream call by the timeout alone", async () => {
     const spy = workerReplies({ code: "x", resolves: true });
-    const client = new AbortController();
-    await handleModeShareCode(testEnv, "PBT", "obt-coach", {
-      signal: client.signal,
-    });
+    await handleModeShareCode(testEnv, "PBT", "obt-coach");
     const upstream = (spy.mock.calls[0]![1] as RequestInit).signal!;
+    expect(upstream).toBeInstanceOf(AbortSignal);
     expect(upstream.aborted).toBe(false);
-    client.abort();
-    expect(upstream.aborted).toBe(true);
   });
 
   it("maps a worker 500 or a thrown fetch to 502", async () => {

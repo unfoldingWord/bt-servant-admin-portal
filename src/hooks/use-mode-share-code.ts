@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   getModeShareCode,
@@ -28,6 +28,7 @@ export function useModeShareCode(
   modeName: string,
   org: string | null
 ) {
+  const queryClient = useQueryClient();
   const queryKey = [...MODE_SHARE_CODE_KEY, org, modeName] as const;
   const query = useQuery({
     queryKey,
@@ -53,6 +54,17 @@ export function useModeShareCode(
   // the panel, or switches key while open, already knows what the cache
   // held at that moment.
   const openKey = enabled ? JSON.stringify(queryKey) : null;
+
+  // Closing the panel (or moving to another key while open) cancels this
+  // key's in-flight request: the query function's `signal` aborts the
+  // browser's fetch. TanStack restores the state from before that fetch.
+  useEffect(() => {
+    if (!enabled) return;
+    const key = [...MODE_SHARE_CODE_KEY, org, modeName] as const;
+    return () => {
+      void queryClient.cancelQueries({ queryKey: key, exact: true });
+    };
+  }, [enabled, modeName, org, queryClient]);
   const [mark, setMark] = useState<OpenMark>({
     openKey: null,
     at: 0,

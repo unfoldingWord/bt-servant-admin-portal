@@ -1173,9 +1173,7 @@ export async function handleConfig(
     }
     const modeName = safeDecode(modeShareCodeMatch[1]);
     if (modeName === null) return invalidModeNameResponse();
-    return handleModeShareCode(env, resolved.org, modeName, {
-      signal: request.signal,
-    });
+    return handleModeShareCode(env, resolved.org, modeName);
   }
 
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);

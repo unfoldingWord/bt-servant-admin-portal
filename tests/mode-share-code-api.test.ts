@@ -84,10 +84,20 @@ describe("getModeShareCode", () => {
       reason: "not_found",
       resolved_org_uncertain: true,
     });
+    // An empty code is malformed: a transient "server" failure.
+    mockFetch(200, {
+      capability: "present",
+      code: "",
+      resolves: true,
+      home_org: "unfoldingWord",
+    });
+    await expect(getModeShareCode("x", null)).rejects.toMatchObject({
+      kind: "server",
+    });
+    // Retired 1.17.0-pre shape: not an answer.
     mockFetch(200, { capability: "absent", home: true });
-    expect(await getModeShareCode("x", null)).toEqual({
-      capability: "absent",
-      home: true,
+    await expect(getModeShareCode("x", null)).rejects.toMatchObject({
+      kind: "server",
     });
     mockFetch(200, { capability: "unconfigured" });
     expect(await getModeShareCode("x", null)).toEqual({
@@ -108,6 +118,8 @@ describe("getModeShareCode", () => {
       [400, { error: "bad_request" }],
       [400, "not json"],
       [500, { error: "corrupt_modes_record" }],
+      [404, { error: "share_code_unsupported" }],
+      [404, "404 Not Found"],
     ];
     const got = [];
     for (const [status, body] of cases) {
@@ -126,6 +138,8 @@ describe("getModeShareCode", () => {
       { capability: "failed", failure: "bad-request" },
       { capability: "failed", failure: "bad-request" },
       { capability: "failed", failure: "corrupt-record" },
+      { capability: "upgrade-needed" },
+      { capability: "upgrade-needed" },
     ]);
   });
 

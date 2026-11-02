@@ -68,6 +68,11 @@ export type ModeShareCode =
   | ModeShareCodeResponse
   /** 404 `mode_not_found`: no such mode in this org. */
   | { capability: "not-found" }
+  /**
+   * Any other 404: the worker (or this BFF) has no share-code route. No
+   * code is offered for any mode until BT Servant is upgraded.
+   */
+  | { capability: "upgrade-needed" }
   | { capability: "failed"; failure: ShareCodeFailure };
 
 export async function getModeShareCode(
@@ -95,7 +100,11 @@ export async function getModeShareCode(
   > | null;
   const error = typeof data?.error === "string" ? data.error : "";
   if (res.status === 503) throw new ShareCodeRequestError("unavailable");
-  if (res.status === 404) return { capability: "not-found" };
+  if (res.status === 404) {
+    return error === SHARE_CODE_ERRORS.modeNotFound
+      ? { capability: "not-found" }
+      : { capability: "upgrade-needed" };
+  }
   if (!res.ok) {
     const failure = definiteFailure(res.status, error);
     if (failure === null) throw new ShareCodeRequestError("server");
@@ -134,8 +143,6 @@ export function parseShareCodeResponse(
 ): ModeShareCodeResponse | null {
   if (data === null) return null;
   switch (data.capability) {
-    case "absent":
-      return { capability: "absent", home: data.home === true };
     case "unconfigured":
       return { capability: "unconfigured" };
     case "present": {

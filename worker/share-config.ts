@@ -80,17 +80,15 @@ export async function handleModeShareCode(
   org: string,
   modeName: string,
   opts: {
-    /** The client's request signal: a closed panel cancels the upstream call. */
-    signal?: AbortSignal;
     /** Overridable for tests. */
     timeoutMs?: number;
   } = {}
 ): Promise<Response> {
   // Used EXACTLY as set: the worker's home check is an exact KV key match
   // (`<org>:modes`), so trimming here could ask from a different org than
-  // the gateway sends. A value the worker would reject as `invalid_org`
-  // (empty, or a modes key over the KV limit) is caught here instead, so a
-  // worker `invalid_org` can only be about the MODE's org.
+  // the gateway sends. This pre-check is only a cheap guard that skips a
+  // round trip for a value that can't work; the worker is authoritative,
+  // and its `invalid_org` names the field it rejected (mapped below).
   const homeOrg = env.WHATSAPP_ORG;
   if (homeOrg === undefined || !isUsableHomeOrg(homeOrg)) {
     return jsonResponse({
@@ -101,17 +99,19 @@ export async function handleModeShareCode(
     `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(org)}` +
     `/modes/${encodeURIComponent(modeName)}/share-code` +
     `?home_org=${encodeURIComponent(homeOrg)}`;
+  // Bounded by a timeout only. Closing the panel cancels the browser's
+  // request (the share-code query is cancelled on close), but this upstream
+  // call is not tied to it: `request.signal` only reports a client
+  // disconnect behind the `enable_request_signal` compatibility flag, which
+  // this Worker doesn't set.
   const timeout = AbortSignal.timeout(
     opts.timeoutMs ?? SHARE_CODE_UPSTREAM_TIMEOUT_MS
   );
-  const signal = opts.signal
-    ? AbortSignal.any([opts.signal, timeout])
-    : timeout;
   let res: Response;
   try {
     res = await fetch(url, {
       headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
-      signal,
+      signal: timeout,
     });
   } catch {
     // A worker that doesn't answer in time is a 504: the client's
@@ -131,16 +131,12 @@ export async function handleModeShareCode(
     if (error === SHARE_CODE_ERRORS.modeNotFound) {
       return errorResponse(SHARE_CODE_ERRORS.modeNotFound, 404);
     }
-    // Any other JSON error is a real 404 from a worker that HAS the route
-    // (or something in front of it): never read it as "older worker", which
-    // would fall back to a bare-slug link.
-    if (error !== null) return errorResponse("Engine error", 502);
-    // A worker without the route answers Hono's default plain-text
-    // "404 Not Found" (bt-servant-worker defines no notFound handler).
-    return jsonResponse({
-      capability: "absent",
-      home: org === homeOrg,
-    } satisfies ModeShareCodeResponse);
+    // Any other 404 means this worker has no share-code route (Hono's
+    // plain "404 Not Found"), or something in front of it doesn't: one
+    // "needs a newer BT Servant" state, with no code for any mode. The
+    // deploy order puts the worker with #477 in production first, so there
+    // is no bare-slug fallback.
+    return errorResponse(SHARE_CODE_ERRORS.shareCodeUnsupported, 404);
   }
   // Every 503 (`detail`: list_failed, read_failed, listing_lag) is
   // transient on the worker's side; the panel offers a retry.
@@ -150,7 +146,17 @@ export async function handleModeShareCode(
   if (res.status === 500 && error === SHARE_CODE_ERRORS.corruptModesRecord) {
     return errorResponse(SHARE_CODE_ERRORS.corruptModesRecord, 500);
   }
-  if (res.status === 400) return errorResponse(error ?? "bad_request", 400);
+  if (res.status === 400) {
+    // The worker names which org it rejected (#477). `home_org` is
+    // WHATSAPP_ORG, so it is this environment's configuration, not the
+    // mode's org; `org` (or no field) is the mode's org.
+    if (error === SHARE_CODE_ERRORS.invalidOrg && body?.field === "home_org") {
+      return jsonResponse({
+        capability: "unconfigured",
+      } satisfies ModeShareCodeResponse);
+    }
+    return errorResponse(error ?? "bad_request", 400);
+  }
   if (!res.ok) return errorResponse("Engine error", 502);
 
   const answer = parseShareCodeAnswer(body);
