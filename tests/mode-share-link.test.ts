@@ -15,6 +15,7 @@ import {
   workerBehindPage,
   nextOpenMark,
   shareCodeSnapshot,
+  type OpenMark,
   type ShareCodeQueryView,
   shownTrigger,
   validateModeShareSlug,
@@ -392,14 +393,7 @@ describe("resolveModeSharePanelState", () => {
     const state = run(miss("invalid_mode"));
     expect(state).toEqual({ kind: "invalid-mode" });
     expect(
-      retryControl(
-        state,
-        { ...settled, answer: undefined },
-        {
-          target: null,
-          fetching: false,
-        }
-      )
+      retryControl(state, { ...settled, answer: undefined }, null)
     ).toBeNull();
   });
 
@@ -565,7 +559,7 @@ describe("refreshFailed and retryControl", () => {
     trigger: "#x",
     partnerOrg: null,
   };
-  const idle = { target: null, fetching: false };
+  const idle = null;
 
   it("notes a failed refresh only while an answer is on the card", () => {
     expect(refreshFailed(readyState, snap({ failure: "network" }))).toBe(true);
@@ -612,26 +606,18 @@ describe("refreshFailed and retryControl", () => {
 
   it("stays visible and disabled while its re-ask runs, even once the state is loading", () => {
     // Try again on the settings error: share-config refetches, the state
-    // turns to loading, and the button must stay, busy.
-    expect(
-      retryControl({ kind: "loading" }, snap(), {
-        target: "config",
-        fetching: true,
-      })
-    ).toEqual({ target: "config", busy: true });
-    expect(
-      retryControl({ kind: "loading" }, snap(), {
-        target: "share-code",
-        fetching: true,
-      })
-    ).toEqual({ target: "share-code", busy: true });
-    // Settled: back to whatever the state calls for.
-    expect(
-      retryControl({ kind: "loading" }, snap(), {
-        target: "config",
-        fetching: false,
-      })
-    ).toBeNull();
+    // turns to loading, and the button must stay, busy, until the refetch
+    // promise settles.
+    expect(retryControl({ kind: "loading" }, snap(), "config")).toEqual({
+      target: "config",
+      busy: true,
+    });
+    expect(retryControl({ kind: "loading" }, snap(), "share-code")).toEqual({
+      target: "share-code",
+      busy: true,
+    });
+    // Settled (busy cleared): back to whatever the state calls for.
+    expect(retryControl({ kind: "loading" }, snap(), null)).toBeNull();
   });
 });
 
@@ -665,6 +651,7 @@ describe("open-detection: nextOpenMark and shareCodeSnapshot", () => {
     resolves: true,
   };
   const answerB = { ...answerA, code: "pbt/b" };
+  const closed: OpenMark = { openKey: null, at: 0, freshAtOpen: false };
   const view = (over: Partial<ShareCodeQueryView>): ShareCodeQueryView => ({
     data: undefined,
     dataUpdatedAt: 0,
@@ -672,39 +659,104 @@ describe("open-detection: nextOpenMark and shareCodeSnapshot", () => {
     error: null,
     ...over,
   });
+  const cache = (dataUpdatedAt: number, isStale: boolean, hasData = true) => ({
+    dataUpdatedAt,
+    hasData,
+    isStale,
+  });
 
   it("keeps the mark while (open, key) is unchanged, and starts one when it changes", () => {
-    const m = nextOpenMark({ openKey: null, at: 0 }, "k1", 100);
-    expect(m).toEqual({ openKey: "k1", at: 100 });
-    expect(nextOpenMark(m, "k1", 200)).toBe(m);
-    expect(nextOpenMark(m, "k2", 300)).toEqual({ openKey: "k2", at: 300 });
-    expect(nextOpenMark(m, null, 300)).toEqual({ openKey: null, at: 300 });
+    const m = nextOpenMark(closed, "k1", cache(100, true));
+    expect(m).toEqual({ openKey: "k1", at: 100, freshAtOpen: false });
+    expect(nextOpenMark(m, "k1", cache(200, false))).toBe(m);
+    expect(nextOpenMark(m, "k2", cache(300, false))).toEqual({
+      openKey: "k2",
+      at: 300,
+      freshAtOpen: true,
+    });
+    expect(nextOpenMark(m, null, cache(300, false, false))).toEqual({
+      openKey: null,
+      at: 300,
+      freshAtOpen: false,
+    });
   });
 
   it("checks on a reopen past the stale time, then shows the fresh answer", () => {
-    // Cached at t=100; the panel reopens; the refetch is running.
-    const mark = nextOpenMark({ openKey: null, at: 0 }, "k1", 100);
+    const mark = nextOpenMark(closed, "k1", cache(100, true));
     expect(
       shareCodeSnapshot(
         view({ data: answerA, dataUpdatedAt: 100, isFetching: true }),
         mark
-      ).checking
-    ).toBe(true);
+      )
+    ).toEqual({ answer: undefined, checking: true, failure: null });
     expect(
       shareCodeSnapshot(view({ data: answerA, dataUpdatedAt: 150 }), mark)
     ).toEqual({ answer: answerA, checking: false, failure: null });
   });
 
-  it("shows a fresh cached answer at once on reopen (no fetch)", () => {
-    const mark = nextOpenMark({ openKey: null, at: 0 }, "k1", 100);
+  it("never offers a previous open's answer when this open's refetch failed", () => {
+    // Reopen past the stale time; the refetch fails. The only data is from
+    // a previous open: the panel shows the failure (Try again), not 'ready'.
+    const mark = nextOpenMark(closed, "k1", cache(100, true));
+    const failed = shareCodeSnapshot(
+      view({
+        data: answerA,
+        dataUpdatedAt: 100,
+        error: new ShareCodeRequestError("network"),
+      }),
+      mark
+    );
+    expect(failed).toEqual({
+      answer: undefined,
+      checking: false,
+      failure: "network",
+    });
     expect(
-      shareCodeSnapshot(view({ data: answerA, dataUpdatedAt: 100 }), mark)
-        .checking
-    ).toBe(false);
+      resolveModeSharePanelState(
+        {
+          pending: false,
+          error: false,
+          fetching: false,
+          supported: true,
+          whatsappNumber: "15550100100",
+        },
+        failed,
+        { published: true },
+        "PBT",
+        "a"
+      )
+    ).toEqual({ kind: "retry", cause: "network" });
   });
 
-  it("keeps the answer through a background refresh, and a failed one", () => {
-    const mark = { openKey: "k1", at: 100 };
+  it("keeps a fresh cached answer shown at reopen through a later background refetch", () => {
+    // Reopen within the stale time: shown at once, no fetch...
+    const mark = nextOpenMark(closed, "k1", cache(100, false));
+    expect(
+      shareCodeSnapshot(view({ data: answerA, dataUpdatedAt: 100 }), mark)
+    ).toEqual({ answer: answerA, checking: false, failure: null });
+    // ...then a mode write invalidates it: the refetch runs in the
+    // background and the card keeps the answer.
+    expect(
+      shareCodeSnapshot(
+        view({ data: answerA, dataUpdatedAt: 100, isFetching: true }),
+        mark
+      )
+    ).toEqual({ answer: answerA, checking: false, failure: null });
+    // A failed background refetch keeps it too, with the failure noted.
+    expect(
+      shareCodeSnapshot(
+        view({
+          data: answerA,
+          dataUpdatedAt: 100,
+          error: new ShareCodeRequestError("server"),
+        }),
+        mark
+      )
+    ).toEqual({ answer: answerA, checking: false, failure: "server" });
+  });
+
+  it("keeps an answer fetched this open through a background refresh, and a failed one", () => {
+    const mark = { openKey: "k1", at: 100, freshAtOpen: false };
     const fetched = view({ data: answerA, dataUpdatedAt: 150 });
     expect(
       shareCodeSnapshot({ ...fetched, isFetching: true }, mark).checking
@@ -718,29 +770,27 @@ describe("open-detection: nextOpenMark and shareCodeSnapshot", () => {
   });
 
   it("treats a key change while open like a fresh open", () => {
-    // Open on k1 with an answer from this open...
-    let mark = nextOpenMark({ openKey: null, at: 0 }, "k1", 100);
+    let mark = nextOpenMark(closed, "k1", cache(0, true, false));
     expect(
       shareCodeSnapshot(view({ data: answerA, dataUpdatedAt: 150 }), mark)
-        .checking
-    ).toBe(false);
-    // ...then the key changes to k2, whose cached answer is older: while
-    // k2 fetches, its old answer is not offered.
-    mark = nextOpenMark(mark, "k2", 50);
-    expect(mark).toEqual({ openKey: "k2", at: 50 });
+        .answer
+    ).toBe(answerA);
+    // k2's cached answer is stale: while k2 fetches, it is not offered.
+    mark = nextOpenMark(mark, "k2", cache(50, true));
+    expect(mark).toEqual({ openKey: "k2", at: 50, freshAtOpen: false });
     expect(
       shareCodeSnapshot(
         view({ data: answerB, dataUpdatedAt: 50, isFetching: true }),
         mark
-      ).checking
-    ).toBe(true);
+      )
+    ).toEqual({ answer: undefined, checking: true, failure: null });
     // A key with no cache at all checks until its first answer.
-    mark = nextOpenMark(mark, "k3", 0);
+    mark = nextOpenMark(mark, "k3", cache(0, true, false));
     expect(shareCodeSnapshot(view({}), mark).checking).toBe(true);
   });
 
   it("names a first-load failure, with no answer", () => {
-    const mark = { openKey: "k1", at: 0 };
+    const mark = { openKey: "k1", at: 0, freshAtOpen: false };
     expect(
       shareCodeSnapshot(
         view({ error: new ShareCodeRequestError("unavailable") }),

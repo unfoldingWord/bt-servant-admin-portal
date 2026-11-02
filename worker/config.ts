@@ -15,6 +15,7 @@ import {
 } from "./rights-migration";
 import type { LanguageRights, SessionData } from "./types";
 import { handleModeShareCode } from "./share-config";
+import { SHARE_CODE_ERRORS } from "../src/types/mode-share-code";
 
 // `undefined` is the back-compat default for users predating the rights
 // system (and for fields the worker hasn't lazy-migrated into yet — see
@@ -530,7 +531,12 @@ function resolveOrg(
   } else {
     const trimmed = orgParam.trim();
     if (!trimmed) {
-      return { error: errorResponse("Invalid org parameter", 400) };
+      return {
+        error: errorResponse(
+          `${SHARE_CODE_ERRORS.bffInvalidOrgPrefix} parameter`,
+          400
+        ),
+      };
     }
     if (trimmed === session.org.trim()) {
       // Trim BOTH sides: buildConfigUrl trims the param before sending,
@@ -561,7 +567,9 @@ function resolveOrg(
   // create/move, but stored values predating that guard must still be
   // stopped here.
   if (isPathShapedOrg(resolved.org)) {
-    return { error: errorResponse("Invalid org", 400) };
+    return {
+      error: errorResponse(SHARE_CODE_ERRORS.bffInvalidOrgPrefix, 400),
+    };
   }
 
   return resolved;
@@ -1165,7 +1173,9 @@ export async function handleConfig(
     }
     const modeName = safeDecode(modeShareCodeMatch[1]);
     if (modeName === null) return invalidModeNameResponse();
-    return handleModeShareCode(env, resolved.org, modeName);
+    return handleModeShareCode(env, resolved.org, modeName, {
+      signal: request.signal,
+    });
   }
 
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);

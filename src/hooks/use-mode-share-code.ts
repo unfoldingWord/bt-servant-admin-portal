@@ -46,14 +46,23 @@ export function useModeShareCode(
     // retries would only delay showing them.
     retry: false,
   });
-  const { data, dataUpdatedAt, isFetching, error, refetch } = query;
+  const { data, dataUpdatedAt, isFetching, isStale, error, refetch } = query;
 
   // Open-detection, keyed on (open, queryKey) together (see OpenMark).
   // Updated during render, not in an effect, so the very render that opens
-  // the panel, or switches key while open, already knows.
+  // the panel, or switches key while open, already knows what the cache
+  // held at that moment.
   const openKey = enabled ? JSON.stringify(queryKey) : null;
-  const [mark, setMark] = useState<OpenMark>({ openKey, at: dataUpdatedAt });
-  const next = nextOpenMark(mark, openKey, dataUpdatedAt);
+  const [mark, setMark] = useState<OpenMark>({
+    openKey: null,
+    at: 0,
+    freshAtOpen: false,
+  });
+  const next = nextOpenMark(mark, openKey, {
+    dataUpdatedAt,
+    hasData: data !== undefined,
+    isStale,
+  });
   if (next !== mark) setMark(next);
 
   const snapshot = useMemo(

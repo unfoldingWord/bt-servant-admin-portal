@@ -115,11 +115,11 @@ function definiteFailure(
   if (status === 403) return "forbidden";
   if (status === 400) {
     if (error === SHARE_CODE_ERRORS.invalidModeName) return "invalid-name";
-    // The BFF's own 400 for a path segment it couldn't decode.
-    if (error === "Invalid mode name") return "invalid-name";
+    if (error === SHARE_CODE_ERRORS.bffInvalidModeName) return "invalid-name";
     if (error === SHARE_CODE_ERRORS.invalidOrg) return "org-invalid";
-    // The BFF's resolveOrg: "Invalid org parameter" / "Invalid org".
-    if (error.startsWith("Invalid org")) return "org-invalid";
+    if (error.startsWith(SHARE_CODE_ERRORS.bffInvalidOrgPrefix)) {
+      return "org-invalid";
+    }
     return "bad-request";
   }
   if (status === 500 && error === SHARE_CODE_ERRORS.corruptModesRecord) {

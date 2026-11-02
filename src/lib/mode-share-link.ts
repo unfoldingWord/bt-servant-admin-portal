@@ -234,24 +234,34 @@ export interface ShareCodeSnapshot {
 }
 
 /**
- * Which (open, query key) pair the panel is showing, and the share-code
- * `dataUpdatedAt` when that pair began. Data no newer than `at` came from
- * before this open (or this key), so a fetch over it is not a background
- * refresh.
+ * Which (open, query key) pair the panel is showing, and what the share
+ * code's cache held when that pair began.
  */
 export interface OpenMark {
   /** The query key while the panel is open; null while closed. */
   openKey: string | null;
+  /** The cache's `dataUpdatedAt` when the pair began. */
   at: number;
+  /**
+   * The cache held a FRESH answer when the pair began. It is shown at once
+   * (no fetch), so it counts as shown in this open: a later background
+   * refetch keeps it on the card.
+   */
+  freshAtOpen: boolean;
 }
 
 /** Start a new mark when (open, key) changes; otherwise keep it. */
 export function nextOpenMark(
   prev: OpenMark,
   openKey: string | null,
-  dataUpdatedAt: number
+  cache: { dataUpdatedAt: number; hasData: boolean; isStale: boolean }
 ): OpenMark {
-  return prev.openKey === openKey ? prev : { openKey, at: dataUpdatedAt };
+  if (prev.openKey === openKey) return prev;
+  return {
+    openKey,
+    at: cache.dataUpdatedAt,
+    freshAtOpen: cache.hasData && !cache.isStale,
+  };
 }
 
 /** What `useModeShareCode` reads from its TanStack query. */
@@ -263,22 +273,26 @@ export interface ShareCodeQueryView {
 }
 
 /**
- * The snapshot for the current (open, key): "checking" while it is
- * fetching with no data from this open (first load, a reopen past the
- * stale time, a key change while open), or before its first fetch has
- * registered. Otherwise the query's data as is: TanStack keeps it
- * through a refetch, a failed one included.
+ * The snapshot for the current (open, key).
+ *
+ * An answer counts as shown in this open when it was fresh in the cache
+ * at open (shown at once) or was fetched since. Only that answer is ever
+ * offered: a background refetch keeps it, and a failed one keeps it with
+ * the refresh note. Data from a previous open that was stale at open is
+ * never offered. While its refetch runs the panel is "checking", and if
+ * that refetch fails the panel shows the failure with Try again, not the
+ * old answer.
  */
 export function shareCodeSnapshot(
   q: ShareCodeQueryView,
   mark: OpenMark
 ): ShareCodeSnapshot {
-  const fromThisOpen = q.data !== undefined && q.dataUpdatedAt > mark.at;
   const noError = q.error === null || q.error === undefined;
+  const shownThisOpen =
+    q.data !== undefined && (mark.freshAtOpen || q.dataUpdatedAt > mark.at);
   return {
-    answer: q.data,
-    checking:
-      (q.isFetching && !fromThisOpen) || (q.data === undefined && noError),
+    answer: shownThisOpen ? q.data : undefined,
+    checking: !shownThisOpen && (q.isFetching || noError),
     failure: noError
       ? null
       : q.error instanceof ShareCodeRequestError
@@ -363,19 +377,18 @@ export type RetryTarget = "config" | "share-code";
 /**
  * The Try again control: shown for a retryable state (the settings error
  * re-asks share-config; everything else the share code), and for a
- * background refresh that failed
- * under an answer on the card. Once clicked it stays on screen, disabled
- * ("Checking…"), until that re-ask settles, even though the state behind
- * it may turn to "loading" meanwhile, so it can't queue repeated calls.
+ * background refresh that failed under an answer on the card. While the
+ * re-ask it started runs (`busy`, set from the click until its refetch
+ * promise settles) it stays on screen, disabled ("Checking…"), even if
+ * the state behind it turns to "loading", so it can't queue repeated
+ * calls.
  */
 export function retryControl(
   state: ModeSharePanelState,
   shareCode: ShareCodeSnapshot,
-  inFlight: { target: RetryTarget | null; fetching: boolean }
+  busy: RetryTarget | null
 ): { target: RetryTarget; busy: boolean } | null {
-  if (inFlight.target !== null && inFlight.fetching) {
-    return { target: inFlight.target, busy: true };
-  }
+  if (busy !== null) return { target: busy, busy: true };
   if (state.kind === "error") return { target: "config", busy: false };
   if (
     state.kind === "retry" ||

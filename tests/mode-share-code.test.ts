@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { handleConfig } from "../worker/config";
+import { handleModeShareCode } from "../worker/share-config";
 import type { Env } from "../worker/helpers";
 import type { SessionData } from "../worker/types";
 
@@ -296,6 +297,34 @@ describe("share-code route — mapping the worker's answer", () => {
   it("passes any other 400 through", async () => {
     workerReplies({ error: "invalid_mode_name" }, 400);
     expect((await call()).status).toBe(400);
+  });
+
+  it("answers 504 when the worker doesn't answer in time", async () => {
+    // The fetch never resolves on its own; it rejects when its signal aborts.
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_input, init) =>
+        new Promise((_, reject) => {
+          const signal = (init as RequestInit).signal!;
+          signal.addEventListener("abort", () => reject(signal.reason));
+        })
+    );
+    const res = await handleModeShareCode(testEnv, "PBT", "obt-coach", {
+      timeoutMs: 20,
+    });
+    expect(res.status).toBe(504);
+    expect(await res.json()).toEqual({ error: "Engine timeout" });
+  });
+
+  it("passes the client's request signal through to the upstream call", async () => {
+    const spy = workerReplies({ code: "x", resolves: true });
+    const client = new AbortController();
+    await handleModeShareCode(testEnv, "PBT", "obt-coach", {
+      signal: client.signal,
+    });
+    const upstream = (spy.mock.calls[0]![1] as RequestInit).signal!;
+    expect(upstream.aborted).toBe(false);
+    client.abort();
+    expect(upstream.aborted).toBe(true);
   });
 
   it("maps a worker 500 or a thrown fetch to 502", async () => {

@@ -1,3 +1,5 @@
+import { SHARE_CODE_ERRORS } from "../src/types/mode-share-code";
+
 export interface Env {
   ENGINE_BASE_URL: string;
   ENGINE_API_KEY: string;
@@ -39,7 +41,7 @@ export function safeDecode(segment: string): string | null {
 
 /** The 400 for a mode-name path segment `safeDecode` couldn't read. */
 export function invalidModeNameResponse(): Response {
-  return errorResponse("Invalid mode name", 400);
+  return errorResponse(SHARE_CODE_ERRORS.bffInvalidModeName, 400);
 }
 
 /**

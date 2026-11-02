@@ -165,9 +165,12 @@ export function ModeSharePanel({
   // sent around the loop a second time to discover the operator half.
   // Only there: in a loading, error or org state the number isn't the
   // problem to raise.
+  // Only once share-config has actually loaded: while it is loading or
+  // failed, nothing is known about the number.
   const numberMissing =
     (state.kind === "draft" || state.kind === "group-only") &&
-    !(shareConfig.data?.supported && shareConfig.data.config.whatsappNumber);
+    shareConfig.isSuccess &&
+    !(shareConfig.data.supported && shareConfig.data.config.whatsappNumber);
 
   // Notes beside the state, only while an answer is on the card.
   const emptyHomeOrg = shownTrigger(state)
@@ -175,36 +178,16 @@ export function ModeSharePanel({
     : null;
   const showRefreshFailed = refreshFailed(state, shareCodeSnapshot);
 
-  // Try again (see `retryControl`): which query it re-asks, and whether a
-  // re-ask it started is still running. The target is cleared only after
-  // its fetch has been seen running and then settles, so a click can't be
-  // lost to the render before the refetch registers.
-  const [retryTarget, setRetryTarget] = useState<RetryTarget | null>(null);
-  const targetFetching =
-    retryTarget === "config"
-      ? shareConfig.isFetching
-      : retryTarget === "share-code"
-        ? shareCode.fetching
-        : false;
-  const sawRetryFetching = useRef(false);
-  useEffect(() => {
-    if (!open) {
-      sawRetryFetching.current = false;
-      setRetryTarget(null);
-      return;
-    }
-    if (retryTarget === null) return;
-    if (targetFetching) {
-      sawRetryFetching.current = true;
-    } else if (sawRetryFetching.current) {
-      sawRetryFetching.current = false;
-      setRetryTarget(null);
-    }
-  }, [open, retryTarget, targetFetching]);
-  const retry = retryControl(state, shareCodeSnapshot, {
-    target: retryTarget,
-    fetching: targetFetching,
-  });
+  // Try again (see `retryControl`): busy from the click until that
+  // refetch's promise settles.
+  const [retryBusy, setRetryBusy] = useState<RetryTarget | null>(null);
+  const retry = retryControl(state, shareCodeSnapshot, retryBusy);
+  const runRetry = (target: RetryTarget) => {
+    setRetryBusy(target);
+    const refetch =
+      target === "config" ? shareConfig.refetch() : shareCode.refetch();
+    void refetch.finally(() => setRetryBusy(null));
+  };
 
   const title = modeLabel?.trim() || humanizeModeSlug(modeName);
   // What every surface shows (card, QR label, SVG title, copy): only ever
@@ -450,11 +433,7 @@ export function ModeSharePanel({
               size="sm"
               variant="outline"
               disabled={retry.busy}
-              onClick={() => {
-                setRetryTarget(retry.target);
-                if (retry.target === "config") void shareConfig.refetch();
-                else void shareCode.refetch();
-              }}
+              onClick={() => runRetry(retry.target)}
             >
               {retry.busy ? "Checking…" : "Try again"}
             </Button>
@@ -513,7 +492,7 @@ export function ModeSharePanel({
         {numberMissing && (
           <p className="text-muted-foreground text-xs">
             Also: the WhatsApp number isn't configured for this environment yet,
-            so the code can't be generated until it is.
+            so no code can be made until it is.
           </p>
         )}
 
@@ -638,9 +617,9 @@ function describe(state: ModeSharePanelState, modeName: string): string {
     case "unresolved":
       return `BT Servant on WhatsApp doesn't open this mode with ${state.trigger}. Ask unfoldingWord to check the mode.`;
     case "group-only":
-      return "Group chat only. This mode is hidden from WhatsApp direct messages — turn off “Requires group chat” to share it by QR.";
+      return "Group chat only. This mode is hidden from WhatsApp direct messages. Turn off “Requires group chat” to get a WhatsApp code.";
     case "draft":
-      return "Publish to activate. Drafts are hidden from WhatsApp, so this code won't work until the mode is published.";
+      return "This mode isn't published yet. Publish it to get a WhatsApp code.";
     case "ready":
       return state.partnerOrg
         ? `Scan with a phone camera to open WhatsApp with ${state.trigger} ready to send. The code starts with the org name because this mode is from ${state.partnerOrg}. Print the card, or share the link.`

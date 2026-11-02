@@ -69,6 +69,15 @@ export const SHARE_CODE_ERRORS = {
   invalidModeName: "invalid_mode_name",
   /** 400 from the worker: `:org` or `home_org` is empty or too long for a KV key. */
   invalidOrg: "invalid_org",
+  /** 400 from the BFF: a mode-name path segment it couldn't decode. */
+  bffInvalidModeName: "Invalid mode name",
+  /**
+   * Prefix of the BFF's org-resolution 400s (`resolveOrg` in
+   * worker/config.ts): "Invalid org" and "Invalid org parameter".
+   */
+  bffInvalidOrgPrefix: "Invalid org",
+  /** 504 from the BFF: the worker didn't answer in time. */
+  bffTimeout: "Engine timeout",
 } as const;
 
 /**

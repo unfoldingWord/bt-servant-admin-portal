@@ -16,11 +16,13 @@ import {
 //                     wrangler.toml; when it lands, change both together.
 //   WHATSAPP_ORG    — the org the WhatsApp gateway is pinned to
 //                     (`ENGINE_ORG` in the gateway's wrangler.toml), i.e.
-//                     the org every WhatsApp request carries. Server-side
-//                     only: the share-code route below sends it to the
-//                     worker as `home_org`, so the worker can say which code
-//                     opens a mode from that org's point of view (#345). The
-//                     client never needs it.
+//                     the org every WhatsApp request carries. The share-code
+//                     route below sends it to the worker as `home_org`, so
+//                     the worker can say which code opens a mode from that
+//                     org's point of view (#345), and returns it to the
+//                     client as `home_org` on each answer (for the "has no
+//                     modes" note). It is also still in this route's body as
+//                     the deprecated `whatsapp_org`, for one release.
 //
 // The number is returned raw (trimmed, empty → null). Normalising it into
 // the `wa.me` digit form is the client lib's job, so the shape check lives
@@ -70,10 +72,19 @@ function presentOrNull(value: string | undefined): string | null {
 // the worker contract is additive, and the panel reads an unknown reason
 // as "does not open this mode".
 
+/** How long the BFF waits for the worker's share-code answer. */
+export const SHARE_CODE_UPSTREAM_TIMEOUT_MS = 10_000;
+
 export async function handleModeShareCode(
   env: Env,
   org: string,
-  modeName: string
+  modeName: string,
+  opts: {
+    /** The client's request signal: a closed panel cancels the upstream call. */
+    signal?: AbortSignal;
+    /** Overridable for tests. */
+    timeoutMs?: number;
+  } = {}
 ): Promise<Response> {
   // Used EXACTLY as set: the worker's home check is an exact KV key match
   // (`<org>:modes`), so trimming here could ask from a different org than
@@ -90,12 +101,24 @@ export async function handleModeShareCode(
     `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(org)}` +
     `/modes/${encodeURIComponent(modeName)}/share-code` +
     `?home_org=${encodeURIComponent(homeOrg)}`;
+  const timeout = AbortSignal.timeout(
+    opts.timeoutMs ?? SHARE_CODE_UPSTREAM_TIMEOUT_MS
+  );
+  const signal = opts.signal
+    ? AbortSignal.any([opts.signal, timeout])
+    : timeout;
   let res: Response;
   try {
     res = await fetch(url, {
       headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
+      signal,
     });
   } catch {
+    // A worker that doesn't answer in time is a 504: the client's
+    // transient "server" state, with Try again.
+    if (timeout.aborted) {
+      return errorResponse(SHARE_CODE_ERRORS.bffTimeout, 504);
+    }
     return errorResponse("Engine unreachable", 502);
   }
   const body = (await res.json().catch(() => null)) as Record<
