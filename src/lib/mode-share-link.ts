@@ -329,10 +329,19 @@ export type ModeSharePanelState =
   | { kind: "behind" }
   | { kind: "invalid-mode" }
   | ({ kind: "org-skipped" } & Shown)
-  | ({ kind: "collision"; resolvedOrg: string | null } & Shown)
-  | ({ kind: "ambiguous"; resolvedOrg: string | null } & Shown)
+  | ({
+      kind: "collision";
+      resolvedOrg: string | null;
+      /** Another org couldn't be read: this may change on a re-check. */
+      uncertain: boolean;
+    } & Shown)
+  | ({
+      kind: "ambiguous";
+      resolvedOrg: string | null;
+      uncertain: boolean;
+    } & Shown)
   | ({ kind: "capped" } & Shown)
-  | ({ kind: "unresolved" } & Shown)
+  | ({ kind: "unresolved"; uncertain: boolean } & Shown)
   | { kind: "group-only" }
   | { kind: "draft" }
   | ({ kind: "unconfigured" } & Shown)
@@ -371,6 +380,20 @@ export function refreshFailed(
   return shownTrigger(state) !== null && shareCode.failure !== null;
 }
 
+/**
+ * The worker's verdict rests on another org it couldn't read just now
+ * (`resolved_org_uncertain`): the panel adds a "may change" line with Try
+ * again.
+ */
+export function answerUncertain(state: ModeSharePanelState): boolean {
+  return (
+    (state.kind === "collision" ||
+      state.kind === "ambiguous" ||
+      state.kind === "unresolved") &&
+    state.uncertain
+  );
+}
+
 /** Which query a Try again re-asks. */
 export type RetryTarget = "config" | "share-code";
 
@@ -393,6 +416,7 @@ export function retryControl(
   if (
     state.kind === "retry" ||
     state.kind === "behind" ||
+    answerUncertain(state) ||
     refreshFailed(state, shareCode)
   ) {
     return { target: "share-code", busy: false };
@@ -497,6 +521,7 @@ function fromWorkerAnswer(
     return withNumber(buildShareLinkFromCode(number, code), shown);
   }
   const resolvedOrg = answer.resolved_org ?? null;
+  const uncertain = answer.resolved_org_uncertain === true;
   switch (answer.reason) {
     // The page saved published + private-chat OK (checked first), so the
     // worker hasn't seen that save yet.
@@ -508,9 +533,9 @@ function fromWorkerAnswer(
     case "reserved":
       return { kind: "slug-reserved" };
     case "collision":
-      return { kind: "collision", resolvedOrg, ...shown };
+      return { kind: "collision", resolvedOrg, uncertain, ...shown };
     case "ambiguous":
-      return { kind: "ambiguous", resolvedOrg, ...shown };
+      return { kind: "ambiguous", resolvedOrg, uncertain, ...shown };
     case "capped":
       return { kind: "capped", ...shown };
     case "org_skipped":
@@ -521,7 +546,7 @@ function fromWorkerAnswer(
     // `not_found`, a missing reason, or one this portal doesn't know yet
     // (the worker contract is additive).
     default:
-      return { kind: "unresolved", ...shown };
+      return { kind: "unresolved", uncertain, ...shown };
   }
 }
 

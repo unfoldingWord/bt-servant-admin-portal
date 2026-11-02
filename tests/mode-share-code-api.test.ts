@@ -72,6 +72,18 @@ describe("getModeShareCode", () => {
       home_org: "unfoldingWord",
     });
     expect(homeOrgWithoutModes(unknownHome)).toBeNull();
+    mockFetch(200, {
+      capability: "present",
+      code: "pbt/x",
+      resolves: false,
+      reason: "not_found",
+      resolved_org_uncertain: true,
+      home_org: "unfoldingWord",
+    });
+    expect(await getModeShareCode("x", "PBT")).toMatchObject({
+      reason: "not_found",
+      resolved_org_uncertain: true,
+    });
     mockFetch(200, { capability: "absent", home: true });
     expect(await getModeShareCode("x", null)).toEqual({
       capability: "absent",

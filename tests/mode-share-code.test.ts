@@ -155,6 +155,29 @@ describe("share-code route — mapping the worker's answer", () => {
     });
   });
 
+  it("passes resolved_org_uncertain through, and only as true", async () => {
+    workerReplies({
+      code: "pbt/x",
+      resolves: false,
+      reason: "collision",
+      resolved_org_uncertain: true,
+    });
+    expect(await (await call()).json()).toMatchObject({
+      reason: "collision",
+      resolved_org_uncertain: true,
+    });
+    vi.restoreAllMocks();
+    workerReplies({
+      code: "pbt/x",
+      resolves: false,
+      reason: "collision",
+      resolved_org_uncertain: "yes",
+    });
+    expect(await (await call()).json()).not.toHaveProperty(
+      "resolved_org_uncertain"
+    );
+  });
+
   it("passes home_has_modes through when the worker sends a boolean", async () => {
     workerReplies({ code: "pbt/x", resolves: true, home_has_modes: false });
     expect(await (await call()).json()).toMatchObject({

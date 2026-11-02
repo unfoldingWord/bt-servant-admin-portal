@@ -9,6 +9,7 @@ import {
   modeShareTrigger,
   normalizeWhatsAppNumber,
   resolveModeSharePanelState,
+  answerUncertain,
   homeOrgWithoutModes,
   refreshFailed,
   retryControl,
@@ -364,17 +365,20 @@ describe("resolveModeSharePanelState", () => {
     expect(run(miss("collision", "pbt"))).toEqual({
       kind: "collision",
       resolvedOrg: "pbt",
+      uncertain: false,
       ...partnerShown,
     });
     // #477: a collision whose winner is hidden has no resolved_org.
     expect(run(miss("collision"))).toEqual({
       kind: "collision",
       resolvedOrg: null,
+      uncertain: false,
       ...partnerShown,
     });
     expect(run(miss("ambiguous", "Other Org"))).toEqual({
       kind: "ambiguous",
       resolvedOrg: "Other Org",
+      uncertain: false,
       ...partnerShown,
     });
     expect(run(miss("capped"))).toEqual({ kind: "capped", ...partnerShown });
@@ -384,9 +388,48 @@ describe("resolveModeSharePanelState", () => {
     });
     expect(run(miss("not_found"))).toEqual({
       kind: "unresolved",
+      uncertain: false,
       ...partnerShown,
     });
     expect(run(miss("reserved"))).toEqual({ kind: "slug-reserved" });
+  });
+
+  it("marks a verdict that rests on an org the worker couldn't read, with Try again", () => {
+    // #477: resolved_org_uncertain, with resolved_org omitted.
+    const uncertain = (reason: string) =>
+      present({
+        code: "pbt/obt-coach",
+        resolves: false,
+        reason,
+        resolved_org_uncertain: true,
+      });
+    const collision = run(uncertain("collision"));
+    expect(collision).toEqual({
+      kind: "collision",
+      resolvedOrg: null,
+      uncertain: true,
+      ...partnerShown,
+    });
+    expect(run(uncertain("ambiguous"))).toMatchObject({
+      kind: "ambiguous",
+      resolvedOrg: null,
+      uncertain: true,
+    });
+    expect(run(uncertain("not_found"))).toMatchObject({
+      kind: "unresolved",
+      uncertain: true,
+    });
+    for (const state of [collision, run(uncertain("not_found"))]) {
+      expect(answerUncertain(state)).toBe(true);
+      expect(retryControl(state, settled, null)).toEqual({
+        target: "share-code",
+        busy: false,
+      });
+    }
+    // A firm verdict gets neither the line nor Try again.
+    const firm = run(miss("collision", "pbt"));
+    expect(answerUncertain(firm)).toBe(false);
+    expect(retryControl(firm, settled, null)).toBeNull();
   });
 
   it("names a damaged stored mode (invalid_mode) as permanent, with no Try again", () => {
@@ -429,6 +472,7 @@ describe("resolveModeSharePanelState", () => {
     for (const reason of [undefined, "pending", "some_future_reason"]) {
       expect(run(miss(reason)), String(reason)).toEqual({
         kind: "unresolved",
+        uncertain: false,
         ...partnerShown,
       });
     }

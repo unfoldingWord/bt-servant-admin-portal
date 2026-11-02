@@ -38,6 +38,12 @@ export interface ShareCodeAnswer {
   /** Raw org of the mode `#<code>` actually opens. */
   resolved_org?: string;
   /**
+   * True on a `resolves: false` answer when another org couldn't be read
+   * just now (bt-servant-worker#477): `resolved_org` is then omitted, and
+   * the reason still stands but may change on a re-check.
+   */
+  resolved_org_uncertain?: boolean;
+  /**
    * False when the gateway org has no modes record (the chat path then
    * treats home as empty). Absent when the worker couldn't read the home
    * record for a foreign mode: unknown, so no note. Drives a non-blocking
@@ -89,8 +95,14 @@ export const SHARE_CODE_ERRORS = {
  */
 export function parseShareCodeAnswer(body: unknown): ShareCodeAnswer | null {
   if (body === null || typeof body !== "object") return null;
-  const { code, resolves, reason, resolved_org, home_has_modes } =
-    body as Record<string, unknown>;
+  const {
+    code,
+    resolves,
+    reason,
+    resolved_org,
+    resolved_org_uncertain,
+    home_has_modes,
+  } = body as Record<string, unknown>;
   if (code !== null && typeof code !== "string") return null;
   if (typeof resolves !== "boolean") return null;
   if (reason !== undefined && typeof reason !== "string") return null;
@@ -102,6 +114,11 @@ export function parseShareCodeAnswer(body: unknown): ShareCodeAnswer | null {
     resolves,
     ...(reason !== undefined ? { reason } : {}),
     ...(resolved_org !== undefined ? { resolved_org } : {}),
+    // Only `true` means anything; anything else is dropped like an absent
+    // field, since it only adds a "may change" line.
+    ...(resolved_org_uncertain === true
+      ? { resolved_org_uncertain: true }
+      : {}),
     ...(typeof home_has_modes === "boolean" ? { home_has_modes } : {}),
   };
 }

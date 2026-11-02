@@ -13,6 +13,7 @@ import type { ModeFlags } from "@/lib/mode-flags";
 import {
   buildModeShareFilename,
   resolveModeSharePanelState,
+  answerUncertain,
   homeOrgWithoutModes,
   refreshFailed,
   modeShareState,
@@ -473,6 +474,13 @@ export function ModeSharePanel({
               </p>
             )}
           </div>
+        )}
+
+        {answerUncertain(state) && (
+          <p className="text-muted-foreground text-xs">
+            Some orgs couldn&rsquo;t be checked just now, so this may change.
+            Try again to re-check.
+          </p>
         )}
 
         {showRefreshFailed && (
