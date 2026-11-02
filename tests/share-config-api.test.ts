@@ -31,7 +31,12 @@ describe("getShareConfig", () => {
   });
 
   it("returns the config on 200", async () => {
-    mockFetch(200, { whatsapp_number: "+57 300 123 4567" });
+    // The deprecated `whatsapp_org` (kept one release for 1.16.x tabs) is
+    // ignored by this client.
+    mockFetch(200, {
+      whatsapp_number: "+57 300 123 4567",
+      whatsapp_org: "unfoldingWord",
+    });
     expect(await getShareConfig()).toEqual({
       supported: true,
       config: { whatsappNumber: "+57 300 123 4567" },

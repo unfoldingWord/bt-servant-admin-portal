@@ -15,6 +15,7 @@ import {
   resolveModeSharePanelState,
   homeOrgWithoutModes,
   refreshFailed,
+  modeShareState,
   retryControl,
   shownTrigger,
   validateModeShareSlug,
@@ -121,11 +122,15 @@ export function ModeSharePanel({
   const shareConfig = useShareConfig(open);
   // The worker's answer for which code opens this mode (#345). Not asked
   // for a slug the panel refuses on its own (it would only 400).
+  // Asked only for a mode the page itself can't refuse: a shareable slug,
+  // published, not group-only (`resolveModeSharePanelState` checks those
+  // first, from the page's own saved flags).
   const shareCode = useModeShareCode(
-    open && validateModeShareSlug(modeName) === "ok",
+    open &&
+      validateModeShareSlug(modeName) === "ok" &&
+      modeShareState(flags) === "ready",
     modeName,
-    org,
-    flags
+    org
   );
   const shareCodeSnapshot = shareCode.snapshot;
 
@@ -179,7 +184,7 @@ export function ModeSharePanel({
     retryTarget === "config"
       ? shareConfig.isFetching
       : retryTarget === "share-code"
-        ? shareCode.retrying
+        ? shareCode.fetching
         : false;
   const sawRetryFetching = useRef(false);
   useEffect(() => {
@@ -210,9 +215,12 @@ export function ModeSharePanel({
   const partnerOrg = shown?.partnerOrg ?? null;
 
   const ready = state.kind === "ready";
+  // Keyed on the URL string, not the state object: a background refresh
+  // that returns the same code mustn't rebuild the QR.
+  const qrUrl = state.kind === "ready" ? state.url : null;
   const matrix = useMemo(
-    () => (state.kind === "ready" ? buildQrMatrix(state.url) : null),
-    [state]
+    () => (qrUrl === null ? null : buildQrMatrix(qrUrl)),
+    [qrUrl]
   );
   // Built on click, not per render: the on-screen code is React markup and
   // only a download needs the standalone document.
@@ -445,7 +453,7 @@ export function ModeSharePanel({
               onClick={() => {
                 setRetryTarget(retry.target);
                 if (retry.target === "config") void shareConfig.refetch();
-                else shareCode.retry();
+                else void shareCode.refetch();
               }}
             >
               {retry.busy ? "Checking…" : "Try again"}
@@ -602,11 +610,11 @@ function describe(state: ModeSharePanelState, modeName: string): string {
     case "number-invalid":
       return "The configured WhatsApp number isn't a valid E.164 number. Check WHATSAPP_NUMBER for this environment.";
     case "org-unconfigured":
-      return "WhatsApp's org isn't configured for this environment. Set WHATSAPP_ORG to generate share codes.";
-    case "syncing":
-      return "This mode just changed. Checking its code again…";
-    case "out-of-sync":
-      return "BT Servant hasn't caught up with this mode's latest change yet. Try again in a moment.";
+      return "WhatsApp's org isn't set up correctly for this environment. Check WHATSAPP_ORG to generate share codes.";
+    case "behind":
+      return "BT Servant hasn't seen this mode's latest change yet. Try again in a moment.";
+    case "invalid-mode":
+      return "This mode's saved settings are damaged, so BT Servant on WhatsApp can't open it. Ask unfoldingWord to check the mode.";
     case "upgrade-needed":
       return "Share codes for other orgs' modes need a newer BT Servant version.";
     case "slug-invalid":
@@ -655,10 +663,10 @@ function placeholderLabel(state: ModeSharePanelState): string {
       return "Number invalid";
     case "org-unconfigured":
       return "Org not configured";
-    case "syncing":
-      return "Checking again";
-    case "out-of-sync":
+    case "behind":
       return "Not caught up yet";
+    case "invalid-mode":
+      return "Mode needs repair";
     case "failed":
       return "Unavailable";
     case "code-unencodable":

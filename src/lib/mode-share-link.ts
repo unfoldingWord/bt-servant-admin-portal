@@ -28,10 +28,11 @@
 // URL without passing the shape check.
 
 import { sanitizeFilenamePart } from "@/lib/mode-export";
-import type {
-  ModeShareCode,
-  ShareCodeFailure,
-  ShareCodeTransient,
+import {
+  ShareCodeRequestError,
+  type ModeShareCode,
+  type ShareCodeFailure,
+  type ShareCodeTransient,
 } from "@/lib/mode-share-code-api";
 
 export const WA_ME_ORIGIN = "https://wa.me";
@@ -153,9 +154,9 @@ export function buildShareLinkFromCode(
 export type ModeShareState = "ready" | "group-only" | "draft";
 
 /**
- * Whether a scanned QR would reach this mode, from the page's own flags.
- * Used only for a home-org mode on a worker without the share-code route;
- * otherwise the worker's answer decides. Same order as the worker's
+ * Whether a scanned QR could reach this mode, from the page's own saved
+ * flags. The panel checks this BEFORE asking the worker, and asks only for
+ * a published, non-group-only mode. Same order as the worker's
  * `staticReason` (bt-servant-worker src/utils/mode-share-code.ts): draft,
  * then group-only.
  *
@@ -218,20 +219,72 @@ export interface ShareConfigSnapshot {
  */
 export interface ShareCodeSnapshot {
   /**
-   * The answer that is current for this open of the panel: fresh when it
-   * opened, or fetched since. A refetch keeps it (also when the refetch
-   * fails); a stale cached answer from before the open is not current.
+   * The answer to show. TanStack keeps it through a refetch, also a failed
+   * one; it is withheld only while `checking`.
    */
   answer: ModeShareCode | undefined;
-  /** No current answer yet and a fetch is in flight: first load or reopen. */
+  /**
+   * The current query key is fetching and has no data from this open of
+   * the panel (first load, a reopen past the stale time, or a key change
+   * while open): never Copy/Download on an answer about to be replaced.
+   */
   checking: boolean;
   /** The last fetch failed transiently (with or without a current answer). */
   failure: ShareCodeTransient | null;
-  /**
-   * The worker's answer against the mode's flags: they agree, a re-read of
-   * both is pending or running, or they still disagree after it.
-   */
-  sync: "agree" | "checking" | "behind";
+}
+
+/**
+ * Which (open, query key) pair the panel is showing, and the share-code
+ * `dataUpdatedAt` when that pair began. Data no newer than `at` came from
+ * before this open (or this key), so a fetch over it is not a background
+ * refresh.
+ */
+export interface OpenMark {
+  /** The query key while the panel is open; null while closed. */
+  openKey: string | null;
+  at: number;
+}
+
+/** Start a new mark when (open, key) changes; otherwise keep it. */
+export function nextOpenMark(
+  prev: OpenMark,
+  openKey: string | null,
+  dataUpdatedAt: number
+): OpenMark {
+  return prev.openKey === openKey ? prev : { openKey, at: dataUpdatedAt };
+}
+
+/** What `useModeShareCode` reads from its TanStack query. */
+export interface ShareCodeQueryView {
+  data: ModeShareCode | undefined;
+  dataUpdatedAt: number;
+  isFetching: boolean;
+  error: unknown;
+}
+
+/**
+ * The snapshot for the current (open, key): "checking" while it is
+ * fetching with no data from this open (first load, a reopen past the
+ * stale time, a key change while open), or before its first fetch has
+ * registered. Otherwise the query's data as is: TanStack keeps it
+ * through a refetch, a failed one included.
+ */
+export function shareCodeSnapshot(
+  q: ShareCodeQueryView,
+  mark: OpenMark
+): ShareCodeSnapshot {
+  const fromThisOpen = q.data !== undefined && q.dataUpdatedAt > mark.at;
+  const noError = q.error === null || q.error === undefined;
+  return {
+    answer: q.data,
+    checking:
+      (q.isFetching && !fromThisOpen) || (q.data === undefined && noError),
+    failure: noError
+      ? null
+      : q.error instanceof ShareCodeRequestError
+        ? q.error.kind
+        : "server",
+  };
 }
 
 /** A state that shows a code: what it pre-fills, and whose mode it is. */
@@ -259,15 +312,15 @@ export type ModeSharePanelState =
   | { kind: "upgrade-needed" }
   | { kind: "org-unencodable" }
   | { kind: "code-unencodable" }
-  | { kind: "syncing" }
-  | { kind: "out-of-sync" }
+  | { kind: "behind" }
+  | { kind: "invalid-mode" }
   | ({ kind: "org-skipped" } & Shown)
   | ({ kind: "collision"; resolvedOrg: string | null } & Shown)
   | ({ kind: "ambiguous"; resolvedOrg: string | null } & Shown)
   | ({ kind: "capped" } & Shown)
   | ({ kind: "unresolved" } & Shown)
-  | ({ kind: "group-only" } & Shown)
-  | ({ kind: "draft" } & Shown)
+  | { kind: "group-only" }
+  | { kind: "draft" }
   | ({ kind: "unconfigured" } & Shown)
   | ({ kind: "number-invalid" } & Shown)
   | ({ kind: "ready"; url: string } & Shown);
@@ -280,26 +333,17 @@ export function shownTrigger(state: ModeSharePanelState): Shown | null {
 }
 
 /**
- * Whether the worker's answer contradicts the flags the page just saved:
- * it says draft while the page says published (or the reverse), or the
- * same for group-only. The worker checks published, then requires_group,
- * before anything else (`staticReason` in bt-servant-worker
- * src/utils/mode-share-code.ts), so a disagreement there means its read
- * predates the save (KV is eventually consistent). Its reason is then not
- * presented as fact.
+ * The worker still says draft or group-only for a mode the page has saved
+ * as published and private-chat OK (the panel only asks for those): its
+ * KV read predates the save. Shown as one plain "not seen the latest
+ * change yet" state with a manual Try again, and never cached.
  */
-export function shareCodeDisagreesWithFlags(
-  data: ModeShareCode | undefined,
-  flags: { published?: boolean; requires_group?: boolean }
-): boolean {
-  if (data?.capability !== "present" || data.code === null) return false;
-  const pageDraft = flags.published !== true;
-  const workerDraft = !data.resolves && data.reason === "draft";
-  if (pageDraft !== workerDraft) return true;
-  if (pageDraft) return false;
-  const pageGroup = flags.requires_group === true;
-  const workerGroup = !data.resolves && data.reason === "requires_group";
-  return pageGroup !== workerGroup;
+export function workerBehindPage(data: ModeShareCode | undefined): boolean {
+  return (
+    data?.capability === "present" &&
+    !data.resolves &&
+    (data.reason === "draft" || data.reason === "requires_group")
+  );
 }
 
 /**
@@ -318,8 +362,8 @@ export type RetryTarget = "config" | "share-code";
 
 /**
  * The Try again control: shown for a retryable state (the settings error
- * re-asks share-config; everything else the share code, with the mode
- * record when they disagreed), and for a background refresh that failed
+ * re-asks share-config; everything else the share code), and for a
+ * background refresh that failed
  * under an answer on the card. Once clicked it stays on screen, disabled
  * ("Checking…"), until that re-ask settles, even though the state behind
  * it may turn to "loading" meanwhile, so it can't queue repeated calls.
@@ -335,7 +379,7 @@ export function retryControl(
   if (state.kind === "error") return { target: "config", busy: false };
   if (
     state.kind === "retry" ||
-    state.kind === "out-of-sync" ||
+    state.kind === "behind" ||
     refreshFailed(state, shareCode)
   ) {
     return { target: "share-code", busy: false };
@@ -366,23 +410,23 @@ function unhandled(value: never): never {
  * Resolve what the panel shows. Order of precedence:
  *
  * 1. the mode's identity, from its stored slug alone: a slug no trigger
- *    can carry, then a reserved clear-word. Nothing else fixes these, so
- *    they come first, before any request;
- * 2. query lifecycle: the first load since opening (a fetch before any
- *    answer was shown gates on "checking"; later fetches run in the
- *    background over the last answer), then a share-config failure, then
- *    the share-code request's own outcome, then configuration
- *    (WHATSAPP_ORG unset, a worker without the share-code route for a
- *    partner mode);
- * 3. the worker's verdict, unless it contradicts the page's just-saved
- *    flags (then "checking again", once, before saying it's behind): no
- *    code at all, then a link if the code resolves, else why not;
- * 4. the number: missing or invalid.
+ *    can carry, then a reserved clear-word;
+ * 2. the page's own saved flags: draft, then group-only (the worker's
+ *    order). The worker is not asked about either; publishing or turning
+ *    off group-only is the author's to do first;
+ * 3. query lifecycle: share-config loading or failed, then the share code
+ *    checking (see ShareCodeSnapshot) or failed with nothing to show;
+ * 4. the worker's answer, as is: configuration (WHATSAPP_ORG unset or
+ *    unusable, a worker without the route for a partner mode), a definite
+ *    failure, no code at all, a link if the code resolves, else why not.
+ *    A draft / group-only answer here means the worker hasn't seen the
+ *    page's latest save ("behind");
+ * 5. the number: missing or invalid.
  *
- * On a worker without the share-code route, a HOME mode falls back to its
- * bare slug with the page's own flags: home modes resolve bare on every
- * worker version, and the BFF decided "home" on the exact org the worker
- * reads. A partner mode is refused, never guessed.
+ * On a worker without the share-code route, a HOME mode is shared by its
+ * bare slug: home modes resolve bare on every worker version, and the BFF
+ * decided "home" on the exact org the worker reads. A partner mode is
+ * refused, never guessed.
  */
 export function resolveModeSharePanelState(
   config: ShareConfigSnapshot,
@@ -393,11 +437,13 @@ export function resolveModeSharePanelState(
 ): ModeSharePanelState {
   const slugVerdict = validateModeShareSlug(modeName);
   if (slugVerdict !== "ok") return { kind: slugVerdict };
+  const eligibility = modeShareState(flags);
+  if (eligibility !== "ready") return { kind: eligibility };
   if (config.pending || config.fetching) return { kind: "loading" };
   if (config.error) return { kind: "error" };
+  if (shareCode.checking) return { kind: "loading" };
   const { answer } = shareCode;
   if (answer === undefined) {
-    if (shareCode.checking) return { kind: "loading" };
     return { kind: "retry", cause: shareCode.failure ?? "server" };
   }
   const number = config.supported ? config.whatsappNumber : null;
@@ -409,22 +455,13 @@ export function resolveModeSharePanelState(
       return { kind: "not-found" };
     case "unconfigured":
       return { kind: "org-unconfigured" };
-    case "absent": {
+    case "absent":
       if (!answer.home) return { kind: "upgrade-needed" };
-      const shown: Shown = {
+      return withNumber(buildShareLinkFromCode(number, modeName), {
         trigger: modeShareTrigger(modeName),
         partnerOrg: null,
-      };
-      const eligibility = modeShareState(flags);
-      if (eligibility !== "ready") return { kind: eligibility, ...shown };
-      return withNumber(buildShareLinkFromCode(number, modeName), shown);
-    }
+      });
     case "present":
-      if (shareCode.sync !== "agree") {
-        return {
-          kind: shareCode.sync === "behind" ? "out-of-sync" : "syncing",
-        };
-      }
       return fromWorkerAnswer(answer, number, modeOrg);
     default:
       return unhandled(answer);
@@ -448,10 +485,11 @@ function fromWorkerAnswer(
   }
   const resolvedOrg = answer.resolved_org ?? null;
   switch (answer.reason) {
+    // The page saved published + private-chat OK (checked first), so the
+    // worker hasn't seen that save yet.
     case "draft":
-      return { kind: "draft", ...shown };
     case "requires_group":
-      return { kind: "group-only", ...shown };
+      return { kind: "behind" };
     // Already refused from the slug above; kept for a worker whose clear
     // tokens grow.
     case "reserved":
@@ -464,6 +502,9 @@ function fromWorkerAnswer(
       return { kind: "capped", ...shown };
     case "org_skipped":
       return { kind: "org-skipped", ...shown };
+    // Permanent until the stored mode is repaired: no Try again.
+    case "invalid_mode":
+      return { kind: "invalid-mode" };
     // `not_found`, a missing reason, or one this portal doesn't know yet
     // (the worker contract is additive).
     default:

@@ -28,11 +28,19 @@ import {
 
 export interface ShareConfigResponse {
   whatsapp_number: string | null;
+  /**
+   * @deprecated Kept for ONE release (#345) so share panels already open in
+   * 1.16.x tabs keep their org-mismatch refusal instead of offering a bare
+   * `#<slug>` for a partner org's mode. 1.17.0 clients ignore it; remove in
+   * the next release.
+   */
+  whatsapp_org: string | null;
 }
 
 export function handleShareConfig(env: Env): Response {
   const body: ShareConfigResponse = {
     whatsapp_number: presentOrNull(env.WHATSAPP_NUMBER),
+    whatsapp_org: presentOrNull(env.WHATSAPP_ORG),
   };
   return jsonResponse(body);
 }
@@ -69,10 +77,11 @@ export async function handleModeShareCode(
 ): Promise<Response> {
   // Used EXACTLY as set: the worker's home check is an exact KV key match
   // (`<org>:modes`), so trimming here could ask from a different org than
-  // the gateway sends. Only an empty or whitespace-only value counts as
-  // unset.
+  // the gateway sends. A value the worker would reject as `invalid_org`
+  // (empty, or a modes key over the KV limit) is caught here instead, so a
+  // worker `invalid_org` can only be about the MODE's org.
   const homeOrg = env.WHATSAPP_ORG;
-  if (homeOrg === undefined || homeOrg.trim() === "") {
+  if (homeOrg === undefined || !isUsableHomeOrg(homeOrg)) {
     return jsonResponse({
       capability: "unconfigured",
     } satisfies ModeShareCodeResponse);
@@ -128,4 +137,17 @@ export async function handleModeShareCode(
     home_org: homeOrg,
     ...answer,
   } satisfies ModeShareCodeResponse);
+}
+
+/** Cloudflare KV's key limit, in bytes; the worker applies it to `<org>:modes`. */
+const KV_KEY_MAX_BYTES = 512;
+
+/**
+ * Whether WHATSAPP_ORG can name a home org for the worker: not empty or
+ * whitespace-only, and its `<org>:modes` key within the KV key limit (the
+ * worker's own `invalid_org` rule, bt-servant-worker#477).
+ */
+export function isUsableHomeOrg(org: string): boolean {
+  if (org.trim() === "") return false;
+  return new TextEncoder().encode(`${org}:modes`).length <= KV_KEY_MAX_BYTES;
 }

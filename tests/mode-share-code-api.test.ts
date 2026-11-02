@@ -4,6 +4,7 @@ import {
   getModeShareCode,
   ShareCodeRequestError,
 } from "../src/lib/mode-share-code-api";
+import { homeOrgWithoutModes } from "../src/lib/mode-share-link";
 
 // #345 — client for GET /api/config/modes/{name}/share-code. Pins that
 // every HTTP outcome becomes a state the panel can name (none throws but a
@@ -53,6 +54,24 @@ describe("getModeShareCode", () => {
       home_has_modes: false,
       home_org: "unfoldingWord",
     });
+    // #477: home_has_modes is absent when the home record couldn't be read;
+    // it stays absent (unknown), not false.
+    mockFetch(200, {
+      capability: "present",
+      code: "pbt/x",
+      resolves: false,
+      reason: "invalid_mode",
+      home_org: "unfoldingWord",
+    });
+    const unknownHome = await getModeShareCode("x", "PBT");
+    expect(unknownHome).toEqual({
+      capability: "present",
+      code: "pbt/x",
+      resolves: false,
+      reason: "invalid_mode",
+      home_org: "unfoldingWord",
+    });
+    expect(homeOrgWithoutModes(unknownHome)).toBeNull();
     mockFetch(200, { capability: "absent", home: true });
     expect(await getModeShareCode("x", null)).toEqual({
       capability: "absent",

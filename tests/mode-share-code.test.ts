@@ -142,6 +142,18 @@ describe("share-code route — mapping the worker's answer", () => {
     });
   });
 
+  it("passes an invalid_mode answer without home_has_modes through unchanged", async () => {
+    workerReplies({ code: "pbt/x", resolves: false, reason: "invalid_mode" });
+    const body = (await (await call()).json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      capability: "present",
+      home_org: GATEWAY,
+      code: "pbt/x",
+      resolves: false,
+      reason: "invalid_mode",
+    });
+  });
+
   it("passes home_has_modes through when the worker sends a boolean", async () => {
     workerReplies({ code: "pbt/x", resolves: true, home_has_modes: false });
     expect(await (await call()).json()).toMatchObject({
@@ -292,6 +304,24 @@ describe("share-code route — mapping the worker's answer", () => {
     vi.restoreAllMocks();
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("down"));
     expect((await call()).status).toBe(502);
+  });
+
+  it("answers unconfigured, not the worker's invalid_org, for an unusable WHATSAPP_ORG", async () => {
+    // The worker's own rule: `<org>:modes` within 512 bytes (and not
+    // empty). Checked here so a worker invalid_org is only ever the mode's.
+    for (const bad of ["a".repeat(507), "é".repeat(254)]) {
+      const spy = workerReplies({});
+      const res = await call({ env: { ...env, WHATSAPP_ORG: bad } as Env });
+      expect(await res.json(), `${bad.length}`).toEqual({
+        capability: "unconfigured",
+      });
+      expect(spy).not.toHaveBeenCalled();
+      vi.restoreAllMocks();
+    }
+    // 506 + ":modes" = 512 bytes: still usable.
+    const spy = workerReplies({ code: "x", resolves: true });
+    await call({ env: { ...env, WHATSAPP_ORG: "a".repeat(506) } as Env });
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
   it("answers unconfigured without calling the worker when WHATSAPP_ORG is unset", async () => {

@@ -12,14 +12,20 @@ import {
   homeOrgWithoutModes,
   refreshFailed,
   retryControl,
-  shareCodeDisagreesWithFlags,
+  workerBehindPage,
+  nextOpenMark,
+  shareCodeSnapshot,
+  type ShareCodeQueryView,
   shownTrigger,
   validateModeShareSlug,
   type ModeSharePanelState,
   type ShareCodeSnapshot,
   type ShareConfigSnapshot,
 } from "../src/lib/mode-share-link";
-import type { ModeShareCode } from "../src/lib/mode-share-code-api";
+import {
+  ShareCodeRequestError,
+  type ModeShareCode,
+} from "../src/lib/mode-share-code-api";
 import type { ModeShareCodeResponse } from "../src/types/mode-share-code";
 
 // #311 — the wa.me deep link the per-mode QR encodes. Number and slug are
@@ -270,7 +276,6 @@ describe("resolveModeSharePanelState", () => {
     answer: undefined,
     checking: false,
     failure: null,
-    sync: "agree",
   };
   type Present = Extract<ModeShareCodeResponse, { capability: "present" }>;
   const answer = (
@@ -381,30 +386,49 @@ describe("resolveModeSharePanelState", () => {
       ...partnerShown,
     });
     expect(run(miss("reserved"))).toEqual({ kind: "slug-reserved" });
-    expect(run(miss("draft"), { flags: {} })).toEqual({
-      kind: "draft",
-      ...partnerShown,
-    });
-    expect(
-      run(miss("requires_group"), {
-        flags: { published: true, requires_group: true },
-      })
-    ).toEqual({ kind: "group-only", ...partnerShown });
   });
 
-  it("shows the sync states the hook derives instead of a disputed reason", () => {
-    expect(run({ ...miss("draft"), sync: "checking" })).toEqual({
-      kind: "syncing",
-    });
-    expect(run({ ...miss("draft"), sync: "behind" })).toEqual({
-      kind: "out-of-sync",
-    });
-    // Agreed after the re-read (the page's flags were the stale side):
-    // the worker's answer is shown as is.
-    expect(run({ ...miss("draft"), sync: "agree" })).toEqual({
-      kind: "draft",
+  it("names a damaged stored mode (invalid_mode) as permanent, with no Try again", () => {
+    const state = run(miss("invalid_mode"));
+    expect(state).toEqual({ kind: "invalid-mode" });
+    expect(
+      retryControl(
+        state,
+        { ...settled, answer: undefined },
+        {
+          target: null,
+          fetching: false,
+        }
+      )
+    ).toBeNull();
+  });
+
+  it("shows org_skipped on a published mode as the worker's answer, as is", () => {
+    expect(run(miss("org_skipped"), { flags: ready })).toEqual({
+      kind: "org-skipped",
       ...partnerShown,
     });
+  });
+
+  it("refuses a draft or group-only mode from the page's own flags, without the worker", () => {
+    // Whatever the worker would say (here it isn't even asked: the answer
+    // is still loading), the page's saved flags decide, draft first.
+    const unasked: ShareCodeSnapshot = { ...settled, checking: true };
+    expect(
+      run(unasked, { flags: { published: false, requires_group: true } })
+    ).toEqual({ kind: "draft" });
+    expect(
+      run(unasked, { flags: { published: true, requires_group: true } })
+    ).toEqual({ kind: "group-only" });
+    // ...but after the slug checks.
+    expect(run(unasked, { flags: {}, name: "default" })).toEqual({
+      kind: "slug-reserved",
+    });
+  });
+
+  it("says the worker is behind when it says draft / group-only for a page-published mode", () => {
+    expect(run(miss("draft"))).toEqual({ kind: "behind" });
+    expect(run(miss("requires_group"))).toEqual({ kind: "behind" });
   });
 
   it("treats a missing or unknown reason (e.g. `pending`) as not resolving, with generic copy", () => {
@@ -461,22 +485,6 @@ describe("resolveModeSharePanelState", () => {
       trigger: "#fia",
       partnerOrg: null,
     });
-    // ...with the page's own flags standing in for the worker's verdict,
-    // draft first as the worker orders them.
-    expect(
-      run(absentHome, {
-        org: "acme",
-        name: "fia",
-        flags: { published: false, requires_group: true },
-      })
-    ).toEqual({ kind: "draft", trigger: "#fia", partnerOrg: null });
-    expect(
-      run(absentHome, {
-        org: "acme",
-        name: "fia",
-        flags: { published: true, requires_group: true },
-      })
-    ).toEqual({ kind: "group-only", trigger: "#fia", partnerOrg: null });
   });
 
   it("checks while there is no current answer and a fetch runs (first load, reopen)", () => {
@@ -549,7 +557,6 @@ describe("refreshFailed and retryControl", () => {
     answer: undefined,
     checking: false,
     failure: null,
-    sync: "agree",
     ...over,
   });
   const readyState: ModeSharePanelState = {
@@ -593,7 +600,7 @@ describe("refreshFailed and retryControl", () => {
     expect(
       retryControl({ kind: "retry", cause: "unavailable" }, snap(), idle)
     ).toEqual({ target: "share-code", busy: false });
-    expect(retryControl({ kind: "out-of-sync" }, snap(), idle)).toEqual({
+    expect(retryControl({ kind: "behind" }, snap(), idle)).toEqual({
       target: "share-code",
       busy: false,
     });
@@ -613,7 +620,7 @@ describe("refreshFailed and retryControl", () => {
       })
     ).toEqual({ target: "config", busy: true });
     expect(
-      retryControl({ kind: "syncing" }, snap(), {
+      retryControl({ kind: "loading" }, snap(), {
         target: "share-code",
         fetching: true,
       })
@@ -628,42 +635,121 @@ describe("refreshFailed and retryControl", () => {
   });
 });
 
-describe("shareCodeDisagreesWithFlags", () => {
+describe("workerBehindPage", () => {
   const base = {
     capability: "present" as const,
     home_org: "unfoldingWord",
     code: "pbt/x",
   };
-  it("agrees when the worker's static reason matches the page's flags", () => {
-    const published = { published: true };
+  it("is true only for a draft / group-only answer (never cached)", () => {
     expect(
-      shareCodeDisagreesWithFlags({ ...base, resolves: true }, published)
+      workerBehindPage({ ...base, resolves: false, reason: "draft" })
+    ).toBe(true);
+    expect(
+      workerBehindPage({ ...base, resolves: false, reason: "requires_group" })
+    ).toBe(true);
+    expect(
+      workerBehindPage({ ...base, resolves: false, reason: "org_skipped" })
     ).toBe(false);
+    expect(workerBehindPage({ ...base, resolves: true })).toBe(false);
+    expect(workerBehindPage({ capability: "not-found" })).toBe(false);
+    expect(workerBehindPage(undefined)).toBe(false);
+  });
+});
+
+describe("open-detection: nextOpenMark and shareCodeSnapshot", () => {
+  const answerA = {
+    capability: "present" as const,
+    home_org: "uW",
+    code: "pbt/a",
+    resolves: true,
+  };
+  const answerB = { ...answerA, code: "pbt/b" };
+  const view = (over: Partial<ShareCodeQueryView>): ShareCodeQueryView => ({
+    data: undefined,
+    dataUpdatedAt: 0,
+    isFetching: false,
+    error: null,
+    ...over,
+  });
+
+  it("keeps the mark while (open, key) is unchanged, and starts one when it changes", () => {
+    const m = nextOpenMark({ openKey: null, at: 0 }, "k1", 100);
+    expect(m).toEqual({ openKey: "k1", at: 100 });
+    expect(nextOpenMark(m, "k1", 200)).toBe(m);
+    expect(nextOpenMark(m, "k2", 300)).toEqual({ openKey: "k2", at: 300 });
+    expect(nextOpenMark(m, null, 300)).toEqual({ openKey: null, at: 300 });
+  });
+
+  it("checks on a reopen past the stale time, then shows the fresh answer", () => {
+    // Cached at t=100; the panel reopens; the refetch is running.
+    const mark = nextOpenMark({ openKey: null, at: 0 }, "k1", 100);
     expect(
-      shareCodeDisagreesWithFlags(
-        { ...base, resolves: false, reason: "capped" },
-        published
-      )
-    ).toBe(false);
+      shareCodeSnapshot(
+        view({ data: answerA, dataUpdatedAt: 100, isFetching: true }),
+        mark
+      ).checking
+    ).toBe(true);
     expect(
-      shareCodeDisagreesWithFlags(
-        { ...base, resolves: false, reason: "draft" },
-        { published: false, requires_group: true }
-      )
+      shareCodeSnapshot(view({ data: answerA, dataUpdatedAt: 150 }), mark)
+    ).toEqual({ answer: answerA, checking: false, failure: null });
+  });
+
+  it("shows a fresh cached answer at once on reopen (no fetch)", () => {
+    const mark = nextOpenMark({ openKey: null, at: 0 }, "k1", 100);
+    expect(
+      shareCodeSnapshot(view({ data: answerA, dataUpdatedAt: 100 }), mark)
+        .checking
     ).toBe(false);
   });
 
-  it("ignores answers without a code and non-answers", () => {
+  it("keeps the answer through a background refresh, and a failed one", () => {
+    const mark = { openKey: "k1", at: 100 };
+    const fetched = view({ data: answerA, dataUpdatedAt: 150 });
     expect(
-      shareCodeDisagreesWithFlags(
-        { ...base, code: null, resolves: false, reason: "org_skipped" },
-        {}
-      )
+      shareCodeSnapshot({ ...fetched, isFetching: true }, mark).checking
     ).toBe(false);
-    expect(shareCodeDisagreesWithFlags({ capability: "not-found" }, {})).toBe(
-      false
-    );
-    expect(shareCodeDisagreesWithFlags(undefined, {})).toBe(false);
+    expect(
+      shareCodeSnapshot(
+        { ...fetched, error: new ShareCodeRequestError("network") },
+        mark
+      )
+    ).toEqual({ answer: answerA, checking: false, failure: "network" });
+  });
+
+  it("treats a key change while open like a fresh open", () => {
+    // Open on k1 with an answer from this open...
+    let mark = nextOpenMark({ openKey: null, at: 0 }, "k1", 100);
+    expect(
+      shareCodeSnapshot(view({ data: answerA, dataUpdatedAt: 150 }), mark)
+        .checking
+    ).toBe(false);
+    // ...then the key changes to k2, whose cached answer is older: while
+    // k2 fetches, its old answer is not offered.
+    mark = nextOpenMark(mark, "k2", 50);
+    expect(mark).toEqual({ openKey: "k2", at: 50 });
+    expect(
+      shareCodeSnapshot(
+        view({ data: answerB, dataUpdatedAt: 50, isFetching: true }),
+        mark
+      ).checking
+    ).toBe(true);
+    // A key with no cache at all checks until its first answer.
+    mark = nextOpenMark(mark, "k3", 0);
+    expect(shareCodeSnapshot(view({}), mark).checking).toBe(true);
+  });
+
+  it("names a first-load failure, with no answer", () => {
+    const mark = { openKey: "k1", at: 0 };
+    expect(
+      shareCodeSnapshot(
+        view({ error: new ShareCodeRequestError("unavailable") }),
+        mark
+      )
+    ).toEqual({ answer: undefined, checking: false, failure: "unavailable" });
+    expect(
+      shareCodeSnapshot(view({ error: new Error("boom") }), mark).failure
+    ).toBe("server");
   });
 });
 

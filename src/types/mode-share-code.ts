@@ -20,7 +20,9 @@ export type KnownShareCodeReason =
   | "collision"
   | "capped"
   | "org_skipped"
-  | "ambiguous";
+  | "ambiguous"
+  /** The stored mode fails the admin PUT shape check, so chat never sees it. */
+  | "invalid_mode";
 // The intersection keeps the known values in editor completion while
 // admitting future ones (a bare `| string` would swallow them).
 export type ShareCodeReason =
@@ -37,8 +39,9 @@ export interface ShareCodeAnswer {
   resolved_org?: string;
   /**
    * False when the gateway org has no modes record (the chat path then
-   * treats home as empty). In every 200 of the final #477; optional here
-   * so an answer without it still reads. Drives a non-blocking note only.
+   * treats home as empty). Absent when the worker couldn't read the home
+   * record for a foreign mode: unknown, so no note. Drives a non-blocking
+   * note only.
    */
   home_has_modes?: boolean;
 }
