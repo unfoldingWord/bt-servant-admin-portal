@@ -12,7 +12,10 @@ import { downloadBlob } from "@/lib/download-blob";
 import type { ModeFlags } from "@/lib/mode-flags";
 import {
   buildModeShareFilename,
+  modeShareTrigger,
+  orgSlug,
   resolveModeSharePanelState,
+  resolveModeShareTarget,
   type ModeSharePanelState,
 } from "@/lib/mode-share-link";
 import {
@@ -39,7 +42,8 @@ import { Input } from "@/components/ui/input";
 
 // #311 — per-mode WhatsApp QR. The card in the middle is the deliverable:
 // a partner prints it or holds it up on a phone, someone scans it, WhatsApp
-// opens on BT Servant with `#<slug>` ready to send. Everything around the
+// opens on BT Servant with `#<slug>` ready to send (`#<orgslug>/<slug>`
+// for a partner org's mode, #345). Everything around the
 // card exists to get the card into the world (copy the link, download it)
 // or to say plainly why it would not work yet. Which of those it is comes
 // from `resolveModeSharePanelState` (pure, unit-tested); this file renders.
@@ -140,7 +144,33 @@ export function ModeSharePanel({
     !(shareConfig.data?.supported && shareConfig.data.config.whatsappNumber);
 
   const title = modeLabel?.trim() || humanizeModeSlug(modeName);
-  const trigger = `#${modeName}`;
+  // The trigger every surface shows: card, sr-only QR label, SVG title,
+  // status copy. A ready state carries the exact one the link encodes;
+  // otherwise it is derived the same way from what is known so far, so a
+  // partner org's draft already reads `#pbt/obt-coach`. Null when the
+  // partner org's name can't be slugged: no bare `#<slug>` is ever shown
+  // for a mode outside the gateway's org.
+  const { trigger, partnerOrg } = useMemo<{
+    trigger: string | null;
+    partnerOrg: string | null;
+  }>(() => {
+    if (state.kind === "ready") {
+      return { trigger: state.trigger, partnerOrg: state.partnerOrg };
+    }
+    const data = shareConfig.data;
+    const target = resolveModeShareTarget(
+      modeName,
+      org,
+      data?.supported ? data.config.whatsappOrg : null
+    );
+    if (target.kind === "org-unencodable") {
+      return { trigger: null, partnerOrg: null };
+    }
+    return {
+      trigger: modeShareTrigger(target.name),
+      partnerOrg: target.kind === "partner" ? target.org : null,
+    };
+  }, [modeName, org, shareConfig.data, state]);
 
   const ready = state.kind === "ready";
   const matrix = useMemo(
@@ -154,7 +184,7 @@ export function ModeSharePanel({
       matrix
         ? buildQrSvg(matrix, {
             sizePx: PNG_SIZE_PX,
-            title: `${title} — BT Servant on WhatsApp (${trigger})`,
+            title: `${title} — BT Servant on WhatsApp (${trigger ?? ""})`,
           })
         : null,
     [matrix, title, trigger]
@@ -328,7 +358,7 @@ export function ModeSharePanel({
               {matrix ? (
                 <QrSvg
                   matrix={matrix}
-                  label={`QR code that opens WhatsApp with ${trigger} ready to send`}
+                  label={`QR code that opens WhatsApp with ${trigger ?? ""} ready to send`}
                 />
               ) : (
                 // Decorative: the live description above carries the same
@@ -345,14 +375,28 @@ export function ModeSharePanel({
               )}
             </div>
           </div>
-          <div
-            className={cn(
-              "border-t border-dashed border-neutral-200 px-5 py-3 text-center font-mono text-lg font-medium tracking-tight",
-              !ready && "text-neutral-400"
-            )}
-          >
-            {trigger}
-          </div>
+          {trigger && (
+            <div className="border-t border-dashed border-neutral-200 px-5 py-3 text-center">
+              <p
+                className={cn(
+                  "font-mono text-lg font-medium tracking-tight break-all",
+                  !ready && "text-neutral-400"
+                )}
+              >
+                {trigger}
+              </p>
+              {/* A partner's code opens a mode from another org than the
+                  WhatsApp number's; say whose, on paper as well (#345). */}
+              {partnerOrg && (
+                <p
+                  className="mt-0.5 truncate text-xs text-neutral-500"
+                  title={partnerOrg}
+                >
+                  A mode from {partnerOrg}
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {state.kind === "error" && (
@@ -493,7 +537,7 @@ function QrSvg({
 function describe(
   state: ModeSharePanelState,
   org: string | null,
-  trigger: string
+  trigger: string | null
 ) {
   switch (state.kind) {
     case "loading":
@@ -507,15 +551,17 @@ function describe(
     case "slug-invalid":
       return "This mode's name can't be encoded as a trigger. Rename it to lowercase letters, digits, and hyphens to share it by QR.";
     case "slug-reserved":
-      return `“${trigger}” is reserved — WhatsApp users type it to leave a mode, so a code for it would switch them off instead of on. Rename the mode to share it by QR.`;
-    case "org-mismatch":
-      return `Not reachable from WhatsApp. BT Servant's WhatsApp number is connected to the ${state.whatsappOrg} org; this mode belongs to ${org ?? "another org"}.`;
+      return `“${trigger ?? ""}” is reserved — WhatsApp users type it to leave a mode, so a code for it would switch them off instead of on. Rename the mode to share it by QR.`;
+    case "org-unencodable":
+      return `This mode can't get a WhatsApp code. Its org name, “${state.org || org || ""}”, needs at least one letter or digit, and at most 64 characters once spaces and punctuation become hyphens.`;
     case "group-only":
       return "Group chat only. This mode is hidden from WhatsApp direct messages — turn off “Requires group chat” to share it by QR.";
     case "draft":
       return "Publish to activate. Drafts are hidden from WhatsApp, so this code won't work until the mode is published.";
     case "ready":
-      return `Scan with a phone camera to open WhatsApp with ${trigger} ready to send. Print the card, or share the link.`;
+      return state.partnerOrg
+        ? `Scan with a phone camera to open WhatsApp with ${state.trigger} ready to send. The “${orgSlug(state.partnerOrg)}/” part says this mode is from ${state.partnerOrg}. Print the card, or share the link.`
+        : `Scan with a phone camera to open WhatsApp with ${state.trigger} ready to send. Print the card, or share the link.`;
   }
 }
 
@@ -532,8 +578,8 @@ function placeholderLabel(state: ModeSharePanelState): string {
     case "slug-invalid":
     case "slug-reserved":
       return "Can't encode this name";
-    case "org-mismatch":
-      return "Not reachable";
+    case "org-unencodable":
+      return "Can't encode this org";
     case "group-only":
       return "Group chat only";
     case "draft":

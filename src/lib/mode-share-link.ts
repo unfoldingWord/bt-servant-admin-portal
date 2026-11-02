@@ -5,6 +5,11 @@
 //
 //   https://wa.me/<digits>?text=%23<slug>
 //
+// A mode from another org than the WhatsApp gateway's (a partner org) is
+// shared as `#<orgslug>/<slug>` instead (#345, worker#437):
+//
+//   https://wa.me/<digits>?text=%23<orgslug>%2F<slug>
+//
 // Scanning it opens WhatsApp on the BT Servant chat with `#<slug>` already
 // typed; sending it hits the worker's leading-token classifier, which
 // activates and persists the mode for that user. No gateway or worker
@@ -58,9 +63,80 @@ export function normalizeWhatsAppNumber(
   return E164_DIGITS.test(digits) ? digits : null;
 }
 
-/** The message the QR pre-fills: the worker's mode trigger for `slug`. */
-export function modeShareTrigger(slug: string): string {
-  return `#${slug}`;
+/**
+ * The message the QR pre-fills: the worker's mode trigger for `name`, which
+ * is either a bare slug or an org-qualified `<orgslug>/<slug>`.
+ */
+export function modeShareTrigger(name: string): string {
+  return `#${name}`;
+}
+
+/**
+ * The worker's org slug rule, character for character (`orgSlug` in
+ * bt-servant-worker src/utils/cross-org-modes.ts): trim, lowercase, turn
+ * every run outside `[a-z0-9]` into one `-`, strip edge hyphens.
+ * `Test Organization` → `test-organization`, `PBT` → `pbt`. Returns `''`
+ * for a blank or punctuation-only name; the worker skips such an org, so
+ * the panel must refuse rather than emit `#/<slug>`. Kept in step by a
+ * parity test that reuses the worker's own examples.
+ */
+export function orgSlug(org: string): string {
+  return org
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Whether `name` is a well-formed org-qualified mode selection, by the
+ * qualified branch of the worker's `validateModeSelection`
+ * (src/types/prompt-overrides.ts): exactly one `/`, and both halves match
+ * `MODE_NAME_PATTERN`. This checks the trigger the portal COMPOSES; a
+ * mode's stored slug is still held to `validateModeShareSlug`, which never
+ * accepts `/`.
+ */
+export function isQualifiedModeName(name: string): boolean {
+  const parts = name.split("/");
+  if (parts.length !== 2) return false;
+  const [org, mode] = parts as [string, string];
+  return MODE_NAME_PATTERN.test(org) && MODE_NAME_PATTERN.test(mode);
+}
+
+/**
+ * Who a share code for this mode is addressed as, given the gateway org.
+ *
+ * - `home`: the mode is in the gateway's org (or either org is unknown, so
+ *   nothing can be compared). The trigger is the bare slug.
+ * - `partner`: the mode is in another org. The worker resolves a bare
+ *   `#<slug>` against the GATEWAY's org, so a bare trigger here would open
+ *   the gateway org's mode of the same name, or none. The trigger is
+ *   `<orgslug>/<slug>`, the name the worker gives a foreign published mode.
+ * - `org-unencodable`: another org whose name yields no usable org slug
+ *   (no letters or digits, or longer than 64 once slugged). Refused.
+ *
+ * Orgs are compared trimmed but case-sensitively: the worker's home check
+ * is an exact KV key match, so `unfoldingword` vs `unfoldingWord` is a
+ * foreign org to it. Legacy stored orgs can carry padding (#247/#253).
+ * The home org is the gateway's (`WHATSAPP_ORG`), never the admin's
+ * context org: a WhatsApp user's request always carries the gateway org.
+ */
+export type ModeShareTarget =
+  | { kind: "home"; name: string }
+  | { kind: "partner"; name: string; org: string }
+  | { kind: "org-unencodable"; org: string };
+
+export function resolveModeShareTarget(
+  slug: string,
+  modeOrg: string | null | undefined,
+  whatsappOrg: string | null | undefined
+): ModeShareTarget {
+  const a = modeOrg?.trim();
+  const b = whatsappOrg?.trim();
+  if (!a || !b || a === b) return { kind: "home", name: slug };
+  const name = `${orgSlug(a)}/${slug}`;
+  if (!isQualifiedModeName(name)) return { kind: "org-unencodable", org: a };
+  return { kind: "partner", name, org: a };
 }
 
 export type ModeShareSlugVerdict = "ok" | "slug-invalid" | "slug-reserved";
@@ -81,7 +157,8 @@ export type ModeShareLinkFailure =
   | "number-missing"
   | "number-invalid"
   | "slug-invalid"
-  | "slug-reserved";
+  | "slug-reserved"
+  | "org-invalid";
 
 export type ModeShareLinkResult =
   | { ok: true; url: string; digits: string; trigger: string }
@@ -92,10 +169,16 @@ export type ModeShareLinkResult =
  * already match the worker's mode-name pattern: anything else is refused
  * rather than rewritten, because a rewritten slug would encode a trigger
  * that targets a different mode. Reserved clear-tokens are refused too.
+ *
+ * `orgQualifier`, when given, is the partner org's slug (see `orgSlug`):
+ * the trigger becomes `#<orgQualifier>/<slug>`. The composed name is
+ * checked on its own (`isQualifiedModeName`); an empty or malformed
+ * qualifier is refused as `org-invalid`, never emitted as `#/<slug>`.
  */
 export function buildModeShareLink(
   rawNumber: string | null | undefined,
-  slug: string
+  slug: string,
+  orgQualifier?: string | null
 ): ModeShareLinkResult {
   if (!rawNumber || rawNumber.trim() === "") {
     return { ok: false, reason: "number-missing" };
@@ -104,37 +187,38 @@ export function buildModeShareLink(
   if (!digits) return { ok: false, reason: "number-invalid" };
   const slugVerdict = validateModeShareSlug(slug);
   if (slugVerdict !== "ok") return { ok: false, reason: slugVerdict };
-  const trigger = modeShareTrigger(slug);
-  // `encodeURIComponent` turns the `#` into `%23`; the slug's own alphabet
-  // ([a-z0-9-]) is untouched by it, which is what keeps the link legible.
+  let name = slug;
+  if (orgQualifier !== undefined && orgQualifier !== null) {
+    name = `${orgQualifier}/${slug}`;
+    if (!isQualifiedModeName(name)) return { ok: false, reason: "org-invalid" };
+  }
+  const trigger = modeShareTrigger(name);
+  // `encodeURIComponent` turns the `#` into `%23` and a qualifier's `/`
+  // into `%2F` (the worker's own welcome link does the same); the name's
+  // [a-z0-9-] alphabet is untouched, which is what keeps the link legible.
   const url = `${WA_ME_ORIGIN}/${digits}?text=${encodeURIComponent(trigger)}`;
   return { ok: true, url, digits, trigger };
 }
 
-export type ModeShareState = "ready" | "org-mismatch" | "group-only" | "draft";
+export type ModeShareState = "ready" | "group-only" | "draft";
 
 /**
  * Whether a scanned QR would actually reach this mode. Checked hardest
- * constraint first so the copy names the thing that must change:
+ * constraint first so the copy names the thing that must change. The org
+ * is not a constraint here any more: since worker#437 a partner org's
+ * published mode is reachable through its qualified trigger (see
+ * `resolveModeShareTarget`). Both rules below apply to partner modes too.
  *
- * - `org-mismatch`: the WhatsApp gateway is pinned to one org
- *   (`ENGINE_ORG` in the gateway's wrangler.toml). A mode under any other
- *   org is unreachable from WhatsApp no matter what else is toggled.
- *   Skipped when either org is unknown — an unset var must not block.
- *   Compared trimmed: legacy stored orgs can carry padding (#247/#253).
  * - `group-only`: `requires_group` modes are hidden from WhatsApp DMs by
  *   design (#209 / worker#270).
- * - `draft`: the worker masks unpublished modes for non-admin callers, so
- *   a scanned draft answers "unknown mode".
+ * - `draft`: the worker masks unpublished modes for non-admin callers, and
+ *   drops another org's drafts before the chat path sees them, so a
+ *   scanned draft answers "unknown mode".
  */
-export function modeShareState(
-  flags: { published?: boolean; requires_group?: boolean },
-  modeOrg: string | null | undefined,
-  whatsappOrg: string | null | undefined
-): ModeShareState {
-  const a = modeOrg?.trim();
-  const b = whatsappOrg?.trim();
-  if (a && b && a !== b) return "org-mismatch";
+export function modeShareState(flags: {
+  published?: boolean;
+  requires_group?: boolean;
+}): ModeShareState {
   if (flags.requires_group === true) return "group-only";
   if (flags.published !== true) return "draft";
   return "ready";
@@ -185,21 +269,30 @@ export type ModeSharePanelState =
   | { kind: "number-invalid" }
   | { kind: "slug-invalid" }
   | { kind: "slug-reserved" }
-  | { kind: "org-mismatch"; whatsappOrg: string }
+  | { kind: "org-unencodable"; org: string }
   | { kind: "group-only" }
   | { kind: "draft" }
-  | { kind: "ready"; url: string; orgUnverified: boolean };
+  | {
+      kind: "ready";
+      url: string;
+      /** What the link pre-fills, e.g. `#fia` or `#pbt/obt-coach`. */
+      trigger: string;
+      /** The mode's org when it is a partner org (qualified trigger), else null. */
+      partnerOrg: string | null;
+      orgUnverified: boolean;
+    };
 
 /**
  * Resolve what the panel shows. Order of precedence:
  *
  * 1. query lifecycle (loading, error);
  * 2. the mode's identity — a slug the worker's trigger cannot carry
- *    (non-canonical or reserved). Nothing else can fix that, so it is
- *    named before any publish/org advice;
- * 3. eligibility, via `modeShareState` — org mismatch, then group-only,
- *    then draft (the hardest constraint first, so the copy names the one
- *    thing that has to change);
+ *    (non-canonical or reserved), then a partner org whose name cannot be
+ *    slugged. Publishing fixes neither, so they are named before any
+ *    publish advice;
+ * 3. eligibility, via `modeShareState` — group-only, then draft (the
+ *    hardest constraint first, so the copy names the one thing that has
+ *    to change);
  * 4. the number — missing or invalid.
  *
  * A missing BFF route (`supported === false`) reads as "not configured":
@@ -220,14 +313,26 @@ export function resolveModeSharePanelState(
   if (slugVerdict !== "ok") return { kind: slugVerdict };
   const whatsappOrg = snapshot.supported ? snapshot.whatsappOrg : null;
   const whatsappNumber = snapshot.supported ? snapshot.whatsappNumber : null;
-  const eligibility = modeShareState(flags, modeOrg, whatsappOrg);
-  if (eligibility === "org-mismatch") {
-    return { kind: "org-mismatch", whatsappOrg: whatsappOrg ?? "" };
+  const target = resolveModeShareTarget(modeName, modeOrg, whatsappOrg);
+  if (target.kind === "org-unencodable") {
+    return { kind: "org-unencodable", org: target.org };
   }
+  const eligibility = modeShareState(flags);
   if (eligibility !== "ready") return { kind: eligibility };
-  const link = buildModeShareLink(whatsappNumber, modeName);
+  const partner = target.kind === "partner";
+  const link = buildModeShareLink(
+    whatsappNumber,
+    modeName,
+    partner ? orgSlug(target.org) : null
+  );
   if (link.ok) {
-    return { kind: "ready", url: link.url, orgUnverified: !whatsappOrg };
+    return {
+      kind: "ready",
+      url: link.url,
+      trigger: link.trigger,
+      partnerOrg: partner ? target.org : null,
+      orgUnverified: !whatsappOrg?.trim(),
+    };
   }
   switch (link.reason) {
     case "number-missing":
@@ -238,5 +343,7 @@ export function resolveModeSharePanelState(
     case "slug-invalid":
     case "slug-reserved":
       return { kind: slugVerdict === "ok" ? "slug-invalid" : slugVerdict };
+    case "org-invalid":
+      return { kind: "org-unencodable", org: modeOrg?.trim() ?? "" };
   }
 }
