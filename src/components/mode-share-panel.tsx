@@ -12,10 +12,7 @@ import { downloadBlob } from "@/lib/download-blob";
 import type { ModeFlags } from "@/lib/mode-flags";
 import {
   buildModeShareFilename,
-  modeShareTrigger,
-  orgSlug,
   resolveModeSharePanelState,
-  resolveModeShareTarget,
   type ModeSharePanelState,
 } from "@/lib/mode-share-link";
 import {
@@ -144,33 +141,10 @@ export function ModeSharePanel({
     !(shareConfig.data?.supported && shareConfig.data.config.whatsappNumber);
 
   const title = modeLabel?.trim() || humanizeModeSlug(modeName);
-  // The trigger every surface shows: card, sr-only QR label, SVG title,
-  // status copy. A ready state carries the exact one the link encodes;
-  // otherwise it is derived the same way from what is known so far, so a
-  // partner org's draft already reads `#pbt/obt-coach`. Null when the
-  // partner org's name can't be slugged: no bare `#<slug>` is ever shown
-  // for a mode outside the gateway's org.
-  const { trigger, partnerOrg } = useMemo<{
-    trigger: string | null;
-    partnerOrg: string | null;
-  }>(() => {
-    if (state.kind === "ready") {
-      return { trigger: state.trigger, partnerOrg: state.partnerOrg };
-    }
-    const data = shareConfig.data;
-    const target = resolveModeShareTarget(
-      modeName,
-      org,
-      data?.supported ? data.config.whatsappOrg : null
-    );
-    if (target.kind === "org-unencodable") {
-      return { trigger: null, partnerOrg: null };
-    }
-    return {
-      trigger: modeShareTrigger(target.name),
-      partnerOrg: target.kind === "partner" ? target.org : null,
-    };
-  }, [modeName, org, shareConfig.data, state]);
+  // What every surface shows (card, QR label, SVG title, copy). Null
+  // until the target org is decided: never a bare trigger for a mode that
+  // might be a partner org's.
+  const { trigger, partnerOrg } = state;
 
   const ready = state.kind === "ready";
   const matrix = useMemo(
@@ -334,7 +308,7 @@ export function ModeSharePanel({
           aria-busy={state.kind === "loading"}
           className="text-muted-foreground -mt-2 text-sm"
         >
-          {describe(state, org, trigger)}
+          {describe(state, org, modeName)}
         </p>
 
         {/* The card. Always white, in dark mode too: it is the thing that
@@ -443,13 +417,6 @@ export function ModeSharePanel({
                 {copyError}
               </p>
             )}
-            {state.orgUnverified && (
-              <p className="text-muted-foreground text-xs">
-                The WhatsApp gateway's org isn't configured for this
-                environment, so the org check was skipped — the code is shown as
-                ready without it.
-              </p>
-            )}
           </div>
         )}
 
@@ -537,8 +504,9 @@ function QrSvg({
 function describe(
   state: ModeSharePanelState,
   org: string | null,
-  trigger: string | null
+  modeName: string
 ) {
+  const { trigger } = state;
   switch (state.kind) {
     case "loading":
       return "Checking the WhatsApp settings…";
@@ -551,7 +519,13 @@ function describe(
     case "slug-invalid":
       return "This mode's name can't be encoded as a trigger. Rename it to lowercase letters, digits, and hyphens to share it by QR.";
     case "slug-reserved":
-      return `“${trigger ?? ""}” is reserved — WhatsApp users type it to leave a mode, so a code for it would switch them off instead of on. Rename the mode to share it by QR.`;
+      return state.partnerOrg
+        ? `“${modeName}” is a reserved word — on WhatsApp, #${modeName} takes a user out of their mode. ${trigger ?? ""} would still work, but modes with this name aren't shared by QR from any org. Rename the mode to share it.`
+        : `“${trigger ?? ""}” is reserved — WhatsApp users type it to leave a mode, so a code for it would switch them off instead of on. Rename the mode to share it by QR.`;
+    case "org-unknown":
+      return state.missing === "gateway"
+        ? "WhatsApp's org isn't configured for this environment, so the panel can't tell which code opens this mode. Set WHATSAPP_ORG to generate share codes."
+        : "Couldn't tell which org this mode belongs to, so no code is shown. Reload the page and try again.";
     case "org-unencodable":
       return `This mode can't get a WhatsApp code. Its org name, “${state.org || org || ""}”, needs at least one letter or digit, and at most 64 characters once spaces and punctuation become hyphens.`;
     case "group-only":
@@ -560,7 +534,7 @@ function describe(
       return "Publish to activate. Drafts are hidden from WhatsApp, so this code won't work until the mode is published.";
     case "ready":
       return state.partnerOrg
-        ? `Scan with a phone camera to open WhatsApp with ${state.trigger} ready to send. The “${orgSlug(state.partnerOrg)}/” part says this mode is from ${state.partnerOrg}. Print the card, or share the link.`
+        ? `Scan with a phone camera to open WhatsApp with ${state.trigger} ready to send. The code starts with the org name because this mode is from ${state.partnerOrg}. Print the card, or share the link.`
         : `Scan with a phone camera to open WhatsApp with ${state.trigger} ready to send. Print the card, or share the link.`;
   }
 }
@@ -580,6 +554,8 @@ function placeholderLabel(state: ModeSharePanelState): string {
       return "Can't encode this name";
     case "org-unencodable":
       return "Can't encode this org";
+    case "org-unknown":
+      return "Org not known";
     case "group-only":
       return "Group chat only";
     case "draft":

@@ -117,7 +117,6 @@ describe("buildModeShareLink", () => {
       "fia-mode?x=1",
       "-fia-",
       "fia-",
-      "a/b",
       "#fia",
       "kids_mode2",
       tooLong,
@@ -128,6 +127,26 @@ describe("buildModeShareLink", () => {
       });
     }
     expect(buildModeShareLink("15550100100", "a".repeat(64)).ok).toBe(true);
+  });
+
+  it("holds a stored slug with `/` to the bare rule before any qualifying", () => {
+    // `/` is never part of a stored mode name; the panel checks the stored
+    // slug first, so a qualified-looking name can't slip through as one.
+    expect(validateModeShareSlug("a/b")).toBe("slug-invalid");
+    expect(
+      resolveModeSharePanelState(
+        {
+          pending: false,
+          error: false,
+          supported: true,
+          whatsappNumber: "15550100100",
+          whatsappOrg: "unfoldingWord",
+        },
+        { published: true },
+        "PBT",
+        "pbt/obt-coach"
+      )
+    ).toEqual({ kind: "slug-invalid", trigger: null, partnerOrg: null });
   });
 
   it("refuses the worker's reserved clear-mode tokens", () => {
@@ -145,7 +164,7 @@ describe("buildModeShareLink", () => {
   it("builds the qualified #<orgslug>/<slug> link the worker's welcome link emits", () => {
     // Same bytes as bt-servant-worker tests/unit/mode-share-link.test.ts:
     // buildModeShareLink('15558196461', 'pbt/obt-coach').
-    expect(buildModeShareLink("15558196461", "obt-coach", "pbt")).toEqual({
+    expect(buildModeShareLink("15558196461", "pbt/obt-coach")).toEqual({
       ok: true,
       url: "https://wa.me/15558196461?text=%23pbt%2Fobt-coach",
       digits: "15558196461",
@@ -153,22 +172,27 @@ describe("buildModeShareLink", () => {
     });
   });
 
-  it("refuses an empty or malformed org qualifier instead of emitting #/<slug>", () => {
-    for (const bad of ["", "PBT", "-pbt", "a/b", "a".repeat(65)]) {
-      expect(buildModeShareLink("15550100100", "fia", bad), bad).toEqual({
+  it("refuses a malformed qualified name instead of emitting it", () => {
+    for (const bad of [
+      "/fia",
+      "pbt/",
+      "PBT/fia",
+      "-pbt/fia",
+      "a/b/c",
+      `${"a".repeat(65)}/fia`,
+      "pbt/kids_mode",
+    ]) {
+      expect(buildModeShareLink("15550100100", bad), bad).toEqual({
         ok: false,
-        reason: "org-invalid",
+        reason: "slug-invalid",
       });
     }
   });
 
-  it("still holds the stored slug to the bare pattern when qualifying", () => {
-    // `/` can never be part of a stored mode name; qualifying does not
-    // loosen that.
-    expect(buildModeShareLink("15550100100", "a/b", "pbt")).toEqual({
-      ok: false,
-      reason: "slug-invalid",
-    });
+  it("does not treat a qualified name ending in a clear token as reserved", () => {
+    // The worker checks the WHOLE token against CLEAR_TOKENS, so
+    // `#pbt/default` would select a mode, not clear one.
+    expect(buildModeShareLink("15550100100", "pbt/default").ok).toBe(true);
   });
 
   it("never lets a hostile slug reach the URL unencoded", () => {
@@ -272,10 +296,6 @@ describe("resolveModeShareTarget", () => {
     expect(
       resolveModeShareTarget("fia", "unfoldingWord", "unfoldingWord")
     ).toEqual({ kind: "home", name: "fia" });
-    // Legacy stored orgs can carry whitespace padding (#247/#253).
-    expect(
-      resolveModeShareTarget("fia", " unfoldingWord", "unfoldingWord")
-    ).toEqual({ kind: "home", name: "fia" });
   });
 
   it("qualifies a partner org's mode with the worker's org slug", () => {
@@ -283,7 +303,7 @@ describe("resolveModeShareTarget", () => {
       { kind: "partner", name: "pbt/obt-coach", org: "PBT" }
     );
     expect(
-      resolveModeShareTarget("kids-vbs", "Test Organization ", "unfoldingWord")
+      resolveModeShareTarget("kids-vbs", "Test Organization", "unfoldingWord")
     ).toEqual({
       kind: "partner",
       name: "test-organization/kids-vbs",
@@ -291,15 +311,24 @@ describe("resolveModeShareTarget", () => {
     });
   });
 
-  it("compares orgs exactly (case-sensitive, like the worker's KV key)", () => {
-    // The worker's home check is `${org}:modes` === key, so a case variant
-    // is a foreign org to it and only the qualified trigger reaches it.
+  it("compares orgs exactly, like the worker's `name !== homeKey`", () => {
+    // A case variant is a different KV key, so a foreign org to the worker.
     expect(
       resolveModeShareTarget("fia", "unfoldingword", "unfoldingWord")
     ).toEqual({
       kind: "partner",
       name: "unfoldingword/fia",
       org: "unfoldingword",
+    });
+    // So is a legacy padded org (#247/#253): its modes live under
+    // " unfoldingWord:modes", which the worker's chat path reads as foreign.
+    // orgSlug trims, so the qualifier is unaffected.
+    expect(
+      resolveModeShareTarget("fia", " unfoldingWord", "unfoldingWord")
+    ).toEqual({
+      kind: "partner",
+      name: "unfoldingword/fia",
+      org: "unfoldingWord",
     });
   });
 
@@ -313,18 +342,28 @@ describe("resolveModeShareTarget", () => {
     ).toEqual({ kind: "org-unencodable", org: "a".repeat(65) });
   });
 
-  it("does not qualify when either org is unknown", () => {
-    expect(resolveModeShareTarget("fia", null, "unfoldingWord")).toEqual({
-      kind: "home",
-      name: "fia",
-    });
+  it("judges only the org half: a bad mode slug is not an org problem", () => {
+    expect(
+      resolveModeShareTarget("Fia Mode", "PBT", "unfoldingWord")
+    ).toMatchObject({ kind: "partner" });
+  });
+
+  it("decides nothing when either org is unknown, rather than guessing home", () => {
     expect(resolveModeShareTarget("fia", "acme", null)).toEqual({
-      kind: "home",
-      name: "fia",
+      kind: "org-unknown",
+      missing: "gateway",
     });
     expect(resolveModeShareTarget("fia", "acme", "   ")).toEqual({
-      kind: "home",
-      name: "fia",
+      kind: "org-unknown",
+      missing: "gateway",
+    });
+    expect(resolveModeShareTarget("fia", null, "unfoldingWord")).toEqual({
+      kind: "org-unknown",
+      missing: "mode",
+    });
+    expect(resolveModeShareTarget("fia", undefined, undefined)).toEqual({
+      kind: "org-unknown",
+      missing: "gateway",
     });
   });
 });
@@ -361,8 +400,10 @@ describe("resolveModeSharePanelState", () => {
     whatsappOrg: "acme",
   };
   const ready = { published: true, requires_group: false };
+  const none = { trigger: null, partnerOrg: null };
+  const home = (slug: string) => ({ trigger: `#${slug}`, partnerOrg: null });
 
-  it("follows the query lifecycle before anything else", () => {
+  it("follows the query lifecycle before anything else, showing no trigger", () => {
     expect(
       resolveModeSharePanelState(
         { ...loaded, pending: true },
@@ -370,7 +411,7 @@ describe("resolveModeSharePanelState", () => {
         "acme",
         "fia"
       )
-    ).toEqual({ kind: "loading" });
+    ).toEqual({ kind: "loading", ...none });
     expect(
       resolveModeSharePanelState(
         { ...loaded, error: true },
@@ -378,16 +419,14 @@ describe("resolveModeSharePanelState", () => {
         "acme",
         "fia"
       )
-    ).toEqual({ kind: "error" });
+    ).toEqual({ kind: "error", ...none });
   });
 
   it("is ready with the built link when everything lines up", () => {
     expect(resolveModeSharePanelState(loaded, ready, "acme", "fia")).toEqual({
       kind: "ready",
       url: "https://wa.me/573001234567?text=%23fia",
-      trigger: "#fia",
-      partnerOrg: null,
-      orgUnverified: false,
+      ...home("fia"),
     });
   });
 
@@ -399,13 +438,14 @@ describe("resolveModeSharePanelState", () => {
       url: "https://wa.me/573001234567?text=%23pbt%2Fobt-coach",
       trigger: "#pbt/obt-coach",
       partnerOrg: "PBT",
-      orgUnverified: false,
     });
   });
 
-  it("keeps the draft and group-only refusals for a partner-org mode", () => {
+  it("keeps the draft and group-only refusals for a partner mode, with its qualified trigger", () => {
+    const partner = { trigger: "#pbt/obt-coach", partnerOrg: "PBT" };
     expect(resolveModeSharePanelState(loaded, {}, "PBT", "obt-coach")).toEqual({
       kind: "draft",
+      ...partner,
     });
     expect(
       resolveModeSharePanelState(
@@ -414,35 +454,42 @@ describe("resolveModeSharePanelState", () => {
         "PBT",
         "obt-coach"
       )
-    ).toEqual({ kind: "group-only" });
+    ).toEqual({ kind: "group-only", ...partner });
   });
 
   it("refuses a partner org whose name can't be slugged, ahead of publish advice", () => {
-    expect(resolveModeSharePanelState(loaded, ready, "***", "fia")).toEqual({
-      kind: "org-unencodable",
-      org: "***",
-    });
-    expect(resolveModeSharePanelState(loaded, {}, "***", "fia")).toEqual({
-      kind: "org-unencodable",
-      org: "***",
-    });
+    for (const flags of [ready, {}]) {
+      expect(resolveModeSharePanelState(loaded, flags, "***", "fia")).toEqual({
+        kind: "org-unencodable",
+        org: "***",
+        ...none,
+      });
+    }
   });
 
-  it("flags a ready result whose org check was skipped", () => {
+  it("never falls back to a bare link when the gateway org is unknown", () => {
+    // Since worker#437 a bare #fia means the GATEWAY org's mode; with the
+    // gateway org unknown the panel can't know whether that is this mode.
     expect(
       resolveModeSharePanelState(
         { ...loaded, whatsappOrg: null },
         ready,
-        "acme",
+        "PBT",
         "fia"
       )
-    ).toMatchObject({ kind: "ready", orgUnverified: true });
+    ).toEqual({ kind: "org-unknown", missing: "gateway", ...none });
+    expect(resolveModeSharePanelState(loaded, ready, null, "fia")).toEqual({
+      kind: "org-unknown",
+      missing: "mode",
+      ...none,
+    });
   });
 
   it("puts eligibility ahead of the number", () => {
     const noNumber = { ...loaded, whatsappNumber: null };
     expect(resolveModeSharePanelState(noNumber, {}, "acme", "fia")).toEqual({
       kind: "draft",
+      ...home("fia"),
     });
     expect(
       resolveModeSharePanelState(
@@ -451,13 +498,10 @@ describe("resolveModeSharePanelState", () => {
         "acme",
         "fia"
       )
-    ).toEqual({ kind: "group-only" });
-    expect(resolveModeSharePanelState(noNumber, {}, "other", "fia")).toEqual({
-      kind: "draft",
-    });
+    ).toEqual({ kind: "group-only", ...home("fia") });
     // A ready partner mode with no number is an env problem, as at home.
     expect(resolveModeSharePanelState(noNumber, ready, "other", "fia")).toEqual(
-      { kind: "unconfigured" }
+      { kind: "unconfigured", trigger: "#other/fia", partnerOrg: "other" }
     );
   });
 
@@ -469,7 +513,7 @@ describe("resolveModeSharePanelState", () => {
         "acme",
         "fia"
       )
-    ).toEqual({ kind: "unconfigured" });
+    ).toEqual({ kind: "unconfigured", ...home("fia") });
     expect(
       resolveModeSharePanelState(
         { ...loaded, whatsappNumber: "nope" },
@@ -477,24 +521,33 @@ describe("resolveModeSharePanelState", () => {
         "acme",
         "fia"
       )
-    ).toEqual({ kind: "number-invalid" });
+    ).toEqual({ kind: "number-invalid", ...home("fia") });
     // A non-canonical name is the author's to fix, not an env problem.
     expect(
       resolveModeSharePanelState(loaded, ready, "acme", "Fia Mode")
-    ).toEqual({ kind: "slug-invalid" });
+    ).toEqual({ kind: "slug-invalid", ...none });
     expect(
       resolveModeSharePanelState(loaded, ready, "acme", "default")
-    ).toEqual({ kind: "slug-reserved" });
+    ).toEqual({ kind: "slug-reserved", ...home("default") });
   });
 
-  it("names an identity problem before any publish/org advice", () => {
+  it("keeps the reserved-name refusal for a partner mode, with its real trigger", () => {
+    // `#pbt/default` is not a clear token to the worker; the refusal is
+    // portal policy, and the copy says so from the qualified trigger.
+    expect(resolveModeSharePanelState(loaded, ready, "PBT", "default")).toEqual(
+      { kind: "slug-reserved", trigger: "#pbt/default", partnerOrg: "PBT" }
+    );
+  });
+
+  it("names an identity problem before any publish advice", () => {
     // A draft named `default` should hear "rename", not "publish": publishing
     // would not make the QR work, and the reserved token is the real block.
     expect(resolveModeSharePanelState(loaded, {}, "acme", "default")).toEqual({
       kind: "slug-reserved",
+      ...home("default"),
     });
     expect(resolveModeSharePanelState(loaded, {}, "other", "Fia Mode")).toEqual(
-      { kind: "slug-invalid" }
+      { kind: "slug-invalid", ...none }
     );
     // ...but never ahead of the query lifecycle.
     expect(
@@ -504,10 +557,10 @@ describe("resolveModeSharePanelState", () => {
         "acme",
         "default"
       )
-    ).toEqual({ kind: "loading" });
+    ).toEqual({ kind: "loading", ...none });
   });
 
-  it("treats an absent BFF route as not configured, not as an error", () => {
+  it("treats an absent BFF route as not configured, whatever the flags", () => {
     const unsupported: ShareConfigSnapshot = {
       pending: false,
       error: false,
@@ -517,10 +570,10 @@ describe("resolveModeSharePanelState", () => {
     };
     expect(
       resolveModeSharePanelState(unsupported, ready, "acme", "fia")
-    ).toEqual({ kind: "unconfigured" });
-    // ...and it cannot block on an org it does not know.
+    ).toEqual({ kind: "unconfigured", ...none });
     expect(resolveModeSharePanelState(unsupported, {}, "acme", "fia")).toEqual({
-      kind: "draft",
+      kind: "unconfigured",
+      ...none,
     });
   });
 });

@@ -10,11 +10,12 @@
 //
 //   https://wa.me/<digits>?text=%23<orgslug>%2F<slug>
 //
-// Scanning it opens WhatsApp on the BT Servant chat with `#<slug>` already
-// typed; sending it hits the worker's leading-token classifier, which
-// activates and persists the mode for that user. No gateway or worker
-// change is needed for the link itself — the trigger has existed since the
-// hashtag mechanism shipped.
+// Scanning it opens WhatsApp on the BT Servant chat with the trigger
+// already typed; sending it hits the worker's leading-token classifier,
+// which activates and persists the mode for that user. The bare form has
+// worked since the hashtag mechanism shipped. The qualified form needs
+// worker >= v2.57.0 (worker#437) in the same environment; against an older
+// worker a partner org's code answers "unknown mode".
 //
 // Both inputs are treated as untrusted: the number is an operator-set env
 // var (typo-prone), the slug is user-authored config. Nothing reaches the
@@ -103,49 +104,15 @@ export function isQualifiedModeName(name: string): boolean {
   return MODE_NAME_PATTERN.test(org) && MODE_NAME_PATTERN.test(mode);
 }
 
-/**
- * Who a share code for this mode is addressed as, given the gateway org.
- *
- * - `home`: the mode is in the gateway's org (or either org is unknown, so
- *   nothing can be compared). The trigger is the bare slug.
- * - `partner`: the mode is in another org. The worker resolves a bare
- *   `#<slug>` against the GATEWAY's org, so a bare trigger here would open
- *   the gateway org's mode of the same name, or none. The trigger is
- *   `<orgslug>/<slug>`, the name the worker gives a foreign published mode.
- * - `org-unencodable`: another org whose name yields no usable org slug
- *   (no letters or digits, or longer than 64 once slugged). Refused.
- *
- * Orgs are compared trimmed but case-sensitively: the worker's home check
- * is an exact KV key match, so `unfoldingword` vs `unfoldingWord` is a
- * foreign org to it. Legacy stored orgs can carry padding (#247/#253).
- * The home org is the gateway's (`WHATSAPP_ORG`), never the admin's
- * context org: a WhatsApp user's request always carries the gateway org.
- */
-export type ModeShareTarget =
-  | { kind: "home"; name: string }
-  | { kind: "partner"; name: string; org: string }
-  | { kind: "org-unencodable"; org: string };
-
-export function resolveModeShareTarget(
-  slug: string,
-  modeOrg: string | null | undefined,
-  whatsappOrg: string | null | undefined
-): ModeShareTarget {
-  const a = modeOrg?.trim();
-  const b = whatsappOrg?.trim();
-  if (!a || !b || a === b) return { kind: "home", name: slug };
-  const name = `${orgSlug(a)}/${slug}`;
-  if (!isQualifiedModeName(name)) return { kind: "org-unencodable", org: a };
-  return { kind: "partner", name, org: a };
-}
-
 export type ModeShareSlugVerdict = "ok" | "slug-invalid" | "slug-reserved";
 
 /**
  * Can this slug be carried by a `#` trigger at all? Independent of the
  * number and of publish state — it is about the mode's identity, so the
  * panel reports it before eligibility (a draft named `default` should hear
- * "rename", not "publish").
+ * "rename", not "publish"). A stored slug never contains `/`; the
+ * qualified name the portal composes is checked separately
+ * (`isQualifiedModeName`).
  */
 export function validateModeShareSlug(slug: string): ModeShareSlugVerdict {
   if (!MODE_NAME_PATTERN.test(slug)) return "slug-invalid";
@@ -153,44 +120,92 @@ export function validateModeShareSlug(slug: string): ModeShareSlugVerdict {
   return "ok";
 }
 
+/**
+ * How a share code addresses this mode, given the gateway org.
+ *
+ * - `home`: the mode is in the gateway's org. The trigger is the bare slug.
+ * - `partner`: the mode is in another org. The worker resolves a bare
+ *   `#<slug>` against the GATEWAY's org, so a bare trigger here would open
+ *   the gateway org's mode of the same name, or none. The trigger is
+ *   `<orgslug>/<slug>`, the name the worker gives a foreign published mode.
+ * - `org-unknown`: either org is unknown, so home vs partner can't be
+ *   decided. No trigger is produced at all: guessing "home" would hand a
+ *   partner mode a bare trigger. `WHATSAPP_ORG` is set in every wrangler
+ *   environment, and the page always knows the mode's org once signed in,
+ *   so in practice this is the loading / error window only.
+ * - `org-unencodable`: a partner org whose name yields no usable org slug
+ *   (no letters or digits, or over 64 characters once slugged). The worker
+ *   skips such an org, so there is nothing to link to.
+ *
+ * Home vs partner is decided by EXACT string equality, like the worker:
+ * its chat path reads `${org}:modes` for the request org untrimmed and
+ * treats every other `*:modes` key as foreign (`name !== homeKey` in
+ * cross-org-modes.ts). `modeOrg` is the org the modes page addresses,
+ * which for an org admin is the raw `session.org` the BFF forwards
+ * (resolveOrg in worker/config.ts), i.e. the mode's actual key. A legacy
+ * whitespace-padded org (#247/#253) is therefore a foreign org to the
+ * worker, and gets the qualified trigger here too; `orgSlug` trims, so its
+ * slug is unaffected. `whatsappOrg` arrives trimmed from the BFF
+ * (`presentOrNull` in worker/share-config.ts).
+ */
+export type ModeShareTarget =
+  | { kind: "home"; name: string }
+  | { kind: "partner"; name: string; org: string }
+  | { kind: "org-unknown"; missing: "gateway" | "mode" }
+  | { kind: "org-unencodable"; org: string };
+
+export function resolveModeShareTarget(
+  slug: string,
+  modeOrg: string | null | undefined,
+  whatsappOrg: string | null | undefined
+): ModeShareTarget {
+  if (!whatsappOrg?.trim()) return { kind: "org-unknown", missing: "gateway" };
+  if (!modeOrg?.trim()) return { kind: "org-unknown", missing: "mode" };
+  if (modeOrg === whatsappOrg) return { kind: "home", name: slug };
+  const qualifier = orgSlug(modeOrg);
+  // The org half alone: the mode half is the slug's own check, reported
+  // as such by the caller.
+  if (!MODE_NAME_PATTERN.test(qualifier)) {
+    return { kind: "org-unencodable", org: modeOrg.trim() };
+  }
+  return { kind: "partner", name: `${qualifier}/${slug}`, org: modeOrg.trim() };
+}
+
 export type ModeShareLinkFailure =
   | "number-missing"
   | "number-invalid"
   | "slug-invalid"
-  | "slug-reserved"
-  | "org-invalid";
+  | "slug-reserved";
 
 export type ModeShareLinkResult =
   | { ok: true; url: string; digits: string; trigger: string }
   | { ok: false; reason: ModeShareLinkFailure };
 
 /**
- * Build the share link, or say why it cannot be built. The slug must
- * already match the worker's mode-name pattern: anything else is refused
- * rather than rewritten, because a rewritten slug would encode a trigger
- * that targets a different mode. Reserved clear-tokens are refused too.
- *
- * `orgQualifier`, when given, is the partner org's slug (see `orgSlug`):
- * the trigger becomes `#<orgQualifier>/<slug>`. The composed name is
- * checked on its own (`isQualifiedModeName`); an empty or malformed
- * qualifier is refused as `org-invalid`, never emitted as `#/<slug>`.
+ * Build the share link for `name`, or say why it cannot be built. `name`
+ * is either a bare slug (held to `validateModeShareSlug`) or the
+ * `<orgslug>/<slug>` a `partner` target composes (held to
+ * `isQualifiedModeName`, the worker's `validateModeSelection` rule).
+ * Anything else is refused rather than rewritten, because a rewritten name
+ * would encode a trigger that targets a different mode. Reserved
+ * clear-tokens are refused for a bare name; a qualified name can never be
+ * one (the worker checks the whole token against `CLEAR_TOKENS`).
  */
 export function buildModeShareLink(
   rawNumber: string | null | undefined,
-  slug: string,
-  orgQualifier?: string | null
+  name: string
 ): ModeShareLinkResult {
   if (!rawNumber || rawNumber.trim() === "") {
     return { ok: false, reason: "number-missing" };
   }
   const digits = normalizeWhatsAppNumber(rawNumber);
   if (!digits) return { ok: false, reason: "number-invalid" };
-  const slugVerdict = validateModeShareSlug(slug);
-  if (slugVerdict !== "ok") return { ok: false, reason: slugVerdict };
-  let name = slug;
-  if (orgQualifier !== undefined && orgQualifier !== null) {
-    name = `${orgQualifier}/${slug}`;
-    if (!isQualifiedModeName(name)) return { ok: false, reason: "org-invalid" };
+  if (name.includes("/")) {
+    if (!isQualifiedModeName(name))
+      return { ok: false, reason: "slug-invalid" };
+  } else {
+    const verdict = validateModeShareSlug(name);
+    if (verdict !== "ok") return { ok: false, reason: verdict };
   }
   const trigger = modeShareTrigger(name);
   // `encodeURIComponent` turns the `#` into `%23` and a qualifier's `/`
@@ -262,44 +277,45 @@ export interface ShareConfigSnapshot {
   whatsappOrg: string | null;
 }
 
-export type ModeSharePanelState =
+/** Why the panel shows no code, or that it shows one. */
+export type ModeShareStatus =
   | { kind: "loading" }
   | { kind: "error" }
   | { kind: "unconfigured" }
   | { kind: "number-invalid" }
   | { kind: "slug-invalid" }
   | { kind: "slug-reserved" }
+  | { kind: "org-unknown"; missing: "gateway" | "mode" }
   | { kind: "org-unencodable"; org: string }
   | { kind: "group-only" }
   | { kind: "draft" }
-  | {
-      kind: "ready";
-      url: string;
-      /** What the link pre-fills, e.g. `#fia` or `#pbt/obt-coach`. */
-      trigger: string;
-      /** The mode's org when it is a partner org (qualified trigger), else null. */
-      partnerOrg: string | null;
-      orgUnverified: boolean;
-    };
+  | { kind: "ready"; url: string };
+
+/**
+ * The panel's whole input, so the component derives nothing itself.
+ * `trigger` is what the card, the QR's label and the copy show: the
+ * qualified one for a partner mode, and null whenever the target can't be
+ * decided, so no bare `#<slug>` is ever shown for a mode that might be
+ * outside the gateway's org. `partnerOrg` is the mode's org when its code
+ * is qualified, for the "A mode from <org>" line.
+ */
+export type ModeSharePanelState = ModeShareStatus & {
+  trigger: string | null;
+  partnerOrg: string | null;
+};
 
 /**
  * Resolve what the panel shows. Order of precedence:
  *
- * 1. query lifecycle (loading, error);
- * 2. the mode's identity — a slug the worker's trigger cannot carry
- *    (non-canonical or reserved), then a partner org whose name cannot be
- *    slugged. Publishing fixes neither, so they are named before any
- *    publish advice;
- * 3. eligibility, via `modeShareState` — group-only, then draft (the
- *    hardest constraint first, so the copy names the one thing that has
- *    to change);
- * 4. the number — missing or invalid.
- *
- * A missing BFF route (`supported === false`) reads as "not configured":
- * an older portal deploy has no number to give, and that is the truthful
- * operator-facing message. `orgUnverified` is set on a ready result when
- * the gateway org is unknown, so the card can say the org check was
- * skipped rather than silently looking ready.
+ * 1. query lifecycle (loading, error), then an absent BFF route, which
+ *    reads as "not configured" (an older deploy has neither number nor
+ *    org to give);
+ * 2. the mode's identity: a slug no trigger can carry, then which org
+ *    the code addresses (unknown, or a partner org with no usable slug),
+ *    then a reserved slug. Publishing fixes none of these, so they come
+ *    before any publish advice;
+ * 3. eligibility, via `modeShareState`: group-only, then draft;
+ * 4. the number: missing or invalid.
  */
 export function resolveModeSharePanelState(
   snapshot: ShareConfigSnapshot,
@@ -307,43 +323,45 @@ export function resolveModeSharePanelState(
   modeOrg: string | null | undefined,
   modeName: string
 ): ModeSharePanelState {
-  if (snapshot.pending) return { kind: "loading" };
-  if (snapshot.error) return { kind: "error" };
+  const none = { trigger: null, partnerOrg: null };
+  if (snapshot.pending) return { kind: "loading", ...none };
+  if (snapshot.error) return { kind: "error", ...none };
+  if (!snapshot.supported) return { kind: "unconfigured", ...none };
   const slugVerdict = validateModeShareSlug(modeName);
-  if (slugVerdict !== "ok") return { kind: slugVerdict };
-  const whatsappOrg = snapshot.supported ? snapshot.whatsappOrg : null;
-  const whatsappNumber = snapshot.supported ? snapshot.whatsappNumber : null;
-  const target = resolveModeShareTarget(modeName, modeOrg, whatsappOrg);
-  if (target.kind === "org-unencodable") {
-    return { kind: "org-unencodable", org: target.org };
-  }
-  const eligibility = modeShareState(flags);
-  if (eligibility !== "ready") return { kind: eligibility };
-  const partner = target.kind === "partner";
-  const link = buildModeShareLink(
-    whatsappNumber,
+  if (slugVerdict === "slug-invalid") return { kind: "slug-invalid", ...none };
+  const target = resolveModeShareTarget(
     modeName,
-    partner ? orgSlug(target.org) : null
+    modeOrg,
+    snapshot.whatsappOrg
   );
-  if (link.ok) {
-    return {
-      kind: "ready",
-      url: link.url,
-      trigger: link.trigger,
-      partnerOrg: partner ? target.org : null,
-      orgUnverified: !whatsappOrg?.trim(),
-    };
+  if (target.kind === "org-unknown") {
+    return { kind: "org-unknown", missing: target.missing, ...none };
   }
+  if (target.kind === "org-unencodable") {
+    return { kind: "org-unencodable", org: target.org, ...none };
+  }
+  const shown = {
+    trigger: modeShareTrigger(target.name),
+    partnerOrg: target.kind === "partner" ? target.org : null,
+  };
+  // Policy, not a worker limit for partners: `#pbt/default` is not a clear
+  // token, but a mode named after one can't be shared from its home org
+  // either, so the panel asks for a rename in every org.
+  if (slugVerdict === "slug-reserved")
+    return { kind: "slug-reserved", ...shown };
+  const eligibility = modeShareState(flags);
+  if (eligibility !== "ready") return { kind: eligibility, ...shown };
+  const link = buildModeShareLink(snapshot.whatsappNumber, target.name);
+  if (link.ok) return { kind: "ready", url: link.url, ...shown };
   switch (link.reason) {
     case "number-missing":
-      return { kind: "unconfigured" };
+      return { kind: "unconfigured", ...shown };
     case "number-invalid":
-      return { kind: "number-invalid" };
-    // Already ruled out above; kept so the switch stays exhaustive.
+      return { kind: "number-invalid", ...shown };
+    // Ruled out above (the slug checks, and the target's org-half check);
+    // kept so the switch stays exhaustive.
     case "slug-invalid":
     case "slug-reserved":
-      return { kind: slugVerdict === "ok" ? "slug-invalid" : slugVerdict };
-    case "org-invalid":
-      return { kind: "org-unencodable", org: modeOrg?.trim() ?? "" };
+      return { kind: link.reason, ...none };
   }
 }
