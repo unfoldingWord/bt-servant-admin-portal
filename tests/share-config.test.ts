@@ -89,15 +89,10 @@ describe("GET /api/share-config — shape", () => {
     const res = await worker.fetch(request({}, sessionId), env);
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    // Exactly these two keys — no other env binding may leak through.
-    expect(Object.keys(body).sort()).toEqual([
-      "whatsapp_number",
-      "whatsapp_org",
-    ]);
-    expect(body).toEqual({
-      whatsapp_number: "+1 (555) 010-0100",
-      whatsapp_org: "acme",
-    });
+    // Exactly this key — no other env binding may leak through, including
+    // WHATSAPP_ORG, which is the BFF's server-side input only (#345).
+    expect(Object.keys(body)).toEqual(["whatsapp_number"]);
+    expect(body).toEqual({ whatsapp_number: "+1 (555) 010-0100" });
   });
 
   it("maps empty and whitespace vars to null", () => {
@@ -107,7 +102,7 @@ describe("GET /api/share-config — shape", () => {
       WHATSAPP_ORG: "",
     });
     return res.json().then((body) => {
-      expect(body).toEqual({ whatsapp_number: null, whatsapp_org: null });
+      expect(body).toEqual({ whatsapp_number: null });
     });
   });
 
@@ -117,9 +112,6 @@ describe("GET /api/share-config — shape", () => {
       WHATSAPP_NUMBER: undefined,
       WHATSAPP_ORG: undefined,
     });
-    expect(await res.json()).toEqual({
-      whatsapp_number: null,
-      whatsapp_org: null,
-    });
+    expect(await res.json()).toEqual({ whatsapp_number: null });
   });
 });

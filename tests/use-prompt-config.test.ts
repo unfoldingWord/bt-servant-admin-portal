@@ -8,6 +8,7 @@ import {
   modeQueryKeys,
   saveModeMutationOptions,
 } from "../src/hooks/use-prompt-config";
+import { MODE_SHARE_CODE_KEY } from "../src/hooks/use-mode-share-code";
 import type { OrgModes, PromptMode } from "../src/types/prompt-override";
 
 // Regression for the #232 review (PR #238): after a successful rename the
@@ -252,6 +253,8 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     expect(cancelSpy).not.toHaveBeenCalled();
     expect(invalidateSpy.mock.calls.map((c) => c[0]?.queryKey)).toEqual([
       modeQueryKeys.modes(null),
+      // #345: every mode write re-asks the worker for share codes.
+      MODE_SHARE_CODE_KEY,
       modeQueryKeys.mode("spoken", null),
     ]);
     expect(qc.getQueryData<OrgModes>(modeQueryKeys.modes(null))?.modes).toEqual(
@@ -304,6 +307,7 @@ describe("saveModeMutationOptions — opt-in seed", () => {
       `cancel:${JSON.stringify(modeQueryKeys.modes(null))}`,
       `set:${JSON.stringify(modeQueryKeys.modes(null))}`,
       `invalidate:${JSON.stringify(modeQueryKeys.modes(null))}`,
+      `invalidate:${JSON.stringify(MODE_SHARE_CODE_KEY)}`,
       `invalidate:${JSON.stringify(modeQueryKeys.mode("spoken", null))}`,
     ]);
   });
@@ -358,6 +362,7 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     ).toBeUndefined();
     expect(invalidateSpy.mock.calls.map((c) => c[0]?.queryKey)).toEqual([
       modeQueryKeys.modes("alpha"),
+      MODE_SHARE_CODE_KEY,
       modeQueryKeys.mode("spoken", "alpha"),
     ]);
     for (const call of cancelSpy.mock.calls) {

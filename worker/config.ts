@@ -1155,11 +1155,16 @@ export async function handleConfig(
     if (request.method !== "GET") {
       return errorResponse("Method not allowed", 405);
     }
-    return handleModeShareCode(
-      env,
-      resolved.org,
-      decodeURIComponent(modeShareCodeMatch[1])
-    );
+    // A malformed escape (`%E0%A4%A`) is the caller's error, not a 500.
+    // (The generic mode route below has the same unguarded decode; left
+    // as is here, out of scope.)
+    let modeName: string;
+    try {
+      modeName = decodeURIComponent(modeShareCodeMatch[1]);
+    } catch {
+      return errorResponse("Invalid mode name", 400);
+    }
+    return handleModeShareCode(env, resolved.org, modeName);
   }
 
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);

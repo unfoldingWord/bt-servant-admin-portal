@@ -13,6 +13,7 @@ import type { ModeFlags } from "@/lib/mode-flags";
 import {
   buildModeShareFilename,
   resolveModeSharePanelState,
+  homeOrgWithoutModes,
   shownTrigger,
   validateModeShareSlug,
   type ModeSharePanelState,
@@ -27,6 +28,7 @@ import {
 } from "@/lib/mode-share-qr";
 import { humanizeModeSlug } from "@/lib/mode-slug";
 import { cn } from "@/lib/utils";
+import type { ShareCodeFailure } from "@/lib/mode-share-code-api";
 import { useModeShareCode } from "@/hooks/use-mode-share-code";
 import { useShareConfig } from "@/hooks/use-share-config";
 import { Button } from "@/components/ui/button";
@@ -126,11 +128,13 @@ export function ModeSharePanel({
       {
         pending: shareConfig.isPending,
         error: shareConfig.isError,
+        fetching: shareConfig.isFetching,
         supported: data?.supported === true,
         whatsappNumber: data?.supported ? data.config.whatsappNumber : null,
       },
       {
         pending: shareCode.isPending,
+        fetching: shareCode.isFetching,
         error: shareCode.isError,
         data: shareCode.data,
       },
@@ -144,19 +148,38 @@ export function ModeSharePanel({
     org,
     shareCode.data,
     shareCode.isError,
+    shareCode.isFetching,
     shareCode.isPending,
     shareConfig.data,
     shareConfig.isError,
+    shareConfig.isFetching,
     shareConfig.isPending,
   ]);
 
-  // Secondary note for a mode that is not ready for its own reasons AND
-  // has no number configured — so the author who publishes is not sent
-  // around the loop a second time to discover the operator half.
+  // Secondary note for a mode the author can still fix (publish it, or
+  // turn off group-only) while the number is ALSO missing, so they are not
+  // sent around the loop a second time to discover the operator half.
+  // Only there: in a loading, error or org state the number isn't the
+  // problem to raise.
   const numberMissing =
-    !shareConfig.isPending &&
-    !shareConfig.isError &&
+    (state.kind === "draft" || state.kind === "group-only") &&
     !(shareConfig.data?.supported && shareConfig.data.config.whatsappNumber);
+
+  // Try again: kept on screen, disabled and saying so, from the click until
+  // the refetch settles, so it can't queue repeated calls.
+  const [retrying, setRetrying] = useState(false);
+  const fetching = shareCode.isFetching || shareConfig.isFetching;
+  useEffect(() => {
+    if (!fetching) setRetrying(false);
+  }, [fetching]);
+  // Non-blocking: shown with whatever the state is, once an answer is in.
+  const emptyHomeOrg =
+    state.kind === "loading" ? null : homeOrgWithoutModes(shareCode.data);
+  const retryable =
+    state.kind === "error" ||
+    state.kind === "unavailable" ||
+    (state.kind === "failed" &&
+      (state.failure === "server" || state.failure === "network"));
 
   const title = modeLabel?.trim() || humanizeModeSlug(modeName);
   // What every surface shows (card, QR label, SVG title, copy): only ever
@@ -393,17 +416,19 @@ export function ModeSharePanel({
           )}
         </div>
 
-        {(state.kind === "error" || state.kind === "unavailable") && (
+        {(retryable || (retrying && fetching)) && (
           <div className="flex justify-center">
             <Button
               size="sm"
               variant="outline"
+              disabled={fetching}
               onClick={() => {
+                setRetrying(true);
                 if (shareConfig.isError) void shareConfig.refetch();
                 void shareCode.refetch();
               }}
             >
-              Try again
+              {fetching ? "Checking…" : "Try again"}
             </Button>
           </div>
         )}
@@ -443,7 +468,14 @@ export function ModeSharePanel({
           </div>
         )}
 
-        {!ready && numberMissing && state.kind !== "unconfigured" && (
+        {emptyHomeOrg && (
+          <p className="text-muted-foreground text-xs">
+            WhatsApp&rsquo;s org ({emptyHomeOrg}) has no modes yet — check
+            WHATSAPP_ORG if that&rsquo;s unexpected.
+          </p>
+        )}
+
+        {numberMissing && (
           <p className="text-muted-foreground text-xs">
             Also: the WhatsApp number isn't configured for this environment yet,
             so the code can't be generated until it is.
@@ -532,6 +564,10 @@ function describe(state: ModeSharePanelState, modeName: string): string {
       return "Couldn't load the WhatsApp settings.";
     case "unavailable":
       return "BT Servant couldn't check this mode's code just now. Try again in a moment.";
+    case "failed":
+      return describeFailure(state.failure);
+    case "code-unencodable":
+      return "BT Servant's code for this mode can't be put in a WhatsApp link. Ask unfoldingWord to check the mode.";
     case "not-found":
       return "BT Servant couldn't find this mode. Reload the page and try again.";
     case "unconfigured":
@@ -591,6 +627,10 @@ function placeholderLabel(state: ModeSharePanelState): string {
     case "org-unconfigured":
     case "home-org-unknown":
       return "Org not configured";
+    case "failed":
+      return "Unavailable";
+    case "code-unencodable":
+      return "Can't encode this code";
     case "upgrade-needed":
       return "Needs a newer version";
     case "slug-invalid":
@@ -612,5 +652,20 @@ function placeholderLabel(state: ModeSharePanelState): string {
       return "Publish to activate";
     case "ready":
       return "";
+  }
+}
+
+function describeFailure(failure: ShareCodeFailure): string {
+  switch (failure) {
+    case "signed-out":
+      return "Your session has ended. Sign in again to get this mode's code.";
+    case "forbidden":
+      return "You don't have access to this org's modes, so its WhatsApp code can't be checked.";
+    case "invalid-name":
+      return "BT Servant doesn't accept this mode's name. Rename it to lowercase letters, digits, and hyphens to share it by QR.";
+    case "server":
+      return "BT Servant had a problem checking this mode's code. Try again.";
+    case "network":
+      return "Couldn't reach BT Servant to check this mode's code. Check your connection and try again.";
   }
 }

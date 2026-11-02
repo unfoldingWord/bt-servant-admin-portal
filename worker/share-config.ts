@@ -1,5 +1,6 @@
 import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
+import type { ModeShareCodeResponse } from "../src/types/mode-share-code";
 
 // #311 — read-only share configuration for the per-mode WhatsApp QR.
 //
@@ -11,24 +12,23 @@ import { errorResponse, jsonResponse } from "./helpers";
 //                     wrangler.toml; when it lands, change both together.
 //   WHATSAPP_ORG    — the org the WhatsApp gateway is pinned to
 //                     (`ENGINE_ORG` in the gateway's wrangler.toml), i.e.
-//                     the org every WhatsApp request carries. The share-code
-//                     route below sends it to the worker as `home_org`, so
-//                     the worker can say which code opens a mode from that
-//                     org's point of view (#345).
+//                     the org every WhatsApp request carries. Server-side
+//                     only: the share-code route below sends it to the
+//                     worker as `home_org`, so the worker can say which code
+//                     opens a mode from that org's point of view (#345). The
+//                     client never needs it.
 //
-// Returned raw (trimmed, empty → null). Normalising the number into the
-// `wa.me` digit form is the client lib's job, so the shape check lives in
-// one place and is unit-tested there.
+// The number is returned raw (trimmed, empty → null). Normalising it into
+// the `wa.me` digit form is the client lib's job, so the shape check lives
+// in one place and is unit-tested there.
 
 export interface ShareConfigResponse {
   whatsapp_number: string | null;
-  whatsapp_org: string | null;
 }
 
 export function handleShareConfig(env: Env): Response {
   const body: ShareConfigResponse = {
     whatsapp_number: presentOrNull(env.WHATSAPP_NUMBER),
-    whatsapp_org: presentOrNull(env.WHATSAPP_ORG),
   };
   return jsonResponse(body);
 }
@@ -53,30 +53,10 @@ function presentOrNull(value: string | undefined): string | null {
 // modes page edits (raw for same-org callers, padding and all).
 // ---------------------------------------------------------------------------
 
-// The worker's reasons today: not_found, draft, requires_group, reserved,
-// collision, capped, org_skipped, ambiguous (and possibly a retryable
-// `pending`). Passed through as any string: the contract is additive, and
-// the panel treats a reason it does not know as "does not open this mode".
-export type ShareCodeReason = string;
-
-export type ModeShareCodeResponse =
-  // The worker predates the share-code route (a 404 without its
-  // `mode_not_found` body). `home` says whether this mode's org is the
-  // gateway org by the worker's own exact-key rule, so the panel can keep
-  // sharing home modes by their bare slug on an older worker.
-  | { capability: "absent"; home: boolean }
-  // WHATSAPP_ORG is unset: there is no home org to ask from.
-  | { capability: "unconfigured" }
-  // WHATSAPP_ORG is set, but the worker has no modes key for that org
-  // (400 `unknown_home_org`): a config problem, not an old worker.
-  | { capability: "unknown-home-org"; home_org: string }
-  | {
-      capability: "present";
-      code: string | null;
-      resolves: boolean;
-      reason?: ShareCodeReason;
-      resolved_org?: string;
-    };
+// The response type is shared with the client (src/types/mode-share-code.ts).
+// `reason` is passed through as any string: the worker contract is
+// additive, and the panel reads an unknown reason as "does not open this
+// mode".
 
 export async function handleModeShareCode(
   env: Env,
@@ -116,6 +96,8 @@ export async function handleModeShareCode(
   }
   if (res.status === 503) return errorResponse("modes_unavailable", 503);
   if (res.status === 400) {
+    // Pre-final #477 builds answered this; the final contract reports it
+    // as `home_has_modes: false` on the 200 instead. Still tolerated.
     if (error === "unknown_home_org") {
       return jsonResponse({
         capability: "unknown-home-org",
@@ -126,17 +108,18 @@ export async function handleModeShareCode(
   }
   if (!res.ok) return errorResponse("Engine error", 502);
 
-  const parsed = parseShareCodeAnswer(body);
+  const parsed = parseShareCodeAnswer(body, homeOrg);
   if (parsed === null) return errorResponse("Malformed engine response", 502);
   return jsonResponse(parsed);
 }
 
 /** Shape-check the worker's 200 so a malformed answer never reaches a QR. */
 function parseShareCodeAnswer(
-  body: Record<string, unknown> | null
+  body: Record<string, unknown> | null,
+  homeOrg: string
 ): ModeShareCodeResponse | null {
   if (body === null) return null;
-  const { code, resolves, reason, resolved_org } = body;
+  const { code, resolves, reason, resolved_org, home_has_modes } = body;
   if (code !== null && typeof code !== "string") return null;
   if (typeof resolves !== "boolean") return null;
   if (reason !== undefined && typeof reason !== "string") return null;
@@ -149,5 +132,10 @@ function parseShareCodeAnswer(
     resolves,
     ...(reason !== undefined ? { reason } : {}),
     ...(resolved_org !== undefined ? { resolved_org } : {}),
+    // Additive in #477: false when the gateway org has no modes key (the
+    // chat path then treats home as empty). Tolerated when absent or not a
+    // boolean, since it only drives a warning.
+    ...(typeof home_has_modes === "boolean" ? { home_has_modes } : {}),
+    home_org: homeOrg,
   };
 }

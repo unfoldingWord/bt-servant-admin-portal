@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { useCallback } from "react";
 
+import { MODE_SHARE_CODE_KEY } from "@/hooks/use-mode-share-code";
 import * as configApi from "@/lib/config-api";
 import type {
   OrgModes,
@@ -167,6 +168,7 @@ export function saveModeMutationOptions(qc: QueryClient) {
       // reconciles the optimistic rows with server truth (e.g. fresh
       // `aliases`).
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
     },
   };
@@ -208,6 +210,7 @@ export function useDeleteMode(org?: string | null) {
     mutationFn: (name: string) => configApi.deleteMode(name, undefined, key),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
     },
   });
 }
@@ -275,6 +278,7 @@ export function useRenameMode(org?: string | null) {
         applyRenameToModeList(prev, name, data)
       );
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
       void qc.invalidateQueries({ queryKey: keys.mode(newName, key) });
     },
@@ -315,6 +319,7 @@ export function useCloneMode(org?: string | null) {
       );
       qc.setQueryData(keys.mode(data.name, key), data);
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
       void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
     },
     onError: (error) => {
@@ -382,6 +387,7 @@ export function useRetireMode(org?: string | null) {
       qc.setQueryData(keys.mode(data.name, key), data);
       qc.removeQueries({ queryKey: keys.mode(name, key) });
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
       void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
     },
   });

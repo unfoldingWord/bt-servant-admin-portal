@@ -4,17 +4,20 @@ import {
   buildModeShareFilename,
   buildModeShareLink,
   isModeShareOpen,
-  isQualifiedModeName,
+  isUrlSafeShareCode,
+  buildShareLinkFromCode,
   modeShareState,
   modeShareTrigger,
   normalizeWhatsAppNumber,
   resolveModeSharePanelState,
+  homeOrgWithoutModes,
   shownTrigger,
   validateModeShareSlug,
   type ShareCodeSnapshot,
   type ShareConfigSnapshot,
 } from "../src/lib/mode-share-link";
 import type { ModeShareCode } from "../src/lib/mode-share-code-api";
+import type { ModeShareCodeResponse } from "../src/types/mode-share-code";
 
 // #311 — the wa.me deep link the per-mode QR encodes. Number and slug are
 // both treated as untrusted input; these pin the shape checks and the exact
@@ -142,40 +145,6 @@ describe("buildModeShareLink", () => {
     expect(buildModeShareLink("15550100100", "default-mode").ok).toBe(true);
   });
 
-  it("builds the qualified #<orgslug>/<slug> link the worker's welcome link emits", () => {
-    // Same bytes as bt-servant-worker tests/unit/mode-share-link.test.ts:
-    // buildModeShareLink('15558196461', 'pbt/obt-coach').
-    expect(buildModeShareLink("15558196461", "pbt/obt-coach")).toEqual({
-      ok: true,
-      url: "https://wa.me/15558196461?text=%23pbt%2Fobt-coach",
-      digits: "15558196461",
-      trigger: "#pbt/obt-coach",
-    });
-  });
-
-  it("refuses a malformed qualified name instead of emitting it", () => {
-    for (const bad of [
-      "/fia",
-      "pbt/",
-      "PBT/fia",
-      "-pbt/fia",
-      "a/b/c",
-      `${"a".repeat(65)}/fia`,
-      "pbt/kids_mode",
-    ]) {
-      expect(buildModeShareLink("15550100100", bad), bad).toEqual({
-        ok: false,
-        reason: "slug-invalid",
-      });
-    }
-  });
-
-  it("does not treat a qualified name ending in a clear token as reserved", () => {
-    // The worker checks the WHOLE token against CLEAR_TOKENS, so
-    // `#pbt/default` would select a mode, not clear one.
-    expect(buildModeShareLink("15550100100", "pbt/default").ok).toBe(true);
-  });
-
   it("never lets a hostile slug reach the URL unencoded", () => {
     const result = buildModeShareLink("15550100100", "fia&text=evil");
     expect(result.ok).toBe(false);
@@ -201,9 +170,11 @@ describe("modeShareState", () => {
     expect(modeShareState({ published: true })).toBe("ready");
   });
 
-  it("reports group-only ahead of draft, and for published modes too", () => {
+  it("reports draft ahead of group-only, as the worker does", () => {
+    // bt-servant-worker src/utils/mode-share-code.ts `staticReason`:
+    // published is checked before requires_group.
     expect(modeShareState({ published: false, requires_group: true })).toBe(
-      "group-only"
+      "draft"
     );
     expect(modeShareState({ published: true, requires_group: true })).toBe(
       "group-only"
@@ -212,27 +183,57 @@ describe("modeShareState", () => {
   });
 });
 
-describe("isQualifiedModeName", () => {
-  it("accepts <org-slug>/<mode-slug> with both halves on the worker pattern", () => {
-    expect(isQualifiedModeName("pbt/obt-coach")).toBe(true);
-    expect(isQualifiedModeName(`${"a".repeat(64)}/${"b".repeat(64)}`)).toBe(
-      true
-    );
+describe("buildShareLinkFromCode", () => {
+  it("builds the qualified #<orgslug>/<slug> link the worker's welcome link emits", () => {
+    // Same bytes as bt-servant-worker tests/unit/mode-share-link.test.ts:
+    // buildModeShareLink('15558196461', 'pbt/obt-coach').
+    expect(buildShareLinkFromCode("15558196461", "pbt/obt-coach")).toEqual({
+      ok: true,
+      url: "https://wa.me/15558196461?text=%23pbt%2Fobt-coach",
+      digits: "15558196461",
+      trigger: "#pbt/obt-coach",
+    });
   });
 
-  it("rejects anything the worker's validateModeSelection would", () => {
+  it("trusts a resolving code beyond the portal's own name rules", () => {
+    // The worker doesn't cap the org half; 64+ chars or `--` inside are
+    // its call, not the portal's.
+    const longOrg = `${"a".repeat(100)}/fia`;
+    expect(buildShareLinkFromCode("15550100100", longOrg).ok).toBe(true);
+    expect(buildShareLinkFromCode("15550100100", "a--b/-x-").ok).toBe(true);
+    // A qualified clear word is not a clear token to the worker.
+    expect(buildShareLinkFromCode("15550100100", "pbt/default").ok).toBe(true);
+  });
+
+  it("refuses only what can't be carried in a URL", () => {
     for (const bad of [
-      "obt-coach",
-      "/obt-coach",
-      "pbt/",
+      "",
+      "Fia",
+      "pbt/obt coach",
       "a/b/c",
-      "PBT/obt-coach",
-      "-pbt/obt-coach",
-      `${"a".repeat(65)}/x`,
-      "pbt/kids_mode",
+      "/fia",
+      "pbt/",
+      "fia&text=x",
+      "#fia",
+      "a".repeat(201),
     ]) {
-      expect(isQualifiedModeName(bad), bad).toBe(false);
+      expect(buildShareLinkFromCode("15550100100", bad), bad).toEqual({
+        ok: false,
+        reason: "code-unencodable",
+      });
     }
+    expect(isUrlSafeShareCode("a".repeat(200))).toBe(true);
+  });
+
+  it("checks the number first, like the bare builder", () => {
+    expect(buildShareLinkFromCode(null, "pbt/x")).toEqual({
+      ok: false,
+      reason: "number-missing",
+    });
+    expect(buildShareLinkFromCode("nope", "pbt/x")).toEqual({
+      ok: false,
+      reason: "number-invalid",
+    });
   });
 });
 
@@ -267,30 +268,30 @@ describe("resolveModeSharePanelState", () => {
   const config: ShareConfigSnapshot = {
     pending: false,
     error: false,
+    fetching: false,
     supported: true,
     whatsappNumber: "+57 300 123 4567",
   };
   const ready = { published: true, requires_group: false };
+  const settled = { pending: false, fetching: false, error: false };
   const present = (
     answer: Omit<
-      Extract<ModeShareCode, { capability: "present" }>,
-      "capability"
-    >
+      Extract<ModeShareCodeResponse, { capability: "present" }>,
+      "capability" | "home_org"
+    > & { home_org?: string }
   ): ShareCodeSnapshot => ({
-    pending: false,
-    error: false,
-    data: { capability: "present", ...answer },
+    ...settled,
+    data: { capability: "present", home_org: "unfoldingWord", ...answer },
   });
   const code = (data: ModeShareCode): ShareCodeSnapshot => ({
-    pending: false,
-    error: false,
+    ...settled,
     data,
   });
-  const home = present({ code: "fia", resolves: true, resolvedOrg: "acme" });
+  const home = present({ code: "fia", resolves: true, resolved_org: "acme" });
   const partner = present({
     code: "pbt/obt-coach",
     resolves: true,
-    resolvedOrg: "PBT",
+    resolved_org: "PBT",
   });
   const partnerShown = { trigger: "#pbt/obt-coach", partnerOrg: "PBT" };
   const miss = (reason: string | undefined, resolvedOrg?: string) =>
@@ -298,7 +299,7 @@ describe("resolveModeSharePanelState", () => {
       code: "pbt/obt-coach",
       resolves: false,
       ...(reason !== undefined ? { reason } : {}),
-      ...(resolvedOrg !== undefined ? { resolvedOrg } : {}),
+      ...(resolvedOrg !== undefined ? { resolved_org: resolvedOrg } : {}),
     });
   const run = (
     shareCode: ShareCodeSnapshot,
@@ -334,6 +335,22 @@ describe("resolveModeSharePanelState", () => {
     });
   });
 
+  it("trusts a resolving code the portal's own name rules would reject", () => {
+    const long = `${"o".repeat(80)}/obt-coach`;
+    expect(run(present({ code: long, resolves: true }))).toMatchObject({
+      kind: "ready",
+      trigger: `#${long}`,
+    });
+  });
+
+  it("gives a code no URL can carry its own state, never a settings error", () => {
+    for (const bad of ["Fia", "pbt/obt coach", "a/b/c", "pbt/"]) {
+      expect(run(present({ code: bad, resolves: true })), bad).toEqual({
+        kind: "code-unencodable",
+      });
+    }
+  });
+
   it("maps every worker reason to its own state, carrying the code", () => {
     expect(run(miss("draft"))).toEqual({ kind: "draft", ...partnerShown });
     expect(run(miss("requires_group"))).toEqual({
@@ -367,19 +384,13 @@ describe("resolveModeSharePanelState", () => {
     expect(run(miss("reserved"))).toEqual({ kind: "slug-reserved" });
   });
 
-  it("treats a retryable `pending` as the retry state", () => {
-    expect(run(miss("pending"))).toEqual({ kind: "unavailable" });
-  });
-
-  it("treats a missing or unknown reason as not resolving, with generic copy", () => {
-    expect(run(miss(undefined))).toEqual({
-      kind: "unresolved",
-      ...partnerShown,
-    });
-    expect(run(miss("some_future_reason"))).toEqual({
-      kind: "unresolved",
-      ...partnerShown,
-    });
+  it("treats a missing or unknown reason (e.g. `pending`) as not resolving, with generic copy", () => {
+    for (const reason of [undefined, "pending", "some_future_reason"]) {
+      expect(run(miss(reason)), String(reason)).toEqual({
+        kind: "unresolved",
+        ...partnerShown,
+      });
+    }
   });
 
   it("never builds a link from a code that does not resolve, whatever the number", () => {
@@ -405,11 +416,23 @@ describe("resolveModeSharePanelState", () => {
       kind: "org-unconfigured",
     });
     expect(
-      run(code({ capability: "unknown-home-org", homeOrg: "unfoldingWord" }))
+      run(code({ capability: "unknown-home-org", home_org: "unfoldingWord" }))
     ).toEqual({ kind: "home-org-unknown", homeOrg: "unfoldingWord" });
     expect(run(code({ capability: "absent", home: false }))).toEqual({
       kind: "upgrade-needed",
     });
+    for (const failure of [
+      "signed-out",
+      "forbidden",
+      "invalid-name",
+      "server",
+      "network",
+    ] as const) {
+      expect(run(code({ capability: "failed", failure }))).toEqual({
+        kind: "failed",
+        failure,
+      });
+    }
   });
 
   it("keeps sharing a home mode by its bare slug on a worker without the route", () => {
@@ -420,12 +443,15 @@ describe("resolveModeSharePanelState", () => {
       trigger: "#fia",
       partnerOrg: null,
     });
-    // ...with the page's own flags standing in for the worker's verdict.
-    expect(run(absentHome, { org: "acme", name: "fia", flags: {} })).toEqual({
-      kind: "draft",
-      trigger: "#fia",
-      partnerOrg: null,
-    });
+    // ...with the page's own flags standing in for the worker's verdict,
+    // draft first as the worker orders them.
+    expect(
+      run(absentHome, {
+        org: "acme",
+        name: "fia",
+        flags: { published: false, requires_group: true },
+      })
+    ).toEqual({ kind: "draft", trigger: "#fia", partnerOrg: null });
     expect(
       run(absentHome, {
         org: "acme",
@@ -435,25 +461,35 @@ describe("resolveModeSharePanelState", () => {
     ).toEqual({ kind: "group-only", trigger: "#fia", partnerOrg: null });
   });
 
-  it("follows both queries' lifecycle after the slug checks", () => {
-    expect(run({ pending: true, error: false, data: undefined })).toEqual({
+  it("shows checking, never the old answer, while any refetch is in flight", () => {
+    // Reopen after the stale time, or Try again: the cached `ready`
+    // answer must not offer Copy/Download while it is being replaced.
+    expect(run({ ...partner, fetching: true })).toEqual({ kind: "loading" });
+    expect(run(partner, { config: { ...config, fetching: true } })).toEqual({
+      kind: "loading",
+    });
+    expect(run({ ...settled, pending: true, data: undefined })).toEqual({
       kind: "loading",
     });
     expect(run(partner, { config: { ...config, pending: true } })).toEqual({
       kind: "loading",
     });
-    expect(run({ pending: false, error: true, data: undefined })).toEqual({
-      kind: "error",
-    });
+  });
+
+  it("keeps the settings error for share-config failures only", () => {
     expect(run(partner, { config: { ...config, error: true } })).toEqual({
       kind: "error",
+    });
+    expect(run({ ...settled, error: true, data: undefined })).toEqual({
+      kind: "failed",
+      failure: "server",
     });
   });
 
   it("names the mode's identity first, before any request state", () => {
     const loading: ShareCodeSnapshot = {
+      ...settled,
       pending: true,
-      error: false,
       data: undefined,
     };
     expect(run(loading, { name: "Fia Mode" })).toEqual({
@@ -483,23 +519,50 @@ describe("resolveModeSharePanelState", () => {
     ).toEqual({ kind: "number-invalid", ...partnerShown });
     expect(
       run(partner, {
-        config: {
-          pending: false,
-          error: false,
-          supported: false,
-          whatsappNumber: null,
-        },
+        config: { ...config, supported: false, whatsappNumber: null },
       })
     ).toEqual({ kind: "unconfigured", ...partnerShown });
   });
+});
 
-  it("never puts a malformed worker code in a URL", () => {
-    for (const bad of ["Fia", "pbt/obt coach", "a/b/c", "pbt/"]) {
-      expect(
-        run(present({ code: bad, resolves: true }), { name: "obt-coach" }),
-        bad
-      ).toEqual({ kind: "error" });
-    }
+describe("homeOrgWithoutModes", () => {
+  const base = {
+    capability: "present" as const,
+    code: "pbt/x",
+    resolves: true,
+    home_org: "unfoldingWord",
+  };
+  it("names the gateway org only when the worker says it has no modes", () => {
+    expect(homeOrgWithoutModes({ ...base, home_has_modes: false })).toBe(
+      "unfoldingWord"
+    );
+    expect(homeOrgWithoutModes({ ...base, home_has_modes: true })).toBeNull();
+    // Absent (an older #477 build) is not a warning.
+    expect(homeOrgWithoutModes(base)).toBeNull();
+    expect(homeOrgWithoutModes(undefined)).toBeNull();
+    expect(homeOrgWithoutModes({ capability: "unavailable" })).toBeNull();
+  });
+
+  it("does not change the panel state: a partner mode can still resolve", () => {
+    const state = resolveModeSharePanelState(
+      {
+        pending: false,
+        error: false,
+        fetching: false,
+        supported: true,
+        whatsappNumber: "15550100100",
+      },
+      {
+        pending: false,
+        fetching: false,
+        error: false,
+        data: { ...base, home_has_modes: false },
+      },
+      { published: true },
+      "PBT",
+      "x"
+    );
+    expect(state.kind).toBe("ready");
   });
 });
 

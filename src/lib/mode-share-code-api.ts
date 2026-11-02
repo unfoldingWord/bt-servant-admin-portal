@@ -7,71 +7,83 @@
 // only renders its answer.
 
 import { buildConfigUrl } from "@/lib/config-url";
+import type { ModeShareCodeResponse } from "@/types/mode-share-code";
 
 const SAME_ORIGIN_HEADERS = {
   "X-Requested-With": "XMLHttpRequest",
 } as const;
 
-/**
- * Why the worker's code does not (or cannot) open the mode. The known
- * values are listed; the contract is additive, so any other string is
- * possible and reads as "does not open this mode".
- */
-export type KnownShareCodeReason =
-  | "not_found"
-  | "draft"
-  | "requires_group"
-  | "reserved"
-  | "collision"
-  | "capped"
-  | "org_skipped"
-  | "ambiguous"
-  | "pending";
-export type ShareCodeReason = KnownShareCodeReason | (string & {});
+/** Why the share-code request itself failed, so the panel can say so. */
+export type ShareCodeFailure =
+  /** 401: the session has ended. */
+  | "signed-out"
+  /** 403: the caller can't read this org's modes. */
+  | "forbidden"
+  /** 400 (e.g. the worker's `invalid_mode_name`). */
+  | "invalid-name"
+  /** 5xx other than 503, or a body this client can't read. */
+  | "server"
+  /** The request never got an answer. */
+  | "network";
 
+/**
+ * Everything a share-code request can come back as: one of the route's
+ * 200 bodies (the shared wire type), or a state this client derives from
+ * the status.
+ */
 export type ModeShareCode =
-  /** The worker answered. `code` is the token without `#`. */
-  | {
-      capability: "present";
-      code: string | null;
-      resolves: boolean;
-      reason?: ShareCodeReason;
-      /** Raw org of the mode `#<code>` actually opens. */
-      resolvedOrg?: string;
-    }
-  /**
-   * The worker predates the route. `home` is true when the mode's org is
-   * the gateway org (decided by the BFF on the exact org it resolved).
-   */
-  | { capability: "absent"; home: boolean }
-  /** WHATSAPP_ORG is unset for this environment. */
-  | { capability: "unconfigured" }
-  /** WHATSAPP_ORG names an org the worker has no modes for. */
-  | { capability: "unknown-home-org"; homeOrg: string }
-  /** The worker could not list modes just now (503); worth a retry. */
+  | ModeShareCodeResponse
+  /** 503: the worker couldn't list modes just now; worth a retry. */
   | { capability: "unavailable" }
-  /** The worker has no such mode in this org (404 `mode_not_found`). */
-  | { capability: "not-found" };
+  /** 404 `mode_not_found`: no such mode in this org. */
+  | { capability: "not-found" }
+  | { capability: "failed"; failure: ShareCodeFailure };
 
 export async function getModeShareCode(
   modeName: string,
   org: string | null | undefined,
   signal?: AbortSignal
 ): Promise<ModeShareCode> {
-  const res = await fetch(
-    buildConfigUrl(
-      `/api/config/modes/${encodeURIComponent(modeName)}/share-code`,
-      org
-    ),
-    { headers: SAME_ORIGIN_HEADERS, signal }
-  );
+  let res: Response;
+  try {
+    res = await fetch(
+      buildConfigUrl(
+        `/api/config/modes/${encodeURIComponent(modeName)}/share-code`,
+        org
+      ),
+      { headers: SAME_ORIGIN_HEADERS, signal }
+    );
+  } catch (error) {
+    // A cancelled query must stay a cancellation, not a "network" state.
+    if (signal?.aborted) throw error;
+    return { capability: "failed", failure: "network" };
+  }
   if (res.status === 503) return { capability: "unavailable" };
   if (res.status === 404) return { capability: "not-found" };
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Failed to load the share code (${res.status}): ${body}`);
+  if (res.status === 401)
+    return { capability: "failed", failure: "signed-out" };
+  if (res.status === 403) return { capability: "failed", failure: "forbidden" };
+  if (res.status === 400) {
+    return { capability: "failed", failure: "invalid-name" };
   }
-  const data = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) return { capability: "failed", failure: "server" };
+  const data = (await res.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null;
+  return (
+    parseShareCodeResponse(data) ?? {
+      capability: "failed",
+      failure: "server",
+    }
+  );
+}
+
+/** Read a 200 body into the wire type, or null when it isn't one. */
+export function parseShareCodeResponse(
+  data: Record<string, unknown> | null
+): ModeShareCodeResponse | null {
+  if (data === null) return null;
   switch (data.capability) {
     case "absent":
       return { capability: "absent", home: data.home === true };
@@ -80,19 +92,25 @@ export async function getModeShareCode(
     case "unknown-home-org":
       return {
         capability: "unknown-home-org",
-        homeOrg: typeof data.home_org === "string" ? data.home_org : "",
+        home_org: typeof data.home_org === "string" ? data.home_org : "",
       };
     case "present":
+      if (data.code !== null && typeof data.code !== "string") return null;
+      if (typeof data.resolves !== "boolean") return null;
       return {
         capability: "present",
-        code: typeof data.code === "string" ? data.code : null,
-        resolves: data.resolves === true,
+        code: data.code,
+        resolves: data.resolves,
         ...(typeof data.reason === "string" ? { reason: data.reason } : {}),
         ...(typeof data.resolved_org === "string"
-          ? { resolvedOrg: data.resolved_org }
+          ? { resolved_org: data.resolved_org }
           : {}),
+        ...(typeof data.home_has_modes === "boolean"
+          ? { home_has_modes: data.home_has_modes }
+          : {}),
+        home_org: typeof data.home_org === "string" ? data.home_org : "",
       };
     default:
-      throw new Error("Malformed share-code response");
+      return null;
   }
 }

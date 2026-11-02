@@ -7,8 +7,6 @@ const SAME_ORIGIN_HEADERS = {
 export interface ShareConfig {
   /** Operator-entered WhatsApp number, not yet normalised. `null` = unset. */
   whatsappNumber: string | null;
-  /** Org the WhatsApp gateway is pinned to. `null` = unknown. */
-  whatsappOrg: string | null;
 }
 
 // Feature-detected: a portal build that predates the route answers 404, and
@@ -37,7 +35,6 @@ export async function getShareConfig(
     supported: true,
     config: {
       whatsappNumber: stringOrNull(data.whatsapp_number),
-      whatsappOrg: stringOrNull(data.whatsapp_org),
     },
   };
 }

@@ -107,6 +107,13 @@ describe("share-code route — scoping", () => {
     );
   });
 
+  it("answers 400, not a 500, on a malformed escape in the mode name", async () => {
+    const spy = workerReplies({});
+    const res = await call({ path: "/api/config/modes/%E0%A4%A/share-code" });
+    expect(res.status).toBe(400);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("is GET only", async () => {
     const spy = workerReplies({});
     const res = await call({ method: "POST" });
@@ -138,14 +145,34 @@ describe("share-code route — mapping the worker's answer", () => {
       resolves: false,
       reason: "collision",
       resolved_org: "pbt",
+      home_org: GATEWAY,
     });
   });
 
-  it("passes an unknown future reason through for the panel to treat generically", async () => {
-    workerReplies({ code: "pbt/x", resolves: false, reason: "pending" });
+  it("passes home_has_modes through when the worker sends a boolean", async () => {
+    workerReplies({ code: "pbt/x", resolves: true, home_has_modes: false });
     expect(await (await call()).json()).toMatchObject({
       capability: "present",
-      reason: "pending",
+      home_has_modes: false,
+      home_org: GATEWAY,
+    });
+    vi.restoreAllMocks();
+    // A non-boolean is ignored rather than failing the answer.
+    workerReplies({ code: "pbt/x", resolves: true, home_has_modes: "no" });
+    const body = (await (await call()).json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("home_has_modes");
+    expect(body.capability).toBe("present");
+  });
+
+  it("passes an unknown future reason through for the panel to treat generically", async () => {
+    workerReplies({
+      code: "pbt/x",
+      resolves: false,
+      reason: "some_future_reason",
+    });
+    expect(await (await call()).json()).toMatchObject({
+      capability: "present",
+      reason: "some_future_reason",
     });
   });
 
@@ -196,13 +223,26 @@ describe("share-code route — mapping the worker's answer", () => {
     expect(await padded.json()).toEqual({ capability: "absent", home: false });
   });
 
-  it("maps 503 to 503 for the panel's retry state", async () => {
-    workerReplies({ error: "modes_unavailable" }, 503);
+  it("maps every 503 detail to 503, the panel's retry state", async () => {
+    // Final #477 contract: 503 {error:'modes_unavailable', detail, message}.
+    for (const detail of ["list_failed", "read_failed", "listing_lag"]) {
+      workerReplies(
+        { error: "modes_unavailable", detail, message: "try later" },
+        503
+      );
+      expect((await call()).status, detail).toBe(503);
+      vi.restoreAllMocks();
+    }
+    // ...and a 503 with no readable body.
+    workerReplies("Service Unavailable", 503);
     expect((await call()).status).toBe(503);
   });
 
   it("maps 400 unknown_home_org to its own config state", async () => {
-    workerReplies({ error: "unknown_home_org" }, 400);
+    workerReplies(
+      { error: "unknown_home_org", message: "no modes for home org" },
+      400
+    );
     const res = await call();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
