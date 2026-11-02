@@ -9,6 +9,7 @@ import {
   type RightsField,
 } from "./rights-migration";
 import type { LanguageRights, SessionData } from "./types";
+import { handleModeShareCode } from "./share-config";
 
 // `undefined` is the back-compat default for users predating the rights
 // system (and for fields the worker hasn't lazy-migrated into yet — see
@@ -1141,6 +1142,26 @@ export async function handleConfig(
 
   // /api/config/modes/{name} → GET (any session) / PUT/DELETE (per-mode
   // verb-perms, admin-trump)
+  // /api/config/modes/{name}/share-code → GET (#345). Matched BEFORE the
+  // generic mode route, whose `(.+)` would capture `{name}/share-code` as
+  // a mode name. A read, scoped exactly like the mode GET below: any
+  // session for its own org, super-admins cross-org (`resolveOrg`). The
+  // RAW resolved org goes to the worker, so it reads the same key the
+  // mode GET does.
+  const modeShareCodeMatch = pathname.match(
+    /^\/api\/config\/modes\/([^/]+)\/share-code$/
+  );
+  if (modeShareCodeMatch?.[1]) {
+    if (request.method !== "GET") {
+      return errorResponse("Method not allowed", 405);
+    }
+    return handleModeShareCode(
+      env,
+      resolved.org,
+      decodeURIComponent(modeShareCodeMatch[1])
+    );
+  }
+
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);
   if (modeMatch?.[1]) {
     const modeName = decodeURIComponent(modeMatch[1]);

@@ -13,6 +13,8 @@ import type { ModeFlags } from "@/lib/mode-flags";
 import {
   buildModeShareFilename,
   resolveModeSharePanelState,
+  shownTrigger,
+  validateModeShareSlug,
   type ModeSharePanelState,
 } from "@/lib/mode-share-link";
 import {
@@ -25,6 +27,7 @@ import {
 } from "@/lib/mode-share-qr";
 import { humanizeModeSlug } from "@/lib/mode-slug";
 import { cn } from "@/lib/utils";
+import { useModeShareCode } from "@/hooks/use-mode-share-code";
 import { useShareConfig } from "@/hooks/use-share-config";
 import { Button } from "@/components/ui/button";
 import {
@@ -108,6 +111,14 @@ export function ModeSharePanel({
   // Fetch only once the panel has been opened; the result is cached for
   // the session, so later opens are instant.
   const shareConfig = useShareConfig(open);
+  // The worker's answer for which code opens this mode (#345). Not asked
+  // for a slug the panel refuses on its own (it would only 400).
+  const shareCode = useModeShareCode(
+    open && validateModeShareSlug(modeName) === "ok",
+    modeName,
+    org,
+    flags
+  );
 
   const state = useMemo<ModeSharePanelState>(() => {
     const data = shareConfig.data;
@@ -117,7 +128,11 @@ export function ModeSharePanel({
         error: shareConfig.isError,
         supported: data?.supported === true,
         whatsappNumber: data?.supported ? data.config.whatsappNumber : null,
-        whatsappOrg: data?.supported ? data.config.whatsappOrg : null,
+      },
+      {
+        pending: shareCode.isPending,
+        error: shareCode.isError,
+        data: shareCode.data,
       },
       flags,
       org,
@@ -127,6 +142,9 @@ export function ModeSharePanel({
     flags,
     modeName,
     org,
+    shareCode.data,
+    shareCode.isError,
+    shareCode.isPending,
     shareConfig.data,
     shareConfig.isError,
     shareConfig.isPending,
@@ -141,10 +159,12 @@ export function ModeSharePanel({
     !(shareConfig.data?.supported && shareConfig.data.config.whatsappNumber);
 
   const title = modeLabel?.trim() || humanizeModeSlug(modeName);
-  // What every surface shows (card, QR label, SVG title, copy). Null
-  // until the target org is decided: never a bare trigger for a mode that
-  // might be a partner org's.
-  const { trigger, partnerOrg } = state;
+  // What every surface shows (card, QR label, SVG title, copy): only ever
+  // a code the worker returned (or a home mode's bare slug on a worker
+  // without the share-code route). Null otherwise, so no guessed trigger.
+  const shown = shownTrigger(state);
+  const trigger = shown?.trigger ?? null;
+  const partnerOrg = shown?.partnerOrg ?? null;
 
   const ready = state.kind === "ready";
   const matrix = useMemo(
@@ -308,7 +328,7 @@ export function ModeSharePanel({
           aria-busy={state.kind === "loading"}
           className="text-muted-foreground -mt-2 text-sm"
         >
-          {describe(state, org, modeName)}
+          {describe(state, modeName)}
         </p>
 
         {/* The card. Always white, in dark mode too: it is the thing that
@@ -373,12 +393,15 @@ export function ModeSharePanel({
           )}
         </div>
 
-        {state.kind === "error" && (
+        {(state.kind === "error" || state.kind === "unavailable") && (
           <div className="flex justify-center">
             <Button
               size="sm"
               variant="outline"
-              onClick={() => void shareConfig.refetch()}
+              onClick={() => {
+                if (shareConfig.isError) void shareConfig.refetch();
+                void shareCode.refetch();
+              }}
             >
               Try again
             </Button>
@@ -501,33 +524,46 @@ function QrSvg({
   );
 }
 
-function describe(
-  state: ModeSharePanelState,
-  org: string | null,
-  modeName: string
-) {
-  const { trigger } = state;
+function describe(state: ModeSharePanelState, modeName: string): string {
   switch (state.kind) {
     case "loading":
       return "Checking the WhatsApp settings…";
     case "error":
       return "Couldn't load the WhatsApp settings.";
+    case "unavailable":
+      return "BT Servant couldn't check this mode's code just now. Try again in a moment.";
+    case "not-found":
+      return "BT Servant couldn't find this mode. Reload the page and try again.";
     case "unconfigured":
       return "WhatsApp number not configured. Set WHATSAPP_NUMBER for this environment to generate share codes.";
     case "number-invalid":
       return "The configured WhatsApp number isn't a valid E.164 number. Check WHATSAPP_NUMBER for this environment.";
+    case "org-unconfigured":
+      return "WhatsApp's org isn't configured for this environment. Set WHATSAPP_ORG to generate share codes.";
+    case "home-org-unknown":
+      return `WhatsApp's org (${state.homeOrg}) has no modes. Check WHATSAPP_ORG for this environment.`;
+    case "upgrade-needed":
+      return "Share codes for other orgs' modes need a newer BT Servant version.";
     case "slug-invalid":
       return "This mode's name can't be encoded as a trigger. Rename it to lowercase letters, digits, and hyphens to share it by QR.";
     case "slug-reserved":
-      return state.partnerOrg
-        ? `“${modeName}” is a reserved word — on WhatsApp, #${modeName} takes a user out of their mode. ${trigger ?? ""} would still work, but modes with this name aren't shared by QR from any org. Rename the mode to share it.`
-        : `“${trigger ?? ""}” is reserved — WhatsApp users type it to leave a mode, so a code for it would switch them off instead of on. Rename the mode to share it by QR.`;
-    case "org-unknown":
-      return state.missing === "gateway"
-        ? "WhatsApp's org isn't configured for this environment, so the panel can't tell which code opens this mode. Set WHATSAPP_ORG to generate share codes."
-        : "Couldn't tell which org this mode belongs to, so no code is shown. Reload the page and try again.";
+      return `“${modeName}” is a reserved word — on WhatsApp, #${modeName} takes a user out of their mode, so modes with this name aren't shared by QR. Rename the mode to share it.`;
     case "org-unencodable":
-      return `This mode can't get a WhatsApp code. Its org name, “${state.org || org || ""}”, needs at least one letter or digit, and at most 64 characters once spaces and punctuation become hyphens.`;
+      return "This mode can't get a WhatsApp code: its org name needs at least one letter or digit.";
+    case "org-skipped":
+      return `BT Servant on WhatsApp doesn't read this org's modes, so ${state.trigger} wouldn't open this one.`;
+    case "collision":
+      return state.resolvedOrg
+        ? `${state.trigger} opens ${state.resolvedOrg}'s mode, not this one. Rename the mode or ask unfoldingWord to rename an org.`
+        : `${state.trigger} opens another org's mode, not this one. Rename the mode or ask unfoldingWord to rename an org.`;
+    case "ambiguous":
+      return state.resolvedOrg
+        ? `${state.trigger} opens a different mode from ${state.resolvedOrg}, not this one. Rename the mode to share it by QR.`
+        : `${state.trigger} opens a different mode, not this one. Rename the mode to share it by QR.`;
+    case "capped":
+      return "WhatsApp can't reach this org's modes yet. For now BT Servant reads a limited number of orgs, and this one isn't included. unfoldingWord can tell you more.";
+    case "unresolved":
+      return `BT Servant on WhatsApp doesn't open this mode with ${state.trigger}. Ask unfoldingWord to check the mode.`;
     case "group-only":
       return "Group chat only. This mode is hidden from WhatsApp direct messages — turn off “Requires group chat” to share it by QR.";
     case "draft":
@@ -544,18 +580,32 @@ function placeholderLabel(state: ModeSharePanelState): string {
     case "loading":
       return "Loading";
     case "error":
+    case "unavailable":
       return "Unavailable";
+    case "not-found":
+      return "Mode not found";
     case "unconfigured":
       return "Number not configured";
     case "number-invalid":
       return "Number invalid";
+    case "org-unconfigured":
+    case "home-org-unknown":
+      return "Org not configured";
+    case "upgrade-needed":
+      return "Needs a newer version";
     case "slug-invalid":
     case "slug-reserved":
       return "Can't encode this name";
     case "org-unencodable":
       return "Can't encode this org";
-    case "org-unknown":
-      return "Org not known";
+    case "org-skipped":
+    case "unresolved":
+      return "Not reachable";
+    case "collision":
+    case "ambiguous":
+      return "Opens another mode";
+    case "capped":
+      return "Not reachable yet";
     case "group-only":
       return "Group chat only";
     case "draft":
