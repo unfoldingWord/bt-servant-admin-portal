@@ -8,7 +8,7 @@ import {
   modeQueryKeys,
   saveModeMutationOptions,
 } from "../src/hooks/use-prompt-config";
-import { MODE_SHARE_CODE_KEY } from "../src/hooks/use-mode-share-code";
+import { MODE_SHARE_CODE_KEY } from "../src/lib/mode-share-code-api";
 import type { OrgModes, PromptMode } from "../src/types/prompt-override";
 
 // Regression for the #232 review (PR #238): after a successful rename the

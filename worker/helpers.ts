@@ -25,9 +25,9 @@ export function errorResponse(message: string, status: number): Response {
 
 /**
  * `decodeURIComponent` for a path segment, or null when the segment holds a
- * malformed escape (`%E0%A4%A`). That is the caller's error, so routes
- * answer 400 (`invalidModeNameResponse`) instead of letting the URIError
- * become a 500.
+ * malformed escape (`%E0%A4%A`). That is the caller's error, so every
+ * /api/config route that decodes a segment answers 400 instead of letting
+ * the URIError become a 500.
  */
 export function safeDecode(segment: string): string | null {
   try {

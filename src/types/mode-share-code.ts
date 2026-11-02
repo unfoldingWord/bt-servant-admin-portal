@@ -64,6 +64,8 @@ export const SHARE_CODE_ERRORS = {
   corruptModesRecord: "corrupt_modes_record",
   /** 400 from the worker: the mode name fails its pattern. */
   invalidModeName: "invalid_mode_name",
+  /** 400 from the worker: `:org` or `home_org` is empty or too long for a KV key. */
+  invalidOrg: "invalid_org",
 } as const;
 
 /**

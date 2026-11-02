@@ -14,12 +14,12 @@ import {
   buildModeShareFilename,
   resolveModeSharePanelState,
   homeOrgWithoutModes,
-  isTransientShareCode,
-  shareCodeToShow,
+  refreshFailed,
+  retryControl,
   shownTrigger,
   validateModeShareSlug,
   type ModeSharePanelState,
-  type ShareCodeSnapshot,
+  type RetryTarget,
 } from "@/lib/mode-share-link";
 import {
   QR_DARK,
@@ -32,8 +32,8 @@ import {
 import { humanizeModeSlug } from "@/lib/mode-slug";
 import { cn } from "@/lib/utils";
 import type {
-  ModeShareCode,
   ShareCodeFailure,
+  ShareCodeTransient,
 } from "@/lib/mode-share-code-api";
 import { useModeShareCode } from "@/hooks/use-mode-share-code";
 import { useShareConfig } from "@/hooks/use-share-config";
@@ -121,57 +121,13 @@ export function ModeSharePanel({
   const shareConfig = useShareConfig(open);
   // The worker's answer for which code opens this mode (#345). Not asked
   // for a slug the panel refuses on its own (it would only 400).
-  const { query: shareCode, autoRetried } = useModeShareCode(
+  const shareCode = useModeShareCode(
     open && validateModeShareSlug(modeName) === "ok",
     modeName,
     org,
     flags
   );
-
-  // First load vs background refresh (see ShareCodeSnapshot): once an
-  // answer has been shown in this open, later fetches don't blank it, and
-  // a failed one keeps the last answer. Both reset on close, so a reopen
-  // past the stale time gates on "checking" again.
-  const [shownThisOpen, setShownThisOpen] = useState(false);
-  const [lastShown, setLastShown] = useState<ModeShareCode | undefined>();
-  useEffect(() => {
-    if (!open) {
-      setShownThisOpen(false);
-      setLastShown(undefined);
-      return;
-    }
-    if (shareCode.isPending || shareCode.data === undefined) return;
-    if (shareCode.isFetching && !shownThisOpen) return;
-    setShownThisOpen(true);
-    if (!isTransientShareCode(shareCode.data)) setLastShown(shareCode.data);
-  }, [
-    open,
-    shareCode.data,
-    shareCode.isFetching,
-    shareCode.isPending,
-    shownThisOpen,
-  ]);
-
-  const shareCodeSnapshot = useMemo<ShareCodeSnapshot>(
-    () => ({
-      pending: shareCode.isPending,
-      fetching: shareCode.isFetching,
-      error: shareCode.isError,
-      data: shareCode.data,
-      shownThisOpen,
-      lastShown,
-      autoRetried,
-    }),
-    [
-      autoRetried,
-      lastShown,
-      shareCode.data,
-      shareCode.isError,
-      shareCode.isFetching,
-      shareCode.isPending,
-      shownThisOpen,
-    ]
-  );
+  const shareCodeSnapshot = shareCode.snapshot;
 
   const state = useMemo<ModeSharePanelState>(() => {
     const data = shareConfig.data;
@@ -208,30 +164,42 @@ export function ModeSharePanel({
     (state.kind === "draft" || state.kind === "group-only") &&
     !(shareConfig.data?.supported && shareConfig.data.config.whatsappNumber);
 
-  // Notes beside the state, once something is shown.
-  const shownAnswer = shareCodeToShow(shareCodeSnapshot);
-  const settled = state.kind !== "loading";
-  const emptyHomeOrg = settled ? homeOrgWithoutModes(shownAnswer.data) : null;
-  const refreshFailed = settled && shownAnswer.refreshFailed;
+  // Notes beside the state, only while an answer is on the card.
+  const emptyHomeOrg = shownTrigger(state)
+    ? homeOrgWithoutModes(shareCodeSnapshot.answer)
+    : null;
+  const showRefreshFailed = refreshFailed(state, shareCodeSnapshot);
 
-  // Try again re-asks only the query that failed: share-config for the
-  // settings error, the share code otherwise. Kept on screen, disabled and
-  // saying so, from the click until that refetch settles, so it can't queue
-  // repeated calls.
-  const retryConfig = state.kind === "error";
-  const retryFetching = retryConfig
-    ? shareConfig.isFetching
-    : shareCode.isFetching;
-  const [retrying, setRetrying] = useState(false);
+  // Try again (see `retryControl`): which query it re-asks, and whether a
+  // re-ask it started is still running. The target is cleared only after
+  // its fetch has been seen running and then settles, so a click can't be
+  // lost to the render before the refetch registers.
+  const [retryTarget, setRetryTarget] = useState<RetryTarget | null>(null);
+  const targetFetching =
+    retryTarget === "config"
+      ? shareConfig.isFetching
+      : retryTarget === "share-code"
+        ? shareCode.retrying
+        : false;
+  const sawRetryFetching = useRef(false);
   useEffect(() => {
-    if (!retryFetching) setRetrying(false);
-  }, [retryFetching]);
-  const retryable =
-    state.kind === "error" ||
-    state.kind === "unavailable" ||
-    state.kind === "out-of-sync" ||
-    (state.kind === "failed" &&
-      (state.failure === "server" || state.failure === "network"));
+    if (!open) {
+      sawRetryFetching.current = false;
+      setRetryTarget(null);
+      return;
+    }
+    if (retryTarget === null) return;
+    if (targetFetching) {
+      sawRetryFetching.current = true;
+    } else if (sawRetryFetching.current) {
+      sawRetryFetching.current = false;
+      setRetryTarget(null);
+    }
+  }, [open, retryTarget, targetFetching]);
+  const retry = retryControl(state, shareCodeSnapshot, {
+    target: retryTarget,
+    fetching: targetFetching,
+  });
 
   const title = modeLabel?.trim() || humanizeModeSlug(modeName);
   // What every surface shows (card, QR label, SVG title, copy): only ever
@@ -468,19 +436,19 @@ export function ModeSharePanel({
           )}
         </div>
 
-        {(retryable || (retrying && retryFetching)) && (
+        {retry && (
           <div className="flex justify-center">
             <Button
               size="sm"
               variant="outline"
-              disabled={retryFetching}
+              disabled={retry.busy}
               onClick={() => {
-                setRetrying(true);
-                if (retryConfig) void shareConfig.refetch();
-                else void shareCode.refetch();
+                setRetryTarget(retry.target);
+                if (retry.target === "config") void shareConfig.refetch();
+                else shareCode.retry();
               }}
             >
-              {retryFetching ? "Checking…" : "Try again"}
+              {retry.busy ? "Checking…" : "Try again"}
             </Button>
           </div>
         )}
@@ -520,7 +488,7 @@ export function ModeSharePanel({
           </div>
         )}
 
-        {refreshFailed && (
+        {showRefreshFailed && (
           <p className="text-muted-foreground text-xs">
             Couldn&rsquo;t re-check just now. This is BT Servant&rsquo;s last
             answer.
@@ -621,8 +589,8 @@ function describe(state: ModeSharePanelState, modeName: string): string {
       return "Checking the WhatsApp settings…";
     case "error":
       return "Couldn't load the WhatsApp settings.";
-    case "unavailable":
-      return "BT Servant couldn't check this mode's code just now. Try again in a moment.";
+    case "retry":
+      return describeTransient(state.cause);
     case "failed":
       return describeFailure(state.failure);
     case "code-unencodable":
@@ -677,7 +645,7 @@ function placeholderLabel(state: ModeSharePanelState): string {
     case "loading":
       return "Loading";
     case "error":
-    case "unavailable":
+    case "retry":
       return "Unavailable";
     case "not-found":
       return "Mode not found";
@@ -733,6 +701,13 @@ function describeFailure(failure: ShareCodeFailure): string {
       return "BT Servant couldn't read this request. Reload the page and try again.";
     case "corrupt-record":
       return "This org's modes record is damaged, so the code can't be checked. Ask unfoldingWord to repair it.";
+  }
+}
+
+function describeTransient(cause: ShareCodeTransient): string {
+  switch (cause) {
+    case "unavailable":
+      return "BT Servant couldn't check this mode's code just now. Try again in a moment.";
     case "server":
       return "BT Servant had a problem checking this mode's code. Try again.";
     case "network":

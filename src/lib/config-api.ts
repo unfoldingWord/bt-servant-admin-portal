@@ -5,10 +5,7 @@ import type {
   PromptMode,
   PromptOverrides,
 } from "@/types/prompt-override";
-
-const SAME_ORIGIN_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-} as const;
+import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
 // ---------------------------------------------------------------------------
 // Org-level prompt overrides

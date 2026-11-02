@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { useCallback } from "react";
 
-import { MODE_SHARE_CODE_KEY } from "@/hooks/use-mode-share-code";
+import { MODE_SHARE_CODE_KEY } from "@/lib/mode-share-code-api";
 import * as configApi from "@/lib/config-api";
 import type {
   OrgModes,

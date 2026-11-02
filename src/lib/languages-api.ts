@@ -4,10 +4,7 @@ import type {
   OrgDefaultLanguage,
   OrgLanguages,
 } from "@/types/language";
-
-const SAME_ORIGIN_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-} as const;
+import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
 // Thrown when the worker (or engine) returns 403 on a language operation.
 // Callers should catch this to render an inline permission message rather

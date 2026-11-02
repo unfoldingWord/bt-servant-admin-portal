@@ -31,6 +31,7 @@ import { sanitizeFilenamePart } from "@/lib/mode-export";
 import type {
   ModeShareCode,
   ShareCodeFailure,
+  ShareCodeTransient,
 } from "@/lib/mode-share-code-api";
 
 export const WA_ME_ORIGIN = "https://wa.me";
@@ -211,26 +212,26 @@ export interface ShareConfigSnapshot {
   whatsappNumber: string | null;
 }
 
-/** What the share-code query currently knows. */
+/**
+ * What the share-code query currently knows, as `useModeShareCode` derives
+ * it (that hook owns the TanStack details).
+ */
 export interface ShareCodeSnapshot {
-  pending: boolean;
-  /** A (re)fetch is in flight. */
-  fetching: boolean;
-  /** The query threw (the client maps HTTP outcomes itself; this is a bug or crash). */
-  error: boolean;
-  data: ModeShareCode | undefined;
   /**
-   * An answer has already been shown since the panel opened. Before that,
-   * a fetch gates the panel on "checking" (first load, or a reopen past
-   * the stale time: never Copy/Download on an answer being replaced).
-   * After it, a fetch is a background refresh and the panel keeps showing
-   * what it has.
+   * The answer that is current for this open of the panel: fresh when it
+   * opened, or fetched since. A refetch keeps it (also when the refetch
+   * fails); a stale cached answer from before the open is not current.
    */
-  shownThisOpen: boolean;
-  /** The last non-transient answer shown since the panel opened. */
-  lastShown: ModeShareCode | undefined;
-  /** The one automatic re-ask after a flags disagreement has already run. */
-  autoRetried: boolean;
+  answer: ModeShareCode | undefined;
+  /** No current answer yet and a fetch is in flight: first load or reopen. */
+  checking: boolean;
+  /** The last fetch failed transiently (with or without a current answer). */
+  failure: ShareCodeTransient | null;
+  /**
+   * The worker's answer against the mode's flags: they agree, a re-read of
+   * both is pending or running, or they still disagree after it.
+   */
+  sync: "agree" | "checking" | "behind";
 }
 
 /** A state that shows a code: what it pre-fills, and whose mode it is. */
@@ -249,7 +250,7 @@ interface Shown {
 export type ModeSharePanelState =
   | { kind: "loading" }
   | { kind: "error" }
-  | { kind: "unavailable" }
+  | { kind: "retry"; cause: ShareCodeTransient }
   | { kind: "failed"; failure: ShareCodeFailure }
   | { kind: "not-found" }
   | { kind: "slug-invalid" }
@@ -279,19 +280,6 @@ export function shownTrigger(state: ModeSharePanelState): Shown | null {
 }
 
 /**
- * Answers worth replacing as soon as possible: a 503, a server error or a
- * network failure. Never cached past their arrival, and never allowed to
- * replace a good answer during a background refresh.
- */
-export function isTransientShareCode(data: ModeShareCode | undefined): boolean {
-  return (
-    data?.capability === "unavailable" ||
-    (data?.capability === "failed" &&
-      (data.failure === "server" || data.failure === "network"))
-  );
-}
-
-/**
  * Whether the worker's answer contradicts the flags the page just saved:
  * it says draft while the page says published (or the reverse), or the
  * same for group-only. The worker checks published, then requires_group,
@@ -315,19 +303,44 @@ export function shareCodeDisagreesWithFlags(
 }
 
 /**
- * The answer to render: the query's, except that a transient failure
- * during a background refresh keeps the last answer shown.
+ * A background refresh failed while an answer is on the card: the panel
+ * keeps the answer and adds a note with Try again.
  */
-export function shareCodeToShow(snapshot: ShareCodeSnapshot): {
-  data: ModeShareCode | undefined;
-  /** True when a background refresh failed and the last answer is kept. */
-  refreshFailed: boolean;
-} {
-  const { data, lastShown, shownThisOpen } = snapshot;
-  if (shownThisOpen && lastShown && isTransientShareCode(data)) {
-    return { data: lastShown, refreshFailed: true };
+export function refreshFailed(
+  state: ModeSharePanelState,
+  shareCode: ShareCodeSnapshot
+): boolean {
+  return shownTrigger(state) !== null && shareCode.failure !== null;
+}
+
+/** Which query a Try again re-asks. */
+export type RetryTarget = "config" | "share-code";
+
+/**
+ * The Try again control: shown for a retryable state (the settings error
+ * re-asks share-config; everything else the share code, with the mode
+ * record when they disagreed), and for a background refresh that failed
+ * under an answer on the card. Once clicked it stays on screen, disabled
+ * ("Checking…"), until that re-ask settles, even though the state behind
+ * it may turn to "loading" meanwhile, so it can't queue repeated calls.
+ */
+export function retryControl(
+  state: ModeSharePanelState,
+  shareCode: ShareCodeSnapshot,
+  inFlight: { target: RetryTarget | null; fetching: boolean }
+): { target: RetryTarget; busy: boolean } | null {
+  if (inFlight.target !== null && inFlight.fetching) {
+    return { target: inFlight.target, busy: true };
   }
-  return { data, refreshFailed: false };
+  if (state.kind === "error") return { target: "config", busy: false };
+  if (
+    state.kind === "retry" ||
+    state.kind === "out-of-sync" ||
+    refreshFailed(state, shareCode)
+  ) {
+    return { target: "share-code", busy: false };
+  }
+  return null;
 }
 
 /**
@@ -380,22 +393,16 @@ export function resolveModeSharePanelState(
 ): ModeSharePanelState {
   const slugVerdict = validateModeShareSlug(modeName);
   if (slugVerdict !== "ok") return { kind: slugVerdict };
-  if (
-    config.pending ||
-    config.fetching ||
-    shareCode.pending ||
-    (shareCode.fetching && !shareCode.shownThisOpen)
-  ) {
-    return { kind: "loading" };
-  }
+  if (config.pending || config.fetching) return { kind: "loading" };
   if (config.error) return { kind: "error" };
-  const { data: answer } = shareCodeToShow(shareCode);
-  if (shareCode.error || !answer) return { kind: "failed", failure: "server" };
+  const { answer } = shareCode;
+  if (answer === undefined) {
+    if (shareCode.checking) return { kind: "loading" };
+    return { kind: "retry", cause: shareCode.failure ?? "server" };
+  }
   const number = config.supported ? config.whatsappNumber : null;
 
   switch (answer.capability) {
-    case "unavailable":
-      return { kind: "unavailable" };
     case "failed":
       return { kind: "failed", failure: answer.failure };
     case "not-found":
@@ -413,8 +420,10 @@ export function resolveModeSharePanelState(
       return withNumber(buildShareLinkFromCode(number, modeName), shown);
     }
     case "present":
-      if (shareCodeDisagreesWithFlags(answer, flags)) {
-        return { kind: shareCode.autoRetried ? "out-of-sync" : "syncing" };
+      if (shareCode.sync !== "agree") {
+        return {
+          kind: shareCode.sync === "behind" ? "out-of-sync" : "syncing",
+        };
       }
       return fromWorkerAnswer(answer, number, modeOrg);
     default:

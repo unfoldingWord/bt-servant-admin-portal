@@ -12,12 +12,15 @@ import {
   SHARE_CODE_ERRORS,
   type ModeShareCodeResponse,
 } from "@/types/mode-share-code";
+import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
-const SAME_ORIGIN_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-} as const;
+/** Root of every share-code query, for invalidation after mode writes. */
+export const MODE_SHARE_CODE_KEY = ["mode-share-code"] as const;
 
-/** Why the share-code request itself failed, so the panel can say so. */
+/**
+ * A definite reason the share-code request can't give an answer. These
+ * are answers too (data): retrying won't change them.
+ */
 export type ShareCodeFailure =
   /** 401: the session has ended. */
   | "signed-out"
@@ -25,26 +28,44 @@ export type ShareCodeFailure =
   | "forbidden"
   /** 400 `invalid_mode_name` (worker), or a path the BFF couldn't decode. */
   | "invalid-name"
-  /** 400 from the BFF's org resolution (`Invalid org…`). */
+  /** 400 `invalid_org` (worker), or the BFF's org resolution (`Invalid org…`). */
   | "org-invalid"
   /** Any other 400. */
   | "bad-request"
   /** 500 `corrupt_modes_record`: permanent until the record is repaired. */
-  | "corrupt-record"
+  | "corrupt-record";
+
+/** A transient outcome worth retrying. */
+export type ShareCodeTransient =
+  /** 503: the worker couldn't list or read modes just now. */
+  | "unavailable"
   /** Other 5xx, or a body this client can't read. */
   | "server"
   /** The request never got an answer. */
   | "network";
 
 /**
- * Everything a share-code request can come back as: one of the route's
- * 200 bodies (the shared wire type), or a state this client derives from
- * the status.
+ * Thrown for a transient outcome, so TanStack Query treats it as a failed
+ * fetch: on a refetch it keeps the last answer (`isRefetchError`), and the
+ * panel offers Try again.
+ */
+export class ShareCodeRequestError extends Error {
+  readonly kind: ShareCodeTransient;
+  constructor(kind: ShareCodeTransient) {
+    super(`Share code request failed: ${kind}`);
+    this.name = "ShareCodeRequestError";
+    this.kind = kind;
+  }
+}
+
+/**
+ * Every definite answer a share-code request can come back with: one of
+ * the route's 200 bodies (the shared wire type), or a state this client
+ * derives from a definite error status. Transient outcomes are thrown
+ * (`ShareCodeRequestError`), not returned.
  */
 export type ModeShareCode =
   | ModeShareCodeResponse
-  /** 503: the worker couldn't list or read modes just now; worth a retry. */
-  | { capability: "unavailable" }
   /** 404 `mode_not_found`: no such mode in this org. */
   | { capability: "not-found" }
   | { capability: "failed"; failure: ShareCodeFailure };
@@ -66,30 +87,37 @@ export async function getModeShareCode(
   } catch (error) {
     // A cancelled query must stay a cancellation, not a "network" state.
     if (signal?.aborted) throw error;
-    return { capability: "failed", failure: "network" };
+    throw new ShareCodeRequestError("network");
   }
   const data = (await res.json().catch(() => null)) as Record<
     string,
     unknown
   > | null;
   const error = typeof data?.error === "string" ? data.error : "";
-  if (res.status === 503) return { capability: "unavailable" };
+  if (res.status === 503) throw new ShareCodeRequestError("unavailable");
   if (res.status === 404) return { capability: "not-found" };
-  if (!res.ok)
-    return { capability: "failed", failure: failureFor(res.status, error) };
-  return (
-    parseShareCodeResponse(data) ?? { capability: "failed", failure: "server" }
-  );
+  if (!res.ok) {
+    const failure = definiteFailure(res.status, error);
+    if (failure === null) throw new ShareCodeRequestError("server");
+    return { capability: "failed", failure };
+  }
+  const parsed = parseShareCodeResponse(data);
+  if (parsed === null) throw new ShareCodeRequestError("server");
+  return parsed;
 }
 
-/** Name a non-OK, non-404/503 answer by its status and error body. */
-function failureFor(status: number, error: string): ShareCodeFailure {
+/** Name a definite failure by status and error body, or null when it's transient. */
+function definiteFailure(
+  status: number,
+  error: string
+): ShareCodeFailure | null {
   if (status === 401) return "signed-out";
   if (status === 403) return "forbidden";
   if (status === 400) {
     if (error === SHARE_CODE_ERRORS.invalidModeName) return "invalid-name";
     // The BFF's own 400 for a path segment it couldn't decode.
     if (error === "Invalid mode name") return "invalid-name";
+    if (error === SHARE_CODE_ERRORS.invalidOrg) return "org-invalid";
     // The BFF's resolveOrg: "Invalid org parameter" / "Invalid org".
     if (error.startsWith("Invalid org")) return "org-invalid";
     return "bad-request";
@@ -97,7 +125,7 @@ function failureFor(status: number, error: string): ShareCodeFailure {
   if (status === 500 && error === SHARE_CODE_ERRORS.corruptModesRecord) {
     return "corrupt-record";
   }
-  return "server";
+  return null;
 }
 
 /** Read a 200 body into the wire type, or null when it isn't one. */

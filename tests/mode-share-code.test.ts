@@ -208,6 +208,46 @@ describe("share-code route — mapping the worker's answer", () => {
     expect(await home.json()).toEqual({ capability: "absent", home: true });
   });
 
+  it("never reads a JSON 404 other than mode_not_found as an older worker", async () => {
+    // Only a body without a JSON `error` (Hono's plain "404 Not Found") means
+    // the route is absent; anything else must not reach the bare-slug fallback.
+    workerReplies({ error: "something_else" }, 404);
+    const res = await call({ session: makeSession({ org: GATEWAY }) });
+    expect(res.status).toBe(502);
+    vi.restoreAllMocks();
+    workerReplies("", 404);
+    expect(
+      await (await call({ session: makeSession({ org: GATEWAY }) })).json()
+    ).toEqual({ capability: "absent", home: true });
+  });
+
+  it("uses a padded WHATSAPP_ORG exactly, for home_org and the home check", async () => {
+    const padded = { ...env, WHATSAPP_ORG: " unfoldingWord" } as Env;
+    const spy = workerReplies({ code: "x", resolves: true });
+    const res = await call({ env: padded });
+    expect(String(spy.mock.calls[0]![0])).toContain(
+      "home_org=%20unfoldingWord"
+    );
+    expect(await res.json()).toMatchObject({ home_org: " unfoldingWord" });
+    vi.restoreAllMocks();
+    workerReplies("404 Not Found", 404);
+    const homeExact = await call({
+      env: padded,
+      session: makeSession({ org: GATEWAY }),
+    });
+    expect(await homeExact.json()).toEqual({
+      capability: "absent",
+      home: false,
+    });
+  });
+
+  it("passes the worker's 400 invalid_org through for the org copy", async () => {
+    workerReplies({ error: "invalid_org", message: "too long" }, 400);
+    const res = await call();
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_org" });
+  });
+
   it("decides home on the exact org, like the worker", async () => {
     workerReplies("404 Not Found", 404);
     const padded = await call({
@@ -282,6 +322,28 @@ describe("mode routes — a malformed %-escape in the name is a 400, not a 500",
       });
       expect(res.status).toBe(400);
       expect(await res.json()).toEqual({ error: "Invalid mode name" });
+      expect(spy).not.toHaveBeenCalled();
+    });
+  }
+});
+
+describe("other /api/config routes — a malformed %-escape is a 400, not a 500", () => {
+  const BAD = "%E0%A4%A";
+  for (const [method, path, error] of [
+    ["GET", `/api/config/languages/${BAD}`, "Invalid language name"],
+    ["GET", `/api/config/user-mode/${BAD}`, "Invalid user ID"],
+    ["GET", `/api/config/user-memory/${BAD}`, "Invalid user ID"],
+    ["DELETE", `/api/config/mcp-servers/${BAD}`, "Invalid server id encoding"],
+  ] as const) {
+    it(`${method} ${path.replace(BAD, "<bad>")}`, async () => {
+      const spy = workerReplies({});
+      const res = await call({
+        method,
+        path,
+        session: makeSession({ isAdmin: true, isSuperAdmin: true }),
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error });
       expect(spy).not.toHaveBeenCalled();
     });
   }

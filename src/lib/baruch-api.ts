@@ -1,8 +1,5 @@
 import type { ChatHistoryResponse } from "@/types/chat";
-
-const SAME_ORIGIN_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-} as const;
+import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
 export async function streamBaruchChat(
   message: string,

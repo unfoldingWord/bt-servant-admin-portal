@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getModeShareCode } from "../src/lib/mode-share-code-api";
+import {
+  getModeShareCode,
+  ShareCodeRequestError,
+} from "../src/lib/mode-share-code-api";
 
 // #345 — client for GET /api/config/modes/{name}/share-code. Pins that
 // every HTTP outcome becomes a state the panel can name (none throws but a
@@ -61,21 +64,19 @@ describe("getModeShareCode", () => {
     });
   });
 
-  it("maps each status to its own state", async () => {
+  it("returns each definite failure as an answer", async () => {
     const cases: [number, unknown][] = [
-      [503, { error: "modes_unavailable", detail: "listing_lag" }],
       [404, { error: "mode_not_found" }],
       [401, { error: "Unauthorized" }],
       [403, { error: "Forbidden" }],
       [400, { error: "invalid_mode_name" }],
       [400, { error: "Invalid mode name" }],
+      [400, { error: "invalid_org", message: "too long for a KV key" }],
       [400, { error: "Invalid org parameter" }],
       [400, { error: "Invalid org" }],
       [400, { error: "bad_request" }],
       [400, "not json"],
       [500, { error: "corrupt_modes_record" }],
-      [502, { error: "Engine error" }],
-      [500, "boom"],
     ];
     const got = [];
     for (const [status, body] of cases) {
@@ -83,7 +84,6 @@ describe("getModeShareCode", () => {
       got.push(await getModeShareCode("x", null));
     }
     expect(got).toEqual([
-      { capability: "unavailable" },
       { capability: "not-found" },
       { capability: "failed", failure: "signed-out" },
       { capability: "failed", failure: "forbidden" },
@@ -91,15 +91,33 @@ describe("getModeShareCode", () => {
       { capability: "failed", failure: "invalid-name" },
       { capability: "failed", failure: "org-invalid" },
       { capability: "failed", failure: "org-invalid" },
+      { capability: "failed", failure: "org-invalid" },
       { capability: "failed", failure: "bad-request" },
       { capability: "failed", failure: "bad-request" },
       { capability: "failed", failure: "corrupt-record" },
-      { capability: "failed", failure: "server" },
-      { capability: "failed", failure: "server" },
     ]);
   });
 
-  it("treats a malformed 200 as a server failure", async () => {
+  it("throws a typed error for each transient outcome, so a refetch keeps the last answer", async () => {
+    const cases: [number, unknown, string][] = [
+      [
+        503,
+        { error: "modes_unavailable", detail: "listing_lag" },
+        "unavailable",
+      ],
+      [503, "Service Unavailable", "unavailable"],
+      [502, { error: "Engine error" }, "server"],
+      [500, "boom", "server"],
+    ];
+    for (const [status, body, kind] of cases) {
+      mockFetch(status, body);
+      const error = await getModeShareCode("x", null).catch((e: unknown) => e);
+      expect(error, `${status}`).toBeInstanceOf(ShareCodeRequestError);
+      expect((error as ShareCodeRequestError).kind).toBe(kind);
+    }
+  });
+
+  it("throws a server error for a malformed 200", async () => {
     for (const body of [
       "not json",
       { capability: "present", code: 7, resolves: true },
@@ -109,28 +127,25 @@ describe("getModeShareCode", () => {
       { capability: "who-knows" },
     ]) {
       mockFetch(200, body);
-      expect(await getModeShareCode("x", null)).toEqual({
-        capability: "failed",
-        failure: "server",
+      await expect(getModeShareCode("x", null)).rejects.toMatchObject({
+        kind: "server",
       });
     }
   });
 
-  it("names a failed request as network, but lets a cancellation stay one", async () => {
+  it("throws network for a failed request, but lets a cancellation stay one", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(
       new TypeError("Failed to fetch")
     );
-    expect(await getModeShareCode("x", null)).toEqual({
-      capability: "failed",
-      failure: "network",
+    await expect(getModeShareCode("x", null)).rejects.toMatchObject({
+      kind: "network",
     });
     const controller = new AbortController();
     controller.abort();
-    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(
-      new DOMException("Aborted", "AbortError")
+    const abort = new DOMException("Aborted", "AbortError");
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(abort);
+    await expect(getModeShareCode("x", null, controller.signal)).rejects.toBe(
+      abort
     );
-    await expect(
-      getModeShareCode("x", null, controller.signal)
-    ).rejects.toThrow();
   });
 });

@@ -1246,7 +1246,10 @@ export async function handleConfig(
   // (per-language verb-perms, admin-trump, super-admin cross-org bypass)
   const languageMatch = pathname.match(/^\/api\/config\/languages\/(.+)$/);
   if (languageMatch?.[1]) {
-    const languageName = decodeURIComponent(languageMatch[1]);
+    const languageName = safeDecode(languageMatch[1]);
+    if (languageName === null) {
+      return errorResponse("Invalid language name", 400);
+    }
     if (request.method === "PUT" || request.method === "DELETE") {
       const gate = await gateConfigMutation(
         request,
@@ -1277,8 +1280,8 @@ export async function handleConfig(
   // /api/config/user-mode/{userId} → PUT/DELETE (UUID v4 only)
   const userModeMatch = pathname.match(/^\/api\/config\/user-mode\/(.+)$/);
   if (userModeMatch?.[1]) {
-    const userId = decodeURIComponent(userModeMatch[1]);
-    if (!UUID_V4_RE.test(userId)) {
+    const userId = safeDecode(userModeMatch[1]);
+    if (userId === null || !UUID_V4_RE.test(userId)) {
       return errorResponse("Invalid user ID", 400);
     }
     return proxyToEngine(
@@ -1292,8 +1295,8 @@ export async function handleConfig(
   // /api/config/user-memory/{userId} → GET/DELETE (UUID v4 only)
   const userMemoryMatch = pathname.match(/^\/api\/config\/user-memory\/(.+)$/);
   if (userMemoryMatch?.[1]) {
-    const userId = decodeURIComponent(userMemoryMatch[1]);
-    if (!UUID_V4_RE.test(userId)) {
+    const userId = safeDecode(userMemoryMatch[1]);
+    if (userId === null || !UUID_V4_RE.test(userId)) {
       return errorResponse("Invalid user ID", 400);
     }
     return proxyToEngine(
@@ -1454,11 +1457,8 @@ export async function handleConfig(
     if (session.isSuperAdmin !== true) {
       return errorResponse("Deleting MCP servers requires a super admin", 403);
     }
-    let serverId: string;
-    try {
-      serverId = decodeURIComponent(mcpDeleteMatch[1]);
-    } catch {
-      // A malformed %-sequence would otherwise throw URIError → 500.
+    const serverId = safeDecode(mcpDeleteMatch[1]);
+    if (serverId === null) {
       return errorResponse("Invalid server id encoding", 400);
     }
     return proxyToEngine(

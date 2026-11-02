@@ -67,8 +67,12 @@ export async function handleModeShareCode(
   org: string,
   modeName: string
 ): Promise<Response> {
-  const homeOrg = presentOrNull(env.WHATSAPP_ORG);
-  if (homeOrg === null) {
+  // Used EXACTLY as set: the worker's home check is an exact KV key match
+  // (`<org>:modes`), so trimming here could ask from a different org than
+  // the gateway sends. Only an empty or whitespace-only value counts as
+  // unset.
+  const homeOrg = env.WHATSAPP_ORG;
+  if (homeOrg === undefined || homeOrg.trim() === "") {
     return jsonResponse({
       capability: "unconfigured",
     } satisfies ModeShareCodeResponse);
@@ -95,6 +99,12 @@ export async function handleModeShareCode(
     if (error === SHARE_CODE_ERRORS.modeNotFound) {
       return errorResponse(SHARE_CODE_ERRORS.modeNotFound, 404);
     }
+    // Any other JSON error is a real 404 from a worker that HAS the route
+    // (or something in front of it): never read it as "older worker", which
+    // would fall back to a bare-slug link.
+    if (error !== null) return errorResponse("Engine error", 502);
+    // A worker without the route answers Hono's default plain-text
+    // "404 Not Found" (bt-servant-worker defines no notFound handler).
     return jsonResponse({
       capability: "absent",
       home: org === homeOrg,
