@@ -116,70 +116,37 @@ export function isUrlSafeShareCode(code: string): boolean {
 export type ModeShareLinkFailure =
   | "number-missing"
   | "number-invalid"
-  | "slug-invalid"
-  | "slug-reserved"
   | "code-unencodable";
 
 export type ModeShareLinkResult =
   | { ok: true; url: string; digits: string; trigger: string }
   | { ok: false; reason: ModeShareLinkFailure };
 
-type NumberCheck =
-  | { ok: true; digits: string }
-  | { ok: false; reason: "number-missing" | "number-invalid" };
-
-function checkNumber(rawNumber: string | null | undefined): NumberCheck {
-  if (!rawNumber || rawNumber.trim() === "") {
-    return { ok: false, reason: "number-missing" };
-  }
-  const digits = normalizeWhatsAppNumber(rawNumber);
-  return digits
-    ? { ok: true, digits }
-    : { ok: false, reason: "number-invalid" };
-}
-
-function linkFor(digits: string, name: string): ModeShareLinkResult {
-  const trigger = modeShareTrigger(name);
-  // `encodeURIComponent` turns the `#` into `%23` and a qualifier's `/`
-  // into `%2F` (the worker's own welcome link does the same); the code's
-  // [a-z0-9-] alphabet is untouched, which is what keeps the link legible.
-  const url = `${WA_ME_ORIGIN}/${digits}?text=${encodeURIComponent(trigger)}`;
-  return { ok: true, url, digits, trigger };
-}
-
 /**
- * Build the share link for a mode's own BARE slug (the home-org fallback
- * on a worker without the share-code route). The slug must already match
- * the worker's mode-name pattern and not be a reserved clear-token:
- * anything else is refused rather than rewritten, because a rewritten
- * slug would encode a trigger that targets a different mode.
- */
-export function buildModeShareLink(
-  rawNumber: string | null | undefined,
-  slug: string
-): ModeShareLinkResult {
-  const number = checkNumber(rawNumber);
-  if (!number.ok) return number;
-  const verdict = validateModeShareSlug(slug);
-  if (verdict !== "ok") return { ok: false, reason: verdict };
-  return linkFor(number.digits, slug);
-}
-
-/**
- * Build the share link for a code the WORKER says resolves (bare or
- * `<orgslug>/<slug>`). Trusted as the worker's answer; refused only when it
- * can't be carried in a URL (`isUrlSafeShareCode`).
+ * Build the share link for a code: the worker's code when it says the code
+ * resolves (bare or `<orgslug>/<slug>`), or a home mode's own bare slug on
+ * a worker without the share-code route (already through
+ * `validateModeShareSlug`). The code is trusted as given; this is the one
+ * place that checks it can be carried in a URL (`isUrlSafeShareCode`).
  */
 export function buildShareLinkFromCode(
   rawNumber: string | null | undefined,
   code: string
 ): ModeShareLinkResult {
-  const number = checkNumber(rawNumber);
-  if (!number.ok) return number;
+  if (!rawNumber || rawNumber.trim() === "") {
+    return { ok: false, reason: "number-missing" };
+  }
+  const digits = normalizeWhatsAppNumber(rawNumber);
+  if (!digits) return { ok: false, reason: "number-invalid" };
   if (!isUrlSafeShareCode(code)) {
     return { ok: false, reason: "code-unencodable" };
   }
-  return linkFor(number.digits, code);
+  const trigger = modeShareTrigger(code);
+  // `encodeURIComponent` turns the `#` into `%23` and a qualifier's `/`
+  // into `%2F` (the worker's own welcome link does the same); the code's
+  // [a-z0-9-] alphabet is untouched, which is what keeps the link legible.
+  const url = `${WA_ME_ORIGIN}/${digits}?text=${encodeURIComponent(trigger)}`;
+  return { ok: true, url, digits, trigger };
 }
 
 export type ModeShareState = "ready" | "group-only" | "draft";
@@ -247,11 +214,23 @@ export interface ShareConfigSnapshot {
 /** What the share-code query currently knows. */
 export interface ShareCodeSnapshot {
   pending: boolean;
-  /** A (re)fetch is in flight: on reopen after the stale time, or a retry. */
+  /** A (re)fetch is in flight. */
   fetching: boolean;
   /** The query threw (the client maps HTTP outcomes itself; this is a bug or crash). */
   error: boolean;
   data: ModeShareCode | undefined;
+  /**
+   * An answer has already been shown since the panel opened. Before that,
+   * a fetch gates the panel on "checking" (first load, or a reopen past
+   * the stale time: never Copy/Download on an answer being replaced).
+   * After it, a fetch is a background refresh and the panel keeps showing
+   * what it has.
+   */
+  shownThisOpen: boolean;
+  /** The last non-transient answer shown since the panel opened. */
+  lastShown: ModeShareCode | undefined;
+  /** The one automatic re-ask after a flags disagreement has already run. */
+  autoRetried: boolean;
 }
 
 /** A state that shows a code: what it pre-fills, and whose mode it is. */
@@ -276,10 +255,11 @@ export type ModeSharePanelState =
   | { kind: "slug-invalid" }
   | { kind: "slug-reserved" }
   | { kind: "org-unconfigured" }
-  | { kind: "home-org-unknown"; homeOrg: string }
   | { kind: "upgrade-needed" }
   | { kind: "org-unencodable" }
   | { kind: "code-unencodable" }
+  | { kind: "syncing" }
+  | { kind: "out-of-sync" }
   | ({ kind: "org-skipped" } & Shown)
   | ({ kind: "collision"; resolvedOrg: string | null } & Shown)
   | ({ kind: "ambiguous"; resolvedOrg: string | null } & Shown)
@@ -296,6 +276,58 @@ export function shownTrigger(state: ModeSharePanelState): Shown | null {
   return "trigger" in state
     ? { trigger: state.trigger, partnerOrg: state.partnerOrg }
     : null;
+}
+
+/**
+ * Answers worth replacing as soon as possible: a 503, a server error or a
+ * network failure. Never cached past their arrival, and never allowed to
+ * replace a good answer during a background refresh.
+ */
+export function isTransientShareCode(data: ModeShareCode | undefined): boolean {
+  return (
+    data?.capability === "unavailable" ||
+    (data?.capability === "failed" &&
+      (data.failure === "server" || data.failure === "network"))
+  );
+}
+
+/**
+ * Whether the worker's answer contradicts the flags the page just saved:
+ * it says draft while the page says published (or the reverse), or the
+ * same for group-only. The worker checks published, then requires_group,
+ * before anything else (`staticReason` in bt-servant-worker
+ * src/utils/mode-share-code.ts), so a disagreement there means its read
+ * predates the save (KV is eventually consistent). Its reason is then not
+ * presented as fact.
+ */
+export function shareCodeDisagreesWithFlags(
+  data: ModeShareCode | undefined,
+  flags: { published?: boolean; requires_group?: boolean }
+): boolean {
+  if (data?.capability !== "present" || data.code === null) return false;
+  const pageDraft = flags.published !== true;
+  const workerDraft = !data.resolves && data.reason === "draft";
+  if (pageDraft !== workerDraft) return true;
+  if (pageDraft) return false;
+  const pageGroup = flags.requires_group === true;
+  const workerGroup = !data.resolves && data.reason === "requires_group";
+  return pageGroup !== workerGroup;
+}
+
+/**
+ * The answer to render: the query's, except that a transient failure
+ * during a background refresh keeps the last answer shown.
+ */
+export function shareCodeToShow(snapshot: ShareCodeSnapshot): {
+  data: ModeShareCode | undefined;
+  /** True when a background refresh failed and the last answer is kept. */
+  refreshFailed: boolean;
+} {
+  const { data, lastShown, shownThisOpen } = snapshot;
+  if (shownThisOpen && lastShown && isTransientShareCode(data)) {
+    return { data: lastShown, refreshFailed: true };
+  }
+  return { data, refreshFailed: false };
 }
 
 /**
@@ -323,14 +355,15 @@ function unhandled(value: never): never {
  * 1. the mode's identity, from its stored slug alone: a slug no trigger
  *    can carry, then a reserved clear-word. Nothing else fixes these, so
  *    they come first, before any request;
- * 2. query lifecycle: loading, and any refetch in flight (so Copy and
- *    Download are never offered on an answer being replaced), then a
- *    share-config failure, then the share-code request's own outcome (a
- *    503 worth retrying, a failure, a missing mode), then configuration
- *    (WHATSAPP_ORG unset or unknown to the worker, a worker without the
- *    share-code route for a partner mode);
- * 3. the worker's verdict: no code at all, then why the code does not
- *    open this mode;
+ * 2. query lifecycle: the first load since opening (a fetch before any
+ *    answer was shown gates on "checking"; later fetches run in the
+ *    background over the last answer), then a share-config failure, then
+ *    the share-code request's own outcome, then configuration
+ *    (WHATSAPP_ORG unset, a worker without the share-code route for a
+ *    partner mode);
+ * 3. the worker's verdict, unless it contradicts the page's just-saved
+ *    flags (then "checking again", once, before saying it's behind): no
+ *    code at all, then a link if the code resolves, else why not;
  * 4. the number: missing or invalid.
  *
  * On a worker without the share-code route, a HOME mode falls back to its
@@ -351,15 +384,13 @@ export function resolveModeSharePanelState(
     config.pending ||
     config.fetching ||
     shareCode.pending ||
-    shareCode.fetching
+    (shareCode.fetching && !shareCode.shownThisOpen)
   ) {
     return { kind: "loading" };
   }
   if (config.error) return { kind: "error" };
-  if (shareCode.error || !shareCode.data) {
-    return { kind: "failed", failure: "server" };
-  }
-  const answer = shareCode.data;
+  const { data: answer } = shareCodeToShow(shareCode);
+  if (shareCode.error || !answer) return { kind: "failed", failure: "server" };
   const number = config.supported ? config.whatsappNumber : null;
 
   switch (answer.capability) {
@@ -371,8 +402,6 @@ export function resolveModeSharePanelState(
       return { kind: "not-found" };
     case "unconfigured":
       return { kind: "org-unconfigured" };
-    case "unknown-home-org":
-      return { kind: "home-org-unknown", homeOrg: answer.home_org };
     case "absent": {
       if (!answer.home) return { kind: "upgrade-needed" };
       const shown: Shown = {
@@ -381,9 +410,12 @@ export function resolveModeSharePanelState(
       };
       const eligibility = modeShareState(flags);
       if (eligibility !== "ready") return { kind: eligibility, ...shown };
-      return withNumber(buildModeShareLink(number, modeName), shown);
+      return withNumber(buildShareLinkFromCode(number, modeName), shown);
     }
     case "present":
+      if (shareCodeDisagreesWithFlags(answer, flags)) {
+        return { kind: shareCode.autoRetried ? "out-of-sync" : "syncing" };
+      }
       return fromWorkerAnswer(answer, number, modeOrg);
     default:
       return unhandled(answer);
@@ -398,7 +430,6 @@ function fromWorkerAnswer(
 ): ModeSharePanelState {
   const { code } = answer;
   if (code === null) return { kind: "org-unencodable" };
-  if (!isUrlSafeShareCode(code)) return { kind: "code-unencodable" };
   const shown: Shown = {
     trigger: modeShareTrigger(code),
     partnerOrg: code.includes("/") ? (modeOrg?.trim() ?? null) : null,
@@ -431,7 +462,7 @@ function fromWorkerAnswer(
   }
 }
 
-/** The number half: a ready link, or why the number blocks it. */
+/** The number half: a ready link, or why the link can't be built. */
 function withNumber(
   link: ModeShareLinkResult,
   shown: Shown
@@ -444,9 +475,5 @@ function withNumber(
       return { kind: "number-invalid", ...shown };
     case "code-unencodable":
       return { kind: "code-unencodable" };
-    // Ruled out before a link is built (the slug checks come first).
-    case "slug-invalid":
-    case "slug-reserved":
-      return { kind: link.reason };
   }
 }

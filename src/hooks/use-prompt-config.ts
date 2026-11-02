@@ -32,6 +32,17 @@ const keys = {
 // Exported for unit tests that assert cache effects by key.
 export const modeQueryKeys = keys;
 
+/**
+ * What every mode write invalidates: the org's mode list, and every
+ * share-code answer (#345). A write can change which code opens a mode,
+ * here or, through a cross-org slug collision, in another org, so share
+ * codes are re-asked across the board rather than per mode.
+ */
+export function invalidateModeWrites(qc: QueryClient, org: string | null) {
+  void qc.invalidateQueries({ queryKey: keys.modes(org) });
+  void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
+}
+
 function normalize(org?: string | null): string | null {
   return org ?? null;
 }
@@ -167,8 +178,7 @@ export function saveModeMutationOptions(qc: QueryClient) {
       // started here captures the seeded state as its revert baseline, and
       // reconciles the optimistic rows with server truth (e.g. fresh
       // `aliases`).
-      void qc.invalidateQueries({ queryKey: keys.modes(key) });
-      void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
+      invalidateModeWrites(qc, key);
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
     },
   };
@@ -209,8 +219,7 @@ export function useDeleteMode(org?: string | null) {
   return useMutation({
     mutationFn: (name: string) => configApi.deleteMode(name, undefined, key),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.modes(key) });
-      void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
+      invalidateModeWrites(qc, key);
     },
   });
 }
@@ -277,8 +286,7 @@ export function useRenameMode(org?: string | null) {
       qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
         applyRenameToModeList(prev, name, data)
       );
-      void qc.invalidateQueries({ queryKey: keys.modes(key) });
-      void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
+      invalidateModeWrites(qc, key);
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
       void qc.invalidateQueries({ queryKey: keys.mode(newName, key) });
     },
@@ -318,8 +326,7 @@ export function useCloneMode(org?: string | null) {
         applyCloneToModeList(prev, data)
       );
       qc.setQueryData(keys.mode(data.name, key), data);
-      void qc.invalidateQueries({ queryKey: keys.modes(key) });
-      void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
+      invalidateModeWrites(qc, key);
       void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
     },
     onError: (error) => {
@@ -332,7 +339,7 @@ export function useCloneMode(org?: string | null) {
         error instanceof configApi.CloneCollisionError &&
         error.grantedVerbs
       ) {
-        void qc.invalidateQueries({ queryKey: keys.modes(key) });
+        invalidateModeWrites(qc, key);
       }
     },
   });
@@ -386,8 +393,7 @@ export function useRetireMode(org?: string | null) {
       );
       qc.setQueryData(keys.mode(data.name, key), data);
       qc.removeQueries({ queryKey: keys.mode(name, key) });
-      void qc.invalidateQueries({ queryKey: keys.modes(key) });
-      void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
+      invalidateModeWrites(qc, key);
       void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
     },
   });

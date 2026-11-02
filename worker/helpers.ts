@@ -24,6 +24,25 @@ export function errorResponse(message: string, status: number): Response {
 }
 
 /**
+ * `decodeURIComponent` for a path segment, or null when the segment holds a
+ * malformed escape (`%E0%A4%A`). That is the caller's error, so routes
+ * answer 400 (`invalidModeNameResponse`) instead of letting the URIError
+ * become a 500.
+ */
+export function safeDecode(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+/** The 400 for a mode-name path segment `safeDecode` couldn't read. */
+export function invalidModeNameResponse(): Response {
+  return errorResponse("Invalid mode name", 400);
+}
+
+/**
  * Lightweight same-origin guard: require X-Requested-With header.
  * Browsers block custom headers on cross-origin requests unless a CORS
  * preflight succeeds, and this worker sends no CORS headers, so external

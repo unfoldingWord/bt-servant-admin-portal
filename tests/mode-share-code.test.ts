@@ -107,13 +107,6 @@ describe("share-code route — scoping", () => {
     );
   });
 
-  it("answers 400, not a 500, on a malformed escape in the mode name", async () => {
-    const spy = workerReplies({});
-    const res = await call({ path: "/api/config/modes/%E0%A4%A/share-code" });
-    expect(res.status).toBe(400);
-    expect(spy).not.toHaveBeenCalled();
-  });
-
   it("is GET only", async () => {
     const spy = workerReplies({});
     const res = await call({ method: "POST" });
@@ -238,17 +231,14 @@ describe("share-code route — mapping the worker's answer", () => {
     expect((await call()).status).toBe(503);
   });
 
-  it("maps 400 unknown_home_org to its own config state", async () => {
+  it("passes the permanent 500 corrupt_modes_record through as itself", async () => {
     workerReplies(
-      { error: "unknown_home_org", message: "no modes for home org" },
-      400
+      { error: "corrupt_modes_record", message: "not valid JSON" },
+      500
     );
     const res = await call();
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      capability: "unknown-home-org",
-      home_org: GATEWAY,
-    });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "corrupt_modes_record" });
   });
 
   it("passes any other 400 through", async () => {
@@ -270,4 +260,29 @@ describe("share-code route — mapping the worker's answer", () => {
     expect(await res.json()).toEqual({ capability: "unconfigured" });
     expect(spy).not.toHaveBeenCalled();
   });
+});
+
+describe("mode routes — a malformed %-escape in the name is a 400, not a 500", () => {
+  const BAD = "%E0%A4%A";
+  for (const [method, path] of [
+    ["GET", `/api/config/modes/${BAD}`],
+    ["PUT", `/api/config/modes/${BAD}`],
+    ["DELETE", `/api/config/modes/${BAD}`],
+    ["POST", `/api/config/modes/${BAD}/_rename`],
+    ["POST", `/api/config/modes/${BAD}/_clone`],
+    ["POST", `/api/config/modes/${BAD}/_retire`],
+    ["GET", `/api/config/modes/${BAD}/share-code`],
+  ] as const) {
+    it(`${method} ${path.replace(BAD, "<bad>")}`, async () => {
+      const spy = workerReplies({});
+      const res = await call({
+        method,
+        path,
+        session: makeSession({ isAdmin: true }),
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "Invalid mode name" });
+      expect(spy).not.toHaveBeenCalled();
+    });
+  }
 });

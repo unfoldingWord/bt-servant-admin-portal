@@ -1,5 +1,10 @@
 import type { Env } from "./helpers";
-import { errorResponse, isPathShapedOrg } from "./helpers";
+import {
+  errorResponse,
+  invalidModeNameResponse,
+  isPathShapedOrg,
+  safeDecode,
+} from "./helpers";
 import {
   contractOrgModeRights,
   expandOrgModeRights,
@@ -663,7 +668,8 @@ export async function handleConfig(
     /^\/api\/config\/modes\/([^/]+)\/_rename$/
   );
   if (modeRenameMatch?.[1]) {
-    const modeName = decodeURIComponent(modeRenameMatch[1]);
+    const modeName = safeDecode(modeRenameMatch[1]);
+    if (modeName === null) return invalidModeNameResponse();
     if (
       !resolved.crossOrg &&
       !hasAdminPowers(session) &&
@@ -887,7 +893,8 @@ export async function handleConfig(
     /^\/api\/config\/modes\/([^/]+)\/_clone$/
   );
   if (modeCloneMatch?.[1]) {
-    const modeName = decodeURIComponent(modeCloneMatch[1]);
+    const modeName = safeDecode(modeCloneMatch[1]);
+    if (modeName === null) return invalidModeNameResponse();
     if (
       !resolved.crossOrg &&
       !hasAdminPowers(session) &&
@@ -1065,7 +1072,8 @@ export async function handleConfig(
     /^\/api\/config\/modes\/([^/]+)\/_retire$/
   );
   if (modeRetireMatch?.[1]) {
-    const modeName = decodeURIComponent(modeRetireMatch[1]);
+    const modeName = safeDecode(modeRetireMatch[1]);
+    if (modeName === null) return invalidModeNameResponse();
     const isShepherdRetire = !resolved.crossOrg && !hasAdminPowers(session);
     if (
       isShepherdRetire &&
@@ -1155,21 +1163,15 @@ export async function handleConfig(
     if (request.method !== "GET") {
       return errorResponse("Method not allowed", 405);
     }
-    // A malformed escape (`%E0%A4%A`) is the caller's error, not a 500.
-    // (The generic mode route below has the same unguarded decode; left
-    // as is here, out of scope.)
-    let modeName: string;
-    try {
-      modeName = decodeURIComponent(modeShareCodeMatch[1]);
-    } catch {
-      return errorResponse("Invalid mode name", 400);
-    }
+    const modeName = safeDecode(modeShareCodeMatch[1]);
+    if (modeName === null) return invalidModeNameResponse();
     return handleModeShareCode(env, resolved.org, modeName);
   }
 
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);
   if (modeMatch?.[1]) {
-    const modeName = decodeURIComponent(modeMatch[1]);
+    const modeName = safeDecode(modeMatch[1]);
+    if (modeName === null) return invalidModeNameResponse();
     if (request.method === "PUT" || request.method === "DELETE") {
       const gate = await gateConfigMutation(
         request,

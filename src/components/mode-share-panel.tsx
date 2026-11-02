@@ -14,9 +14,12 @@ import {
   buildModeShareFilename,
   resolveModeSharePanelState,
   homeOrgWithoutModes,
+  isTransientShareCode,
+  shareCodeToShow,
   shownTrigger,
   validateModeShareSlug,
   type ModeSharePanelState,
+  type ShareCodeSnapshot,
 } from "@/lib/mode-share-link";
 import {
   QR_DARK,
@@ -28,7 +31,10 @@ import {
 } from "@/lib/mode-share-qr";
 import { humanizeModeSlug } from "@/lib/mode-slug";
 import { cn } from "@/lib/utils";
-import type { ShareCodeFailure } from "@/lib/mode-share-code-api";
+import type {
+  ModeShareCode,
+  ShareCodeFailure,
+} from "@/lib/mode-share-code-api";
 import { useModeShareCode } from "@/hooks/use-mode-share-code";
 import { useShareConfig } from "@/hooks/use-share-config";
 import { Button } from "@/components/ui/button";
@@ -115,11 +121,56 @@ export function ModeSharePanel({
   const shareConfig = useShareConfig(open);
   // The worker's answer for which code opens this mode (#345). Not asked
   // for a slug the panel refuses on its own (it would only 400).
-  const shareCode = useModeShareCode(
+  const { query: shareCode, autoRetried } = useModeShareCode(
     open && validateModeShareSlug(modeName) === "ok",
     modeName,
     org,
     flags
+  );
+
+  // First load vs background refresh (see ShareCodeSnapshot): once an
+  // answer has been shown in this open, later fetches don't blank it, and
+  // a failed one keeps the last answer. Both reset on close, so a reopen
+  // past the stale time gates on "checking" again.
+  const [shownThisOpen, setShownThisOpen] = useState(false);
+  const [lastShown, setLastShown] = useState<ModeShareCode | undefined>();
+  useEffect(() => {
+    if (!open) {
+      setShownThisOpen(false);
+      setLastShown(undefined);
+      return;
+    }
+    if (shareCode.isPending || shareCode.data === undefined) return;
+    if (shareCode.isFetching && !shownThisOpen) return;
+    setShownThisOpen(true);
+    if (!isTransientShareCode(shareCode.data)) setLastShown(shareCode.data);
+  }, [
+    open,
+    shareCode.data,
+    shareCode.isFetching,
+    shareCode.isPending,
+    shownThisOpen,
+  ]);
+
+  const shareCodeSnapshot = useMemo<ShareCodeSnapshot>(
+    () => ({
+      pending: shareCode.isPending,
+      fetching: shareCode.isFetching,
+      error: shareCode.isError,
+      data: shareCode.data,
+      shownThisOpen,
+      lastShown,
+      autoRetried,
+    }),
+    [
+      autoRetried,
+      lastShown,
+      shareCode.data,
+      shareCode.isError,
+      shareCode.isFetching,
+      shareCode.isPending,
+      shownThisOpen,
+    ]
   );
 
   const state = useMemo<ModeSharePanelState>(() => {
@@ -132,12 +183,7 @@ export function ModeSharePanel({
         supported: data?.supported === true,
         whatsappNumber: data?.supported ? data.config.whatsappNumber : null,
       },
-      {
-        pending: shareCode.isPending,
-        fetching: shareCode.isFetching,
-        error: shareCode.isError,
-        data: shareCode.data,
-      },
+      shareCodeSnapshot,
       flags,
       org,
       modeName
@@ -146,10 +192,7 @@ export function ModeSharePanel({
     flags,
     modeName,
     org,
-    shareCode.data,
-    shareCode.isError,
-    shareCode.isFetching,
-    shareCode.isPending,
+    shareCodeSnapshot,
     shareConfig.data,
     shareConfig.isError,
     shareConfig.isFetching,
@@ -165,19 +208,28 @@ export function ModeSharePanel({
     (state.kind === "draft" || state.kind === "group-only") &&
     !(shareConfig.data?.supported && shareConfig.data.config.whatsappNumber);
 
-  // Try again: kept on screen, disabled and saying so, from the click until
-  // the refetch settles, so it can't queue repeated calls.
+  // Notes beside the state, once something is shown.
+  const shownAnswer = shareCodeToShow(shareCodeSnapshot);
+  const settled = state.kind !== "loading";
+  const emptyHomeOrg = settled ? homeOrgWithoutModes(shownAnswer.data) : null;
+  const refreshFailed = settled && shownAnswer.refreshFailed;
+
+  // Try again re-asks only the query that failed: share-config for the
+  // settings error, the share code otherwise. Kept on screen, disabled and
+  // saying so, from the click until that refetch settles, so it can't queue
+  // repeated calls.
+  const retryConfig = state.kind === "error";
+  const retryFetching = retryConfig
+    ? shareConfig.isFetching
+    : shareCode.isFetching;
   const [retrying, setRetrying] = useState(false);
-  const fetching = shareCode.isFetching || shareConfig.isFetching;
   useEffect(() => {
-    if (!fetching) setRetrying(false);
-  }, [fetching]);
-  // Non-blocking: shown with whatever the state is, once an answer is in.
-  const emptyHomeOrg =
-    state.kind === "loading" ? null : homeOrgWithoutModes(shareCode.data);
+    if (!retryFetching) setRetrying(false);
+  }, [retryFetching]);
   const retryable =
     state.kind === "error" ||
     state.kind === "unavailable" ||
+    state.kind === "out-of-sync" ||
     (state.kind === "failed" &&
       (state.failure === "server" || state.failure === "network"));
 
@@ -416,19 +468,19 @@ export function ModeSharePanel({
           )}
         </div>
 
-        {(retryable || (retrying && fetching)) && (
+        {(retryable || (retrying && retryFetching)) && (
           <div className="flex justify-center">
             <Button
               size="sm"
               variant="outline"
-              disabled={fetching}
+              disabled={retryFetching}
               onClick={() => {
                 setRetrying(true);
-                if (shareConfig.isError) void shareConfig.refetch();
-                void shareCode.refetch();
+                if (retryConfig) void shareConfig.refetch();
+                else void shareCode.refetch();
               }}
             >
-              {fetching ? "Checking…" : "Try again"}
+              {retryFetching ? "Checking…" : "Try again"}
             </Button>
           </div>
         )}
@@ -466,6 +518,13 @@ export function ModeSharePanel({
               </p>
             )}
           </div>
+        )}
+
+        {refreshFailed && (
+          <p className="text-muted-foreground text-xs">
+            Couldn&rsquo;t re-check just now. This is BT Servant&rsquo;s last
+            answer.
+          </p>
         )}
 
         {emptyHomeOrg && (
@@ -576,8 +635,10 @@ function describe(state: ModeSharePanelState, modeName: string): string {
       return "The configured WhatsApp number isn't a valid E.164 number. Check WHATSAPP_NUMBER for this environment.";
     case "org-unconfigured":
       return "WhatsApp's org isn't configured for this environment. Set WHATSAPP_ORG to generate share codes.";
-    case "home-org-unknown":
-      return `WhatsApp's org (${state.homeOrg}) has no modes. Check WHATSAPP_ORG for this environment.`;
+    case "syncing":
+      return "This mode just changed. Checking its code again…";
+    case "out-of-sync":
+      return "BT Servant hasn't caught up with this mode's latest change yet. Try again in a moment.";
     case "upgrade-needed":
       return "Share codes for other orgs' modes need a newer BT Servant version.";
     case "slug-invalid":
@@ -625,8 +686,11 @@ function placeholderLabel(state: ModeSharePanelState): string {
     case "number-invalid":
       return "Number invalid";
     case "org-unconfigured":
-    case "home-org-unknown":
       return "Org not configured";
+    case "syncing":
+      return "Checking again";
+    case "out-of-sync":
+      return "Not caught up yet";
     case "failed":
       return "Unavailable";
     case "code-unencodable":
@@ -663,6 +727,12 @@ function describeFailure(failure: ShareCodeFailure): string {
       return "You don't have access to this org's modes, so its WhatsApp code can't be checked.";
     case "invalid-name":
       return "BT Servant doesn't accept this mode's name. Rename it to lowercase letters, digits, and hyphens to share it by QR.";
+    case "org-invalid":
+      return "This org's name isn't valid for BT Servant. Ask unfoldingWord to check it.";
+    case "bad-request":
+      return "BT Servant couldn't read this request. Reload the page and try again.";
+    case "corrupt-record":
+      return "This org's modes record is damaged, so the code can't be checked. Ask unfoldingWord to repair it.";
     case "server":
       return "BT Servant had a problem checking this mode's code. Try again.";
     case "network":

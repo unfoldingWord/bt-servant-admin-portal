@@ -55,10 +55,9 @@ describe("getModeShareCode", () => {
       capability: "absent",
       home: true,
     });
-    mockFetch(200, { capability: "unknown-home-org", home_org: "uW" });
+    mockFetch(200, { capability: "unconfigured" });
     expect(await getModeShareCode("x", null)).toEqual({
-      capability: "unknown-home-org",
-      home_org: "uW",
+      capability: "unconfigured",
     });
   });
 
@@ -69,6 +68,12 @@ describe("getModeShareCode", () => {
       [401, { error: "Unauthorized" }],
       [403, { error: "Forbidden" }],
       [400, { error: "invalid_mode_name" }],
+      [400, { error: "Invalid mode name" }],
+      [400, { error: "Invalid org parameter" }],
+      [400, { error: "Invalid org" }],
+      [400, { error: "bad_request" }],
+      [400, "not json"],
+      [500, { error: "corrupt_modes_record" }],
       [502, { error: "Engine error" }],
       [500, "boom"],
     ];
@@ -83,6 +88,12 @@ describe("getModeShareCode", () => {
       { capability: "failed", failure: "signed-out" },
       { capability: "failed", failure: "forbidden" },
       { capability: "failed", failure: "invalid-name" },
+      { capability: "failed", failure: "invalid-name" },
+      { capability: "failed", failure: "org-invalid" },
+      { capability: "failed", failure: "org-invalid" },
+      { capability: "failed", failure: "bad-request" },
+      { capability: "failed", failure: "bad-request" },
+      { capability: "failed", failure: "corrupt-record" },
       { capability: "failed", failure: "server" },
       { capability: "failed", failure: "server" },
     ]);
@@ -93,6 +104,8 @@ describe("getModeShareCode", () => {
       "not json",
       { capability: "present", code: 7, resolves: true },
       { capability: "present", code: "x" },
+      // A present answer without the BFF's home_org isn't one.
+      { capability: "present", code: "x", resolves: true },
       { capability: "who-knows" },
     ]) {
       mockFetch(200, body);

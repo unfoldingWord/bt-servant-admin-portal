@@ -1,6 +1,10 @@
 import type { Env } from "./helpers";
 import { errorResponse, jsonResponse } from "./helpers";
-import type { ModeShareCodeResponse } from "../src/types/mode-share-code";
+import {
+  parseShareCodeAnswer,
+  SHARE_CODE_ERRORS,
+  type ModeShareCodeResponse,
+} from "../src/types/mode-share-code";
 
 // #311 — read-only share configuration for the per-mode WhatsApp QR.
 //
@@ -53,10 +57,10 @@ function presentOrNull(value: string | undefined): string | null {
 // modes page edits (raw for same-org callers, padding and all).
 // ---------------------------------------------------------------------------
 
-// The response type is shared with the client (src/types/mode-share-code.ts).
-// `reason` is passed through as any string: the worker contract is
-// additive, and the panel reads an unknown reason as "does not open this
-// mode".
+// The response type and the answer parser are shared with the client
+// (src/types/mode-share-code.ts). `reason` is passed through as any string:
+// the worker contract is additive, and the panel reads an unknown reason
+// as "does not open this mode".
 
 export async function handleModeShareCode(
   env: Env,
@@ -88,54 +92,30 @@ export async function handleModeShareCode(
   const error = typeof body?.error === "string" ? body.error : null;
 
   if (res.status === 404) {
-    if (error === "mode_not_found") return errorResponse("mode_not_found", 404);
+    if (error === SHARE_CODE_ERRORS.modeNotFound) {
+      return errorResponse(SHARE_CODE_ERRORS.modeNotFound, 404);
+    }
     return jsonResponse({
       capability: "absent",
       home: org === homeOrg,
     } satisfies ModeShareCodeResponse);
   }
+  // Every 503 (`detail`: list_failed, read_failed, listing_lag) is
+  // transient on the worker's side; the panel offers a retry.
   if (res.status === 503) return errorResponse("modes_unavailable", 503);
-  if (res.status === 400) {
-    // Pre-final #477 builds answered this; the final contract reports it
-    // as `home_has_modes: false` on the 200 instead. Still tolerated.
-    if (error === "unknown_home_org") {
-      return jsonResponse({
-        capability: "unknown-home-org",
-        home_org: homeOrg,
-      } satisfies ModeShareCodeResponse);
-    }
-    return errorResponse(error ?? "bad_request", 400);
+  // Permanent: the org's stored modes record isn't valid JSON. Passed
+  // through as itself so the panel can say so instead of offering a retry.
+  if (res.status === 500 && error === SHARE_CODE_ERRORS.corruptModesRecord) {
+    return errorResponse(SHARE_CODE_ERRORS.corruptModesRecord, 500);
   }
+  if (res.status === 400) return errorResponse(error ?? "bad_request", 400);
   if (!res.ok) return errorResponse("Engine error", 502);
 
-  const parsed = parseShareCodeAnswer(body, homeOrg);
-  if (parsed === null) return errorResponse("Malformed engine response", 502);
-  return jsonResponse(parsed);
-}
-
-/** Shape-check the worker's 200 so a malformed answer never reaches a QR. */
-function parseShareCodeAnswer(
-  body: Record<string, unknown> | null,
-  homeOrg: string
-): ModeShareCodeResponse | null {
-  if (body === null) return null;
-  const { code, resolves, reason, resolved_org, home_has_modes } = body;
-  if (code !== null && typeof code !== "string") return null;
-  if (typeof resolves !== "boolean") return null;
-  if (reason !== undefined && typeof reason !== "string") return null;
-  if (resolved_org !== undefined && typeof resolved_org !== "string") {
-    return null;
-  }
-  return {
+  const answer = parseShareCodeAnswer(body);
+  if (answer === null) return errorResponse("Malformed engine response", 502);
+  return jsonResponse({
     capability: "present",
-    code,
-    resolves,
-    ...(reason !== undefined ? { reason } : {}),
-    ...(resolved_org !== undefined ? { resolved_org } : {}),
-    // Additive in #477: false when the gateway org has no modes key (the
-    // chat path then treats home as empty). Tolerated when absent or not a
-    // boolean, since it only drives a warning.
-    ...(typeof home_has_modes === "boolean" ? { home_has_modes } : {}),
     home_org: homeOrg,
-  };
+    ...answer,
+  } satisfies ModeShareCodeResponse);
 }

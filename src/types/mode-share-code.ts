@@ -1,7 +1,7 @@
 // #345 — wire contract of the BFF's `GET /api/config/modes/{name}/share-code`
 // (worker/share-config.ts), shared by the BFF (which builds it) and the
-// client (src/lib/mode-share-code-api.ts, which parses it). One copy, so a
-// new variant on either side fails the other's typecheck.
+// client (src/lib/mode-share-code-api.ts, which reads it). One type and one
+// field parser, so the two sides can't drift.
 //
 // The worker behind it is bt-servant-worker#477: it runs the chat path's
 // own read, merge and classifier and says which `#<code>` opens a mode
@@ -27,24 +27,26 @@ export type ShareCodeReason =
   | KnownShareCodeReason
   | (string & Record<never, never>);
 
+/** The worker's answer fields, as both the worker and the BFF send them. */
+export interface ShareCodeAnswer {
+  /** The token without `#`; null when no code can be formed. */
+  code: string | null;
+  resolves: boolean;
+  reason?: ShareCodeReason;
+  /** Raw org of the mode `#<code>` actually opens. */
+  resolved_org?: string;
+  /**
+   * False when the gateway org has no modes record (the chat path then
+   * treats home as empty). In every 200 of the final #477; optional here
+   * so an answer without it still reads. Drives a non-blocking note only.
+   */
+  home_has_modes?: boolean;
+}
+
 /** The 200 bodies of the share-code route. */
 export type ModeShareCodeResponse =
-  /** The worker answered. `code` is the token without `#`. */
-  | {
-      capability: "present";
-      code: string | null;
-      resolves: boolean;
-      reason?: ShareCodeReason;
-      /** Raw org of the mode `#<code>` actually opens. */
-      resolved_org?: string;
-      /**
-       * False when the gateway org has no modes at all (worker #477,
-       * additive). Drives a non-blocking warning only.
-       */
-      home_has_modes?: boolean;
-      /** The gateway org the worker was asked from (WHATSAPP_ORG), added by the BFF. */
-      home_org: string;
-    }
+  /** The worker answered. `home_org` (WHATSAPP_ORG) is added by the BFF. */
+  | ({ capability: "present"; home_org: string } & ShareCodeAnswer)
   /**
    * The worker predates the route (a 404 without its `mode_not_found`
    * body). `home` is true when the mode's org is the gateway org, by the
@@ -52,9 +54,40 @@ export type ModeShareCodeResponse =
    */
   | { capability: "absent"; home: boolean }
   /** WHATSAPP_ORG is unset for this environment; the worker isn't asked. */
-  | { capability: "unconfigured" }
-  /**
-   * WHATSAPP_ORG names an org the worker has no modes for (a 400 from
-   * pre-final #477 builds; the final contract uses `home_has_modes`).
-   */
-  | { capability: "unknown-home-org"; home_org: string };
+  | { capability: "unconfigured" };
+
+/** Error bodies the route can answer with, besides the 200s above. */
+export const SHARE_CODE_ERRORS = {
+  /** 404: no such mode in this org. */
+  modeNotFound: "mode_not_found",
+  /** 500, permanent: the org's stored modes record is not valid JSON. */
+  corruptModesRecord: "corrupt_modes_record",
+  /** 400 from the worker: the mode name fails its pattern. */
+  invalidModeName: "invalid_mode_name",
+} as const;
+
+/**
+ * Shape-check the answer fields, or null when they aren't an answer. Used
+ * by the BFF on the worker's 200 and by the client on the BFF's, so a
+ * malformed answer never reaches a QR. Unknown `reason` strings pass (the
+ * contract is additive); a non-boolean `home_has_modes` is dropped rather
+ * than failing the answer, since it only drives a note.
+ */
+export function parseShareCodeAnswer(body: unknown): ShareCodeAnswer | null {
+  if (body === null || typeof body !== "object") return null;
+  const { code, resolves, reason, resolved_org, home_has_modes } =
+    body as Record<string, unknown>;
+  if (code !== null && typeof code !== "string") return null;
+  if (typeof resolves !== "boolean") return null;
+  if (reason !== undefined && typeof reason !== "string") return null;
+  if (resolved_org !== undefined && typeof resolved_org !== "string") {
+    return null;
+  }
+  return {
+    code,
+    resolves,
+    ...(reason !== undefined ? { reason } : {}),
+    ...(resolved_org !== undefined ? { resolved_org } : {}),
+    ...(typeof home_has_modes === "boolean" ? { home_has_modes } : {}),
+  };
+}
