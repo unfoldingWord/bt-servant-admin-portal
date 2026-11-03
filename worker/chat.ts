@@ -1,6 +1,8 @@
 import type { Env } from "./helpers";
 import {
   engineFetch,
+  engineRoute,
+  isEngineKeyMissing,
   errorResponse,
   jsonResponse,
   listKvKeys,
@@ -8,6 +10,9 @@ import {
 import type { SessionData, StoredUser } from "./types";
 
 const CLIENT_ID = "admin-portal";
+
+// Cap on engine error text copied into logs.
+const LOGGED_BODY_MAX_CHARS = 500;
 
 const UUID_V4_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -123,9 +128,10 @@ export async function handleStream(
   });
 
   if (!engineRes.ok) {
+    if (isEngineKeyMissing(engineRes)) return engineRes;
     const text = await engineRes.text().catch(() => "");
     console.error(
-      `Engine stream failed (${engineRes.status}) ${env.ENGINE_BASE_URL}${enginePath}: ${text}`
+      `Engine stream failed (${engineRes.status}) ${env.ENGINE_BASE_URL}${engineRoute(enginePath)}: ${text.slice(0, LOGGED_BODY_MAX_CHARS)}`
     );
     return errorResponse("Failed to stream chat response", 502);
   }
@@ -172,6 +178,7 @@ export async function handleHistory(
   );
 
   if (!engineRes.ok) {
+    if (isEngineKeyMissing(engineRes)) return engineRes;
     const text = await engineRes.text().catch(() => "");
     console.error(`Engine history failed (${engineRes.status}): ${text}`);
     return errorResponse("Failed to fetch history", 502);
@@ -215,6 +222,7 @@ export async function handleDeleteHistory(
   );
 
   if (!engineRes.ok) {
+    if (isEngineKeyMissing(engineRes)) return engineRes;
     const text = await engineRes.text().catch(() => "");
     console.error(
       `Engine delete history failed (${engineRes.status}): ${text}`
@@ -249,6 +257,7 @@ export async function handleDeleteMemory(
   );
 
   if (!engineRes.ok) {
+    if (isEngineKeyMissing(engineRes)) return engineRes;
     const text = await engineRes.text().catch(() => "");
     console.error(`Engine delete memory failed (${engineRes.status}): ${text}`);
     return errorResponse("Failed to delete memory", 502);

@@ -1,6 +1,8 @@
 export interface Env {
   ENGINE_BASE_URL: string;
-  ENGINE_API_KEY: string;
+  // Optional at runtime: with neither key set, engineFetch fails cleanly
+  // (engine_key_missing) instead of sending an empty bearer.
+  ENGINE_API_KEY?: string;
   // The engine admin key, sent on every engine call. Optional in code: when
   // unset or blank the BFF falls back to ENGINE_API_KEY (see
   // resolveEngineKey). Unrelated to ADMIN_SECRET below.
@@ -23,22 +25,27 @@ export type EngineKeySource = "ADMIN_API_KEY" | "ENGINE_API_KEY";
 // Warn once per isolate when falling back to ENGINE_API_KEY.
 let fallbackWarned = false;
 
+export type EngineKey =
+  | { key: string; source: EngineKeySource }
+  | { missing: true };
+
 /**
  * The key the BFF sends on every engine call. Every BFF call comes from the
  * admin portal (the chat relay included: it sends the admin `client_id`),
  * so every call uses the trimmed ADMIN_API_KEY when it is set and
  * non-blank. Otherwise ENGINE_API_KEY, sent exactly as today (untrimmed),
  * so a deploy without the new secret keeps working; that fallback logs one
- * warning per isolate naming the key source, never the key value.
+ * warning per isolate naming the key source, never the key value. With
+ * neither key set (or both blank) the result is `{ missing: true }`, and
+ * the fallback warning is not logged.
  */
 export function resolveEngineKey(
   env: Pick<Env, "ADMIN_API_KEY" | "ENGINE_API_KEY">
-): {
-  key: string;
-  source: EngineKeySource;
-} {
+): EngineKey {
   const adminKey = env.ADMIN_API_KEY?.trim();
   if (adminKey) return { key: adminKey, source: "ADMIN_API_KEY" };
+  const engineKey = env.ENGINE_API_KEY;
+  if (!engineKey?.trim()) return { missing: true };
   if (!fallbackWarned) {
     fallbackWarned = true;
     console.warn(
@@ -49,11 +56,28 @@ export function resolveEngineKey(
       })
     );
   }
-  return { key: env.ENGINE_API_KEY, source: "ENGINE_API_KEY" };
+  return { key: engineKey, source: "ENGINE_API_KEY" };
 }
 
 export const ENGINE_KEY_MISSING_MESSAGE =
   "Portal configuration error: no engine key is configured.";
+
+// Responses engineFetch built itself for a missing key, so callers can pass
+// them through instead of remapping them to a generic engine failure.
+const engineKeyMissingResponses = new WeakSet<Response>();
+
+/** True for the 500 config-error response engineFetch returns when no key is set. */
+export function isEngineKeyMissing(res: Response): boolean {
+  return engineKeyMissingResponses.has(res);
+}
+
+/**
+ * Release a response body the caller will not read. A failed cancel is
+ * ignored, so it can never turn a status into a throw.
+ */
+export async function discardBody(res: Response): Promise<void> {
+  await res.body?.cancel().catch(() => {});
+}
 
 // Collection segment → placeholder for the segment that follows it.
 const ROUTE_PARAMS = new Map<string, string>([
@@ -110,10 +134,10 @@ export async function engineFetch(
   path: string,
   init: RequestInit = {}
 ): Promise<Response> {
-  const { key, source } = resolveEngineKey(env);
+  const resolved = resolveEngineKey(env);
   // Never send "Bearer undefined": with no key at all, fail without
   // calling the engine.
-  if (!key?.trim()) {
+  if ("missing" in resolved) {
     console.error(
       JSON.stringify({
         event: "engine_key_missing",
@@ -121,8 +145,11 @@ export async function engineFetch(
         route: engineRoute(path),
       })
     );
-    return errorResponse(ENGINE_KEY_MISSING_MESSAGE, 500);
+    const missing = errorResponse(ENGINE_KEY_MISSING_MESSAGE, 500);
+    engineKeyMissingResponses.add(missing);
+    return missing;
   }
+  const { key, source } = resolved;
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${key}`);
   const res = await fetch(`${env.ENGINE_BASE_URL}${path}`, {

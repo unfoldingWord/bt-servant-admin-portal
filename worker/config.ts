@@ -1,5 +1,10 @@
 import type { Env } from "./helpers";
-import { engineFetch, errorResponse, isPathShapedOrg } from "./helpers";
+import {
+  discardBody,
+  engineFetch,
+  errorResponse,
+  isPathShapedOrg,
+} from "./helpers";
 import {
   contractOrgModeRights,
   expandOrgModeRights,
@@ -190,8 +195,7 @@ async function fetchResourceState(
   const res = await engineFetch(env, enginePath);
   if (!res.ok) {
     // Release the unread error body before the early return.
-    // .catch: a failed cancel must never turn the status into a throw.
-    await res.body?.cancel().catch(() => {});
+    await discardBody(res);
     return res.status === 404 ? { status: "missing" } : { status: "error" };
   }
   const data = (await res.json()) as Record<string, unknown>;
@@ -581,8 +585,7 @@ async function fetchMcpServerOwners(
   );
   if (!res.ok) {
     // Release the unread error body before the early return.
-    // .catch: a failed cancel must never turn the status into a throw.
-    await res.body?.cancel().catch(() => {});
+    await discardBody(res);
     throw new Error(`MCP pool read failed (${res.status})`);
   }
   const body = (await res.json()) as {
