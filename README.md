@@ -113,7 +113,7 @@ Pre-commit hooks (via Husky + lint-staged) run ESLint, Prettier, typecheck, and 
 
 Each open PR gets its own ephemeral worker (URL commented on the PR), torn down by `cleanup-pr.yml` when the PR closes. Docs/mockup-only changes skip deploys. There are no direct deploys from local machines.
 
-Worker configuration (`wrangler.jsonc`): `ENGINE_BASE_URL` / `BARUCH_BASE_URL` vars, `AUTH_KV` KV namespace (users + sessions + login rate limits), and a `BARUCH` service binding (used when available to avoid same-zone subrequest restrictions). Secrets: `ENGINE_API_KEY`, `BARUCH_API_KEY`, `ADMIN_SECRET`.
+Worker configuration (`wrangler.jsonc`): `ENGINE_BASE_URL` / `BARUCH_BASE_URL` vars, `AUTH_KV` KV namespace (users + sessions + login rate limits), and a `BARUCH` service binding (used when available to avoid same-zone subrequest restrictions). Secrets: `ENGINE_API_KEY`, `ADMIN_API_KEY` (optional), `BARUCH_API_KEY`, `ADMIN_SECRET`. Calls to the engine's admin API (`/api/v1/admin/*`) use `ADMIN_API_KEY` when it is set and fall back to `ENGINE_API_KEY` when it is not; chat and history-read calls use `ENGINE_API_KEY`.
 
 ## Worker BFF Routes
 

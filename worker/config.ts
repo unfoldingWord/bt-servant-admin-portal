@@ -1,5 +1,5 @@
 import type { Env } from "./helpers";
-import { errorResponse, isPathShapedOrg } from "./helpers";
+import { engineAdminKey, errorResponse, isPathShapedOrg } from "./helpers";
 import {
   contractOrgModeRights,
   expandOrgModeRights,
@@ -82,7 +82,7 @@ async function proxyToEngine(
   }
 
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${env.ENGINE_API_KEY}`,
+    Authorization: `Bearer ${engineAdminKey(env)}`,
   };
 
   let body: string | undefined;
@@ -190,7 +190,7 @@ async function fetchResourceState(
       ? `/api/v1/admin/orgs/${encodeURIComponent(org)}/languages/${encodeURIComponent(name)}`
       : `/api/v1/admin/orgs/${encodeURIComponent(org)}/modes/${encodeURIComponent(name)}`;
   const res = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
-    headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
+    headers: { Authorization: `Bearer ${engineAdminKey(env)}` },
   });
   if (res.status === 404) return { status: "missing" };
   if (!res.ok) return { status: "error" };
@@ -577,7 +577,7 @@ async function fetchMcpServerOwners(
 ): Promise<Map<string, string | undefined>> {
   const res = await fetch(
     `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(org)}/mcp-servers`,
-    { headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` } }
+    { headers: { Authorization: `Bearer ${engineAdminKey(env)}` } }
   );
   if (!res.ok) {
     throw new Error(`MCP pool read failed (${res.status})`);

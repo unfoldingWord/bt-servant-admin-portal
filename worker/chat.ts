@@ -1,5 +1,10 @@
 import type { Env } from "./helpers";
-import { errorResponse, jsonResponse, listKvKeys } from "./helpers";
+import {
+  engineAdminKey,
+  errorResponse,
+  jsonResponse,
+  listKvKeys,
+} from "./helpers";
 import type { SessionData, StoredUser } from "./types";
 
 const CLIENT_ID = "admin-portal";
@@ -214,7 +219,7 @@ export async function handleDeleteHistory(
   const engineRes = await fetch(engineUrl, {
     method: "DELETE",
     headers: {
-      Authorization: `Bearer ${env.ENGINE_API_KEY}`,
+      Authorization: `Bearer ${engineAdminKey(env)}`,
     },
   });
 
@@ -251,7 +256,7 @@ export async function handleDeleteMemory(
   const engineRes = await fetch(engineUrl, {
     method: "DELETE",
     headers: {
-      Authorization: `Bearer ${env.ENGINE_API_KEY}`,
+      Authorization: `Bearer ${engineAdminKey(env)}`,
     },
   });
 

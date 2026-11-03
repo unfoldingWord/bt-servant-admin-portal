@@ -1,6 +1,10 @@
 export interface Env {
   ENGINE_BASE_URL: string;
   ENGINE_API_KEY: string;
+  // Dedicated key for the worker's admin API (/api/v1/admin/*). Optional:
+  // when unset or blank, admin calls fall back to ENGINE_API_KEY. Always
+  // read it through engineAdminKey() below, never directly.
+  ADMIN_API_KEY?: string;
   BARUCH_BASE_URL: string;
   BARUCH_API_KEY: string;
   BARUCH?: Fetcher;
@@ -10,6 +14,22 @@ export interface Env {
   // configured" instead of a type error; see worker/share-config.ts.
   WHATSAPP_NUMBER?: string;
   WHATSAPP_ORG?: string;
+}
+
+/**
+ * The bearer key for calls to the worker's admin API (`/api/v1/admin/*`).
+ * Uses ADMIN_API_KEY when it is set to a non-blank value, otherwise
+ * ENGINE_API_KEY, so a deploy without the new secret keeps working.
+ * Non-admin engine calls (chat stream, user history reads) keep using
+ * ENGINE_API_KEY directly.
+ */
+export function engineAdminKey(
+  env: Pick<Env, "ADMIN_API_KEY" | "ENGINE_API_KEY">
+): string {
+  const adminKey = env.ADMIN_API_KEY;
+  return adminKey !== undefined && adminKey.trim() !== ""
+    ? adminKey
+    : env.ENGINE_API_KEY;
 }
 
 export function jsonResponse(data: unknown, status = 200): Response {
