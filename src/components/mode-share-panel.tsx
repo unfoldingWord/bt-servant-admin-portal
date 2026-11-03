@@ -239,10 +239,8 @@ function ModeShareContent({
     shareConfig.isSuccess &&
     !(shareConfig.data.supported && shareConfig.data.config.whatsappNumber);
 
-  // Notes beside the state, only while an answer is on the card.
-  const emptyHomeOrg = shownTrigger(state)
-    ? homeOrgWithoutModes(shareCodeSnapshot.answer)
-    : null;
+  // Beside whatever the state is: the gateway org has no modes at all.
+  const emptyHomeOrg = homeOrgWithoutModes(shareCodeSnapshot.answer);
   const showRefreshFailed = refreshFailed(state, shareCodeSnapshot);
 
   // Try again (see `retryControl`): busy from the click until that
@@ -766,6 +764,8 @@ function describeFailure(failure: ShareCodeFailure): string {
       return "BT Servant couldn't read this request. Reload the page and try again.";
     case "corrupt-record":
       return "This org's modes record is damaged, so the code can't be checked. Ask unfoldingWord to repair it.";
+    case "engine-auth":
+      return "The portal can't authenticate to BT Servant, so this is a configuration problem; tell an unfoldingWord admin.";
   }
 }
 

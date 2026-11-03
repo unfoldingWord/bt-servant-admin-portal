@@ -144,6 +144,14 @@ describe("getModeShareCode", () => {
       [400, { error: "invalid_mode_name" }],
       [400, "not json"],
       [500, { error: "Corrupt modes record", code: "corrupt_modes_record" }],
+      // The portal's own engine credentials refused: a definite answer.
+      [
+        502,
+        {
+          error: "BT Servant refused the portal's credentials",
+          code: "engine_auth",
+        },
+      ],
       [
         404,
         {
@@ -167,6 +175,7 @@ describe("getModeShareCode", () => {
       { capability: "failed", failure: "bad-request" },
       { capability: "failed", failure: "bad-request" },
       { capability: "failed", failure: "corrupt-record" },
+      { capability: "failed", failure: "engine-auth" },
       { capability: "upgrade-needed" },
     ]);
   });

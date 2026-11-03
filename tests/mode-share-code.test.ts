@@ -517,6 +517,19 @@ describe("share-code route — mapping the worker's answer", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("maps the worker refusing the BFF's credentials (401 / 403) to 502 engine_auth", async () => {
+    for (const status of [401, 403]) {
+      workerReplies({ error: "Unauthorized" }, status);
+      const res = await call();
+      expect(res.status, String(status)).toBe(502);
+      expect(await res.json()).toEqual({
+        error: "BT Servant refused the portal's credentials",
+        code: "engine_auth",
+      });
+      vi.restoreAllMocks();
+    }
+  });
+
   it("answers 504 when the worker doesn't answer in time", async () => {
     // The fetch never resolves on its own; it rejects when its signal aborts.
     vi.spyOn(globalThis, "fetch").mockImplementation(

@@ -1,4 +1,4 @@
-import { BFF_AUTH_ERRORS } from "@/types/bff-errors";
+import { BFF_ERRORS } from "@/lib/bff-errors";
 
 export interface Env {
   ENGINE_BASE_URL: string;
@@ -38,13 +38,19 @@ export function authErrorResponse(
   return jsonResponse(
     {
       error: message,
-      code:
-        status === 401
-          ? BFF_AUTH_ERRORS.unauthorized
-          : BFF_AUTH_ERRORS.forbidden,
+      code: status === 401 ? BFF_ERRORS.unauthorized : BFF_ERRORS.forbidden,
     },
     status
   );
+}
+
+/**
+ * 400 code `invalid_org`, on every config route and the share-code route
+ * alike: the org param, the resolved org, or the worker's `invalid_org`
+ * for the mode's org.
+ */
+export function invalidOrg(message = "Invalid org"): Response {
+  return jsonResponse({ error: message, code: BFF_ERRORS.invalidOrg }, 400);
 }
 
 /**

@@ -591,6 +591,7 @@ describe("resolveModeSharePanelState", () => {
       "org-invalid",
       "bad-request",
       "corrupt-record",
+      "engine-auth",
     ] as const) {
       expect(run(code({ capability: "failed", failure }))).toEqual({
         kind: "failed",

@@ -1,11 +1,13 @@
 import type { Env } from "./helpers";
-import { jsonResponse } from "./helpers";
+import { invalidOrg, jsonResponse } from "./helpers";
 import {
   parseShareCodeAnswer,
   SHARE_CODE_ERRORS,
-  type ModeShareCodeResponse,
-  type ShareCodeAnswer,
   type ShareCodeErrorCode,
+} from "@/lib/mode-share-code-wire";
+import type {
+  ModeShareCodeResponse,
+  ShareCodeAnswer,
 } from "@/types/mode-share-code";
 
 // #311 — read-only share configuration for the per-mode WhatsApp QR.
@@ -70,7 +72,7 @@ function presentOrNull(value: string | undefined): string | null {
 // ---------------------------------------------------------------------------
 
 // The response type and the answer parser are shared with the client
-// (src/types/mode-share-code.ts). `reason` is passed through as any string:
+// (src/types/mode-share-code.ts, src/lib/mode-share-code-wire.ts). `reason` is passed through as any string:
 // the worker contract is additive, and the panel reads an unknown reason
 // as "does not open this mode".
 
@@ -99,11 +101,6 @@ export function unconfigured(): Response {
   return jsonResponse({
     capability: "unconfigured",
   } satisfies ModeShareCodeResponse);
-}
-
-/** 400 code `invalid_org`: the mode's org (BFF org resolution or the worker). */
-export function invalidOrg(): Response {
-  return shareCodeError("Invalid org", SHARE_CODE_ERRORS.invalidOrg, 400);
 }
 
 /**
@@ -270,6 +267,15 @@ export async function handleModeShareCode(
       "Corrupt modes record",
       SHARE_CODE_ERRORS.corruptModesRecord,
       500
+    );
+  }
+  // The worker refused the BFF's own credentials: a configuration
+  // problem, not the caller's session, so not a 401 / 403 to the browser.
+  if (res.status === 401 || res.status === 403) {
+    return shareCodeError(
+      "BT Servant refused the portal's credentials",
+      SHARE_CODE_ERRORS.engineAuth,
+      502
     );
   }
   if (res.status === 400) {

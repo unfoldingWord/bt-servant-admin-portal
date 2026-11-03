@@ -1,6 +1,7 @@
 import type { Env } from "./helpers";
 import {
   authErrorResponse,
+  invalidOrg,
   errorResponse,
   invalidModeNameResponse,
   isPathShapedOrg,
@@ -21,7 +22,7 @@ import {
   shareCodeError,
   shareCodeInvalidModeName,
 } from "./share-config";
-import { SHARE_CODE_ERRORS } from "@/types/mode-share-code";
+import { SHARE_CODE_ERRORS } from "@/lib/mode-share-code-wire";
 
 // `undefined` is the back-compat default for users predating the rights
 // system (and for fields the worker hasn't lazy-migrated into yet — see
@@ -532,18 +533,14 @@ export type OrgResolutionError =
 function orgErrorResponse(error: OrgResolutionError): Response {
   switch (error) {
     case "invalid-org-param":
-      return shareCodeError(
-        "Invalid org parameter",
-        SHARE_CODE_ERRORS.invalidOrg,
-        400
-      );
+      return invalidOrg("Invalid org parameter");
     case "cross-org-forbidden":
       return authErrorResponse(
         "Cross-org config access requires isSuperAdmin",
         403
       );
     case "invalid-org":
-      return shareCodeError("Invalid org", SHARE_CODE_ERRORS.invalidOrg, 400);
+      return invalidOrg();
   }
 }
 

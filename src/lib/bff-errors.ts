@@ -2,8 +2,10 @@
 // next to the human `error` text (an extra field; readers of `error` are
 // unaffected). Engine bodies the BFF passes through are never rewritten.
 
-/** The 401 / 403 the BFF generates on /api/config (session, same-origin, org checks). */
-export const BFF_AUTH_ERRORS = {
+/** The generic codes the BFF attaches on every /api/config route. */
+export const BFF_ERRORS = {
+  /** 400: the org (the `?org=` param or the resolved org) is invalid. */
+  invalidOrg: "invalid_org",
   /** 401: no valid session. */
   unauthorized: "unauthorized",
   /** 403: not same-origin, or another org's config without super-admin. */

@@ -10,8 +10,8 @@ import { buildConfigUrl } from "@/lib/config-url";
 import {
   parseShareCodeAnswer,
   SHARE_CODE_ERRORS,
-  type ModeShareCodeResponse,
-} from "@/types/mode-share-code";
+} from "@/lib/mode-share-code-wire";
+import type { ModeShareCodeResponse } from "@/types/mode-share-code";
 import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
 /** Root of every share-code query. */
@@ -64,7 +64,12 @@ export type ShareCodeFailure =
   /** Any other 400. */
   | "bad-request"
   /** 500 code `corrupt_modes_record`: permanent until the record is repaired. */
-  | "corrupt-record";
+  | "corrupt-record"
+  /**
+   * 502 code `engine_auth`: BT Servant refused the portal's own credentials.
+   * A configuration problem; never retried on its own.
+   */
+  | "engine-auth";
 
 /** A transient outcome worth retrying. */
 export type ShareCodeTransient =
@@ -214,6 +219,8 @@ function definiteFailure(
       return "bad-request";
     case SHARE_CODE_ERRORS.corruptModesRecord:
       return "corrupt-record";
+    case SHARE_CODE_ERRORS.engineAuth:
+      return "engine-auth";
     default:
       return status === 400 ? "bad-request" : null;
   }
