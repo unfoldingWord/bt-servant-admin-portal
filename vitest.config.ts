@@ -8,7 +8,7 @@ export default defineConfig({
       main: "./worker/index.ts",
       miniflare: {
         compatibilityDate: "2025-04-01",
-        compatibilityFlags: ["nodejs_compat"],
+        compatibilityFlags: ["nodejs_compat", "enable_request_signal"],
         bindings: {
           ADMIN_SECRET: "test-admin-secret",
           ENGINE_BASE_URL: "https://engine.example.test",

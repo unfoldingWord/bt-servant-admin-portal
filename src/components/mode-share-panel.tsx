@@ -16,7 +16,6 @@ import {
   answerUncertain,
   homeOrgWithoutModes,
   refreshFailed,
-  modeShareState,
   retryControl,
   shownTrigger,
   nextRetryClick,
@@ -75,6 +74,11 @@ interface ModeSharePanelProps {
   modeLabel?: string;
   /** Effective org of the mode being viewed (cross-org aware). */
   org: string | null;
+  /**
+   * The page's org param (null = the caller's own org): the org its mode
+   * queries and writes use, so a mode write invalidates this share code.
+   */
+  requestOrg: string | null;
   /** Server-truth flag pair — the page's `lastSyncedFlags`, not the cache. */
   flags: ModeFlags;
 }
@@ -88,6 +92,7 @@ export function ModeSharePanel({
   modeName: liveModeName,
   modeLabel: liveModeLabel,
   org: liveOrg,
+  requestOrg: liveRequestOrg,
   flags: liveFlags,
   returnFocusTo,
 }: ModeSharePanelProps) {
@@ -100,6 +105,7 @@ export function ModeSharePanel({
     modeName: liveModeName,
     modeLabel: liveModeLabel,
     org: liveOrg,
+    requestOrg: liveRequestOrg,
     flags: liveFlags,
   });
   if (open) {
@@ -107,6 +113,7 @@ export function ModeSharePanel({
       modeName: liveModeName,
       modeLabel: liveModeLabel,
       org: liveOrg,
+      requestOrg: liveRequestOrg,
       flags: liveFlags,
     };
   }
@@ -115,6 +122,7 @@ export function ModeSharePanel({
         modeName: liveModeName,
         modeLabel: liveModeLabel,
         org: liveOrg,
+        requestOrg: liveRequestOrg,
         flags: liveFlags,
       }
     : frozenRef.current;
@@ -159,6 +167,7 @@ interface ModeShareContentProps {
   modeName: string;
   modeLabel?: string;
   org: string | null;
+  requestOrg: string | null;
   flags: ModeFlags;
 }
 
@@ -168,19 +177,17 @@ function ModeShareContent({
   modeName,
   modeLabel,
   org,
+  requestOrg,
   flags,
 }: ModeShareContentProps) {
   // Session-cached operator config; asked while open.
   const shareConfig = useShareConfig(open);
-  // The worker's answer for which code opens this mode (#345), asked only
-  // for a mode the page itself can't refuse: published and not group-only
-  // (`resolveModeSharePanelState` checks those first, from the page's own
-  // saved flags). The name is the worker's to judge.
-  const shareCode = useModeShareCode(
-    open && modeShareState(flags) === "ready",
-    modeName,
-    org
-  );
+  // The worker's answer for which code opens this mode (#345). Asked for
+  // every mode, drafts included: the page's own saved flags decide draft
+  // and group-only, but only the worker can say a stored mode is damaged
+  // (`invalid_mode`), which it puts first. The name is the worker's to
+  // judge too.
+  const shareCode = useModeShareCode(open, modeName, requestOrg);
   const shareCodeSnapshot = shareCode.snapshot;
 
   const state = useMemo<ModeSharePanelState>(() => {
@@ -654,8 +661,10 @@ function describe(state: ModeSharePanelState, modeName: string): string {
       return "The configured WhatsApp number isn't a valid E.164 number. Check WHATSAPP_NUMBER for this environment.";
     case "org-unconfigured":
       return "WhatsApp's org isn't set up correctly for this environment. Check WHATSAPP_ORG to generate share codes.";
-    case "behind":
-      return "BT Servant hasn't seen this mode's latest change yet. Try again in a moment.";
+    case "worker-sees":
+      return state.sees === "draft"
+        ? "BT Servant currently sees this mode as unpublished. If you just published it, try again in a moment. If not, reload the page to see its latest settings."
+        : "BT Servant currently sees this mode as group chat only. If you just turned that off, try again in a moment. If not, reload the page to see its latest settings.";
     case "invalid-mode":
       return "This mode's saved settings are damaged, so BT Servant on WhatsApp can't open it. Ask unfoldingWord to check the mode.";
     case "upgrade-needed":
@@ -708,8 +717,8 @@ function placeholderLabel(state: ModeSharePanelState): string {
       return "Number invalid";
     case "org-unconfigured":
       return "Org not configured";
-    case "behind":
-      return "Not caught up yet";
+    case "worker-sees":
+      return "Not shareable yet";
     case "invalid-mode":
       return "Mode needs repair";
     case "failed":

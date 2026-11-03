@@ -6,7 +6,7 @@ import {
   type ModeShareCodeResponse,
   type ShareCodeAnswer,
   type ShareCodeErrorCode,
-} from "../src/types/mode-share-code";
+} from "@/types/mode-share-code";
 
 // #311 — read-only share configuration for the per-mode WhatsApp QR.
 //
@@ -98,24 +98,21 @@ export interface ShareCodeCaller {
   isSuperAdmin: boolean;
 }
 
-/** The worker's body: parsed JSON, not JSON (or empty), or cut off by the timeout. */
+/** The worker's body: parsed JSON, not JSON (or empty), or cut off by an abort. */
 type BodyRead =
   | { kind: "json"; body: unknown }
   | { kind: "not-json" }
-  | { kind: "timeout" };
+  | { kind: "aborted" };
 
-async function readBody(
-  res: Response,
-  timeout: AbortSignal
-): Promise<BodyRead> {
+async function readBody(res: Response, signal: AbortSignal): Promise<BodyRead> {
   try {
     return { kind: "json", body: await res.json() };
   } catch (error) {
     // The timeout covers the body too: a stalled body is a 504, not a
     // "not JSON" body (which, on a 404, would read as an older worker).
     const name = error instanceof Error ? error.name : "";
-    if (timeout.aborted || name === "AbortError" || name === "TimeoutError") {
-      return { kind: "timeout" };
+    if (signal.aborted || name === "AbortError" || name === "TimeoutError") {
+      return { kind: "aborted" };
     }
     return { kind: "not-json" };
   }
@@ -128,6 +125,12 @@ export async function handleModeShareCode(
   opts: {
     /** The session asking; decides whether `resolved_org` may be named. */
     caller: ShareCodeCaller;
+    /**
+     * The browser request's signal. Under the `enable_request_signal`
+     * compatibility flag it aborts when the client goes away (the panel
+     * closed), and the upstream call is cancelled with it.
+     */
+    signal?: AbortSignal;
     /** Overridable for tests. */
     timeoutMs?: number;
   }
@@ -147,13 +150,18 @@ export async function handleModeShareCode(
     `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(org)}` +
     `/modes/${encodeURIComponent(modeName)}/share-code` +
     `?home_org=${encodeURIComponent(homeOrg)}`;
-  // Bounded by a timeout only. A closed panel cancels the browser's
-  // request, but this upstream call is not tied to it: `request.signal`
-  // only reports a client disconnect behind the `enable_request_signal`
-  // compatibility flag, which this Worker doesn't set.
+  // Bounded by the timeout, and cancelled when the browser goes away
+  // (`request.signal`, live under the `enable_request_signal`
+  // compatibility flag in wrangler.jsonc).
   const timeout = AbortSignal.timeout(
     opts.timeoutMs ?? SHARE_CODE_UPSTREAM_TIMEOUT_MS
   );
+  const signal = opts.signal
+    ? AbortSignal.any([opts.signal, timeout])
+    : timeout;
+  // The browser went away: nobody reads this answer.
+  const clientGone = () =>
+    shareCodeError("Client closed request", SHARE_CODE_ERRORS.engineError, 499);
   const timedOut = () =>
     shareCodeError("Engine timeout", SHARE_CODE_ERRORS.engineTimeout, 504);
   const engineError = () =>
@@ -162,20 +170,23 @@ export async function handleModeShareCode(
   try {
     res = await fetch(url, {
       headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
-      signal: timeout,
+      signal,
     });
   } catch {
     // A worker that doesn't answer in time is a 504: the client's
     // transient "server" state, with Try again.
     if (timeout.aborted) return timedOut();
+    if (opts.signal?.aborted) return clientGone();
     return shareCodeError(
       "Engine unreachable",
       SHARE_CODE_ERRORS.engineError,
       502
     );
   }
-  const read = await readBody(res, timeout);
-  if (read.kind === "timeout") return timedOut();
+  const read = await readBody(res, signal);
+  if (read.kind === "aborted") {
+    return !timeout.aborted && opts.signal?.aborted ? clientGone() : timedOut();
+  }
   const body =
     read.kind === "json" && read.body !== null && typeof read.body === "object"
       ? (read.body as Record<string, unknown>)
@@ -274,7 +285,9 @@ function withoutForeignOrg(
   caller: ShareCodeCaller
 ): ShareCodeAnswer {
   if (answer.resolved_org === undefined || caller.isSuperAdmin) return answer;
-  if (answer.resolved_org.trim() === caller.org.trim()) return answer;
+  // Exact, like the worker's own org keys (#247/#253): " pbt" and "pbt"
+  // are different orgs, so a padded foreign org never passes as one's own.
+  if (answer.resolved_org === caller.org) return answer;
   const rest = { ...answer };
   delete rest.resolved_org;
   return rest;

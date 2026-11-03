@@ -19,9 +19,14 @@ import {
   handleStream,
 } from "./chat";
 import { handleConfig } from "./config";
+import { SHARE_CODE_ERRORS } from "@/types/mode-share-code";
 import type { Env } from "./helpers";
 import { errorResponse, requireSameOrigin } from "./helpers";
-import { handleShareConfig } from "./share-config";
+import {
+  handleShareConfig,
+  SHARE_CODE_PATH,
+  shareCodeError,
+} from "./share-config";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -85,12 +90,21 @@ export default {
 
     // Config endpoints — session required
     if (url.pathname.startsWith("/api/config/")) {
+      // The share-code route's errors carry a machine-readable `code`
+      // (#345), its 401 and 403 here included.
+      const shareCode = SHARE_CODE_PATH.test(url.pathname);
       const blocked = requireSameOrigin(request);
-      if (blocked) return blocked;
+      if (blocked) {
+        return shareCode
+          ? shareCodeError("Forbidden", SHARE_CODE_ERRORS.forbidden, 403)
+          : blocked;
+      }
 
       const session = await validateSession(request, env);
       if (!session) {
-        return errorResponse("Unauthorized", 401);
+        return shareCode
+          ? shareCodeError("Unauthorized", SHARE_CODE_ERRORS.unauthorized, 401)
+          : errorResponse("Unauthorized", 401);
       }
 
       return handleConfig(request, env, session, url.pathname);

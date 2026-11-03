@@ -14,7 +14,7 @@ import {
   nextRetryClick,
   refreshFailed,
   retryControl,
-  workerBehindPage,
+  workerSaysUnshareable,
   shareCodeSnapshot,
   shareCodeStart,
   type ShareCodeQueryView,
@@ -464,9 +464,45 @@ describe("resolveModeSharePanelState", () => {
     ).toEqual({ kind: "group-only" });
   });
 
-  it("says the worker is behind when it says draft / group-only for a page-published mode", () => {
-    expect(run(miss("draft"))).toEqual({ kind: "behind" });
-    expect(run(miss("requires_group"))).toEqual({ kind: "behind" });
+  it("compares the colliding org exactly: a padded org is another org", () => {
+    // " PBT" vs "PBT": a cross-org clash, never "another mode in this org".
+    expect(run(miss("collision", " PBT"))).toMatchObject({
+      kind: "collision",
+      resolvedOrg: " PBT",
+      sameOrg: false,
+    });
+    expect(run(miss("collision", "PBT"), { org: " PBT" })).toMatchObject({
+      sameOrg: false,
+    });
+  });
+
+  it("lets the worker's invalid_mode win over the page's draft / group-only, as the worker orders it", () => {
+    // #477 staticReason: a malformed partner mode is invalid_mode before
+    // draft or group-only.
+    for (const flags of [
+      { published: false },
+      { published: true, requires_group: true },
+    ]) {
+      expect(run(miss("invalid_mode"), { flags })).toEqual({
+        kind: "invalid-mode",
+      });
+    }
+    // Any other answer (or none yet) leaves the page's flags in charge.
+    expect(run(miss("draft"), { flags: { published: false } })).toEqual({
+      kind: "draft",
+    });
+    expect(
+      run({ ...settled, checking: true }, { flags: { published: false } })
+    ).toEqual({ kind: "draft" });
+  });
+
+  it("says what BT Servant sees when it says draft / group-only for a page-published mode", () => {
+    // Either side may be stale: the state says what BT Servant sees.
+    expect(run(miss("draft"))).toEqual({ kind: "worker-sees", sees: "draft" });
+    expect(run(miss("requires_group"))).toEqual({
+      kind: "worker-sees",
+      sees: "group-only",
+    });
   });
 
   it("treats a missing or unknown reason (e.g. `pending`) as not resolving, with generic copy", () => {
@@ -625,10 +661,22 @@ describe("refreshFailed and retryControl", () => {
   };
   const idle = null;
 
-  it("notes a failed refresh only while an answer is on the card", () => {
-    expect(refreshFailed(readyState, snap({ failure: "network" }))).toBe(true);
-    expect(refreshFailed(readyState, snap())).toBe(false);
-    // No code on the card: the failure IS the state, not a note.
+  const lastAnswer = {
+    capability: "present" as const,
+    home_org: "uW",
+    code: "x",
+    resolves: true,
+  };
+
+  it("notes a failed refresh while the worker's last answer is shown", () => {
+    expect(
+      refreshFailed(
+        readyState,
+        snap({ answer: lastAnswer, failure: "network" })
+      )
+    ).toBe(true);
+    expect(refreshFailed(readyState, snap({ answer: lastAnswer }))).toBe(false);
+    // No answer shown: the failure IS the state, not a note.
     expect(
       refreshFailed(
         { kind: "retry", cause: "network" },
@@ -642,12 +690,60 @@ describe("refreshFailed and retryControl", () => {
 
   it("offers Try again with the note, re-asking the share code", () => {
     expect(
-      retryControl(readyState, snap({ failure: "network" }), idle)
+      retryControl(
+        readyState,
+        snap({ answer: lastAnswer, failure: "network" }),
+        idle
+      )
     ).toEqual({
       target: "share-code",
       busy: false,
     });
-    expect(retryControl(readyState, snap(), idle)).toBeNull();
+    expect(
+      retryControl(readyState, snap({ answer: lastAnswer }), idle)
+    ).toBeNull();
+  });
+
+  it("notes a failed refresh over a definite state too, with Try again", () => {
+    const failedRefresh = (answer: ModeShareCode) =>
+      snap({ answer, failure: "server" });
+    const cases: [ModeSharePanelState, ModeShareCode][] = [
+      [{ kind: "not-found" }, { capability: "not-found" }],
+      [
+        { kind: "failed", failure: "invalid-name" },
+        { capability: "failed", failure: "invalid-name" },
+      ],
+      [
+        { kind: "slug-reserved" },
+        { ...lastAnswer, resolves: false, reason: "reserved" },
+      ],
+      [{ kind: "upgrade-needed" }, { capability: "upgrade-needed" }],
+      [{ kind: "org-unconfigured" }, { capability: "unconfigured" }],
+      [
+        { kind: "invalid-mode" },
+        { ...lastAnswer, resolves: false, reason: "invalid_mode" },
+      ],
+      [
+        { kind: "org-unencodable" },
+        { ...lastAnswer, code: null, resolves: false },
+      ],
+    ];
+    for (const [state, answer] of cases) {
+      expect(refreshFailed(state, failedRefresh(answer)), state.kind).toBe(
+        true
+      );
+      expect(
+        retryControl(state, failedRefresh(answer), idle),
+        state.kind
+      ).toEqual({ target: "share-code", busy: false });
+    }
+    // The page's own flags are not the worker's answer: no note.
+    expect(
+      refreshFailed(
+        { kind: "draft" },
+        failedRefresh({ capability: "not-found" })
+      )
+    ).toBe(false);
   });
 
   it("re-asks only the query that failed", () => {
@@ -658,7 +754,9 @@ describe("refreshFailed and retryControl", () => {
     expect(
       retryControl({ kind: "retry", cause: "unavailable" }, snap(), idle)
     ).toEqual({ target: "share-code", busy: false });
-    expect(retryControl({ kind: "behind" }, snap(), idle)).toEqual({
+    expect(
+      retryControl({ kind: "worker-sees", sees: "draft" }, snap(), idle)
+    ).toEqual({
       target: "share-code",
       busy: false,
     });
@@ -683,7 +781,7 @@ describe("refreshFailed and retryControl", () => {
   });
 });
 
-describe("workerBehindPage", () => {
+describe("workerSaysUnshareable", () => {
   const base = {
     capability: "present" as const,
     home_org: "unfoldingWord",
@@ -691,17 +789,21 @@ describe("workerBehindPage", () => {
   };
   it("is true only for a draft / group-only answer (never cached)", () => {
     expect(
-      workerBehindPage({ ...base, resolves: false, reason: "draft" })
+      workerSaysUnshareable({ ...base, resolves: false, reason: "draft" })
     ).toBe(true);
     expect(
-      workerBehindPage({ ...base, resolves: false, reason: "requires_group" })
+      workerSaysUnshareable({
+        ...base,
+        resolves: false,
+        reason: "requires_group",
+      })
     ).toBe(true);
     expect(
-      workerBehindPage({ ...base, resolves: false, reason: "org_skipped" })
+      workerSaysUnshareable({ ...base, resolves: false, reason: "org_skipped" })
     ).toBe(false);
-    expect(workerBehindPage({ ...base, resolves: true })).toBe(false);
-    expect(workerBehindPage({ capability: "not-found" })).toBe(false);
-    expect(workerBehindPage(undefined)).toBe(false);
+    expect(workerSaysUnshareable({ ...base, resolves: true })).toBe(false);
+    expect(workerSaysUnshareable({ capability: "not-found" })).toBe(false);
+    expect(workerSaysUnshareable(undefined)).toBe(false);
   });
 });
 

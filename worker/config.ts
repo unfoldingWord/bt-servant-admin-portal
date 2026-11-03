@@ -19,7 +19,7 @@ import {
   SHARE_CODE_PATH,
   shareCodeError,
 } from "./share-config";
-import { SHARE_CODE_ERRORS } from "../src/types/mode-share-code";
+import { SHARE_CODE_ERRORS } from "@/types/mode-share-code";
 
 // `undefined` is the back-compat default for users predating the rights
 // system (and for fields the worker hasn't lazy-migrated into yet — see
@@ -516,10 +516,50 @@ function isAdminMutation(method: string, session: SessionData): boolean {
 // a restricted-shepherd super admin could bypass their own org's
 // language_rights by adding a self-referential `?org=` (Frank, PR #185
 // review).
+/**
+ * Why `resolveOrg` refused. Each route maps it to its own response:
+ * `orgErrorResponse` for the generic config routes, `shareCodeOrgError`
+ * for the share-code route (#345), whose errors carry a `code`.
+ */
+export type OrgResolutionError =
+  | "invalid-org-param"
+  | "cross-org-forbidden"
+  | "invalid-org";
+
+/** The generic config routes' response for a refused org. */
+function orgErrorResponse(error: OrgResolutionError): Response {
+  switch (error) {
+    case "invalid-org-param":
+      return errorResponse("Invalid org parameter", 400);
+    case "cross-org-forbidden":
+      return errorResponse(
+        "Cross-org config access requires isSuperAdmin",
+        403
+      );
+    case "invalid-org":
+      return errorResponse("Invalid org", 400);
+  }
+}
+
+/** The share-code route's response for a refused org: same statuses, with a `code`. */
+function shareCodeOrgError(error: OrgResolutionError): Response {
+  switch (error) {
+    case "invalid-org-param":
+    case "invalid-org":
+      return shareCodeError("Invalid org", SHARE_CODE_ERRORS.invalidOrg, 400);
+    case "cross-org-forbidden":
+      return shareCodeError(
+        "Cross-org config access requires isSuperAdmin",
+        SHARE_CODE_ERRORS.forbidden,
+        403
+      );
+  }
+}
+
 function resolveOrg(
   request: Request,
   session: SessionData
-): { crossOrg: boolean; org: string } | { error: Response } {
+): { crossOrg: boolean; org: string } | { error: OrgResolutionError } {
   const orgParam = new URL(request.url).searchParams.get("org");
 
   // Slash-named orgs are addressable: org names are free-text (stored
@@ -535,9 +575,7 @@ function resolveOrg(
   } else {
     const trimmed = orgParam.trim();
     if (!trimmed) {
-      return {
-        error: errorResponse("Invalid org parameter", 400),
-      };
+      return { error: "invalid-org-param" };
     }
     if (trimmed === session.org.trim()) {
       // Trim BOTH sides: buildConfigUrl trims the param before sending,
@@ -548,12 +586,7 @@ function resolveOrg(
       // no-param branch produces for the same caller.
       resolved = { crossOrg: false, org: session.org };
     } else if (session.isSuperAdmin !== true) {
-      return {
-        error: errorResponse(
-          "Cross-org config access requires isSuperAdmin",
-          403
-        ),
-      };
+      return { error: "cross-org-forbidden" };
     } else {
       resolved = { crossOrg: true, org: trimmed };
     }
@@ -568,9 +601,7 @@ function resolveOrg(
   // create/move, but stored values predating that guard must still be
   // stopped here.
   if (isPathShapedOrg(resolved.org)) {
-    return {
-      error: errorResponse("Invalid org", 400),
-    };
+    return { error: "invalid-org" };
   }
 
   return resolved;
@@ -623,14 +654,41 @@ export async function handleConfig(
   pathname: string
 ): Promise<Response> {
   const resolved = resolveOrg(request, session);
-  if ("error" in resolved) {
-    // The share-code route's errors carry a machine-readable `code` (#345);
-    // resolveOrg's own messages stay as they are for every other route.
-    if (resolved.error.status === 400 && SHARE_CODE_PATH.test(pathname)) {
-      return shareCodeError("Invalid org", SHARE_CODE_ERRORS.invalidOrg, 400);
+
+  // /api/config/modes/{name}/share-code → GET (#345). Dispatched first:
+  // the generic mode route's `(.+)` would capture `{name}/share-code` as a
+  // mode name, and this route maps its own errors (each with a `code`). A
+  // read, scoped exactly like the mode GET: any session for its own org,
+  // super-admins cross-org (`resolveOrg`). The RAW resolved org goes to
+  // the worker, so it reads the same key the mode GET does.
+  const modeShareCodeMatch = pathname.match(SHARE_CODE_PATH);
+  if (modeShareCodeMatch?.[1]) {
+    if ("error" in resolved) return shareCodeOrgError(resolved.error);
+    if (request.method !== "GET") {
+      return shareCodeError(
+        "Method not allowed",
+        SHARE_CODE_ERRORS.methodNotAllowed,
+        405
+      );
     }
-    return resolved.error;
+    const modeName = safeDecode(modeShareCodeMatch[1]);
+    if (modeName === null) {
+      return shareCodeError(
+        "Invalid mode name",
+        SHARE_CODE_ERRORS.invalidModeName,
+        400
+      );
+    }
+    return handleModeShareCode(env, resolved.org, modeName, {
+      caller: {
+        org: session.org,
+        isSuperAdmin: session.isSuperAdmin === true,
+      },
+      signal: request.signal,
+    });
   }
+
+  if ("error" in resolved) return orgErrorResponse(resolved.error);
   // Named so the raw-vs-encoded distinction travels with the variable:
   // the round-3 double-encoding bug happened because a pre-encoded local
   // called `org` was passed where raw resolved.org was expected. Helpers
@@ -1164,33 +1222,6 @@ export async function handleConfig(
 
   // /api/config/modes/{name} → GET (any session) / PUT/DELETE (per-mode
   // verb-perms, admin-trump)
-  // /api/config/modes/{name}/share-code → GET (#345). Matched BEFORE the
-  // generic mode route, whose `(.+)` would capture `{name}/share-code` as
-  // a mode name. A read, scoped exactly like the mode GET below: any
-  // session for its own org, super-admins cross-org (`resolveOrg`). The
-  // RAW resolved org goes to the worker, so it reads the same key the
-  // mode GET does.
-  const modeShareCodeMatch = pathname.match(SHARE_CODE_PATH);
-  if (modeShareCodeMatch?.[1]) {
-    if (request.method !== "GET") {
-      return errorResponse("Method not allowed", 405);
-    }
-    const modeName = safeDecode(modeShareCodeMatch[1]);
-    if (modeName === null) {
-      return shareCodeError(
-        "Invalid mode name",
-        SHARE_CODE_ERRORS.invalidModeName,
-        400
-      );
-    }
-    return handleModeShareCode(env, resolved.org, modeName, {
-      caller: {
-        org: session.org,
-        isSuperAdmin: session.isSuperAdmin === true,
-      },
-    });
-  }
-
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);
   if (modeMatch?.[1]) {
     const modeName = safeDecode(modeMatch[1]);

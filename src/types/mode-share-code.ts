@@ -85,6 +85,12 @@ export const SHARE_CODE_ERRORS = {
   invalidOrg: "invalid_org",
   /** 400: any other bad request. */
   badRequest: "bad_request",
+  /** 401: no valid session. */
+  unauthorized: "unauthorized",
+  /** 403: not same-origin, or another org's modes without super-admin. */
+  forbidden: "forbidden",
+  /** 405: the route is GET only. */
+  methodNotAllowed: "method_not_allowed",
   /**
    * 404: the worker has no share-code route (a non-JSON or empty 404). The
    * panel says a newer BT Servant is needed.

@@ -14,8 +14,43 @@ import {
 } from "@/types/mode-share-code";
 import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
-/** Root of every share-code query, for invalidation after mode writes. */
+/** Root of every share-code query. */
 export const MODE_SHARE_CODE_KEY = ["mode-share-code"] as const;
+
+/**
+ * Share-code query keys. `org` is the page's org param (null = the
+ * caller's own org), the same value its mode queries and writes use, so a
+ * mode write can invalidate exactly its org's share codes.
+ */
+export const modeShareCodeKeys = {
+  org: (org: string | null) => [...MODE_SHARE_CODE_KEY, org] as const,
+  mode: (org: string | null, modeName: string) =>
+    [...MODE_SHARE_CODE_KEY, org, modeName] as const,
+};
+
+/**
+ * Whether a saved mode's share code may have changed, so its org's share
+ * codes are re-asked. Only what the worker's answer depends on counts: a
+ * new mode, a publish or group-only flip, or a save over a mode the worker
+ * last called damaged (`invalid_mode`; a successful PUT stores a
+ * well-shaped mode). A document autosave changes none of them.
+ */
+export function saveMayChangeShareCode(
+  before: { published?: boolean; requires_group?: boolean } | undefined,
+  after: { published?: boolean; requires_group?: boolean },
+  lastAnswer: ModeShareCode | undefined
+): boolean {
+  if (before === undefined) return true;
+  if ((before.published === true) !== (after.published === true)) return true;
+  if ((before.requires_group === true) !== (after.requires_group === true)) {
+    return true;
+  }
+  return (
+    lastAnswer?.capability === "present" &&
+    !lastAnswer.resolves &&
+    lastAnswer.reason === "invalid_mode"
+  );
+}
 
 /**
  * A definite reason the share-code request can't give an answer. These
@@ -134,22 +169,36 @@ function notFoundAnswer(
   throw new ShareCodeRequestError("server");
 }
 
-/** Name a definite failure by status and code, or null when it's transient. */
+/**
+ * Name a definite failure by its code, or null when it's transient. The
+ * status is read only for a body without a known code: something in
+ * front of the BFF (an edge 401/403), or a newer BFF's 400.
+ */
 function definiteFailure(
   status: number,
   code: string | null
 ): ShareCodeFailure | null {
-  if (status === 401) return "signed-out";
-  if (status === 403) return "forbidden";
-  if (status === 400) {
-    if (code === SHARE_CODE_ERRORS.invalidModeName) return "invalid-name";
-    if (code === SHARE_CODE_ERRORS.invalidOrg) return "org-invalid";
-    return "bad-request";
+  switch (code) {
+    case SHARE_CODE_ERRORS.unauthorized:
+      return "signed-out";
+    case SHARE_CODE_ERRORS.forbidden:
+      return "forbidden";
+    case SHARE_CODE_ERRORS.invalidModeName:
+      return "invalid-name";
+    case SHARE_CODE_ERRORS.invalidOrg:
+      return "org-invalid";
+    case SHARE_CODE_ERRORS.badRequest:
+    case SHARE_CODE_ERRORS.methodNotAllowed:
+      return "bad-request";
+    case SHARE_CODE_ERRORS.corruptModesRecord:
+      return "corrupt-record";
+    default:
+      // No code (or one this client doesn't know): the status alone.
+      if (status === 401) return "signed-out";
+      if (status === 403) return "forbidden";
+      if (status === 400) return "bad-request";
+      return null;
   }
-  if (status === 500 && code === SHARE_CODE_ERRORS.corruptModesRecord) {
-    return "corrupt-record";
-  }
-  return null;
 }
 
 /** Read a 200 body into the wire type, or null when it isn't one. */

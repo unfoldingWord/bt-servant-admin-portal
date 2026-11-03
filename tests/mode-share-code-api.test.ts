@@ -108,8 +108,12 @@ describe("getModeShareCode", () => {
   it("returns each definite failure as an answer, switching on the BFF's code only", async () => {
     const cases: [number, unknown][] = [
       [404, { error: "Mode not found", code: "mode_not_found" }],
+      [401, { error: "Unauthorized", code: "unauthorized" }],
+      [403, { error: "Forbidden", code: "forbidden" }],
+      [405, { error: "Method not allowed", code: "method_not_allowed" }],
+      // Without a code (an edge in front of the BFF): the status alone.
       [401, { error: "Unauthorized" }],
-      [403, { error: "Forbidden" }],
+      [403, "Forbidden"],
       [400, { error: "Invalid mode name", code: "invalid_mode_name" }],
       [400, { error: "Invalid org", code: "invalid_org" }],
       [400, { error: "Bad request", code: "bad_request" }],
@@ -136,6 +140,9 @@ describe("getModeShareCode", () => {
     }
     expect(got).toEqual([
       { capability: "not-found" },
+      { capability: "failed", failure: "signed-out" },
+      { capability: "failed", failure: "forbidden" },
+      { capability: "failed", failure: "bad-request" },
       { capability: "failed", failure: "signed-out" },
       { capability: "failed", failure: "forbidden" },
       { capability: "failed", failure: "invalid-name" },

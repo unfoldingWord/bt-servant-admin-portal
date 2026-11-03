@@ -2329,6 +2329,7 @@ export function ModesPage() {
         modeName={shareFor ?? ""}
         modeLabel={serverLabel}
         org={effectiveOrg}
+        requestOrg={contextOrg}
         flags={lastSyncedFlags}
         returnFocusTo={shareButtonRef}
       />

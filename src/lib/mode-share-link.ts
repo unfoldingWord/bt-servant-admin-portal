@@ -122,10 +122,11 @@ export type ModeShareState = "ready" | "group-only" | "draft";
 
 /**
  * Whether a scanned QR could reach this mode, from the page's own saved
- * flags. The panel checks this BEFORE asking the worker, and asks only for
- * a published, non-group-only mode. Same order as the worker's
- * `staticReason` (bt-servant-worker src/utils/mode-share-code.ts): draft,
- * then group-only.
+ * flags. Same order as the worker's `staticReason` (bt-servant-worker
+ * src/utils/mode-share-code.ts): draft, then group-only. The worker's
+ * `invalid_mode`, which it checks first for a partner org's mode, is not
+ * knowable from the flags; `resolveModeSharePanelState` lets that answer
+ * win over these.
  *
  * - `draft`: the worker masks unpublished modes for non-admin callers, so
  *   a scanned draft answers "unknown mode".
@@ -299,7 +300,13 @@ export type ModeSharePanelState =
   | { kind: "upgrade-needed" }
   | { kind: "org-unencodable" }
   | { kind: "code-unencodable" }
-  | { kind: "behind" }
+  /**
+   * The page has the mode saved as published and private-chat OK, but BT
+   * Servant sees it as unpublished (`draft`) or group-only. Either side
+   * may be the stale one (a save not yet seen, or another admin's change
+   * the page hasn't loaded), so the panel says what BT Servant sees.
+   */
+  | { kind: "worker-sees"; sees: "draft" | "group-only" }
   | { kind: "invalid-mode" }
   | ({ kind: "org-skipped" } & Shown)
   | ({
@@ -339,7 +346,9 @@ export function shownTrigger(state: ModeSharePanelState): Shown | null {
  * KV read predates the save. Shown as one plain "not seen the latest
  * change yet" state with a manual Try again, and never cached.
  */
-export function workerBehindPage(data: ModeShareCode | undefined): boolean {
+export function workerSaysUnshareable(
+  data: ModeShareCode | undefined
+): boolean {
   return (
     data?.capability === "present" &&
     !data.resolves &&
@@ -347,15 +356,30 @@ export function workerBehindPage(data: ModeShareCode | undefined): boolean {
   );
 }
 
+/** States that don't come from the worker's answer. */
+const NOT_FROM_ANSWER: ReadonlySet<ModeSharePanelState["kind"]> = new Set([
+  "loading-config",
+  "checking-code",
+  "error",
+  "retry",
+  "draft",
+  "group-only",
+]);
+
 /**
- * A background refresh failed while an answer is on the card: the panel
- * keeps the answer and adds a note with Try again.
+ * A background refresh failed while the panel shows the worker's last
+ * answer, any answer (a code, or a definite state such as not-found or
+ * upgrade-needed): the panel keeps it and adds a note with Try again.
  */
 export function refreshFailed(
   state: ModeSharePanelState,
   shareCode: ShareCodeSnapshot
 ): boolean {
-  return shownTrigger(state) !== null && shareCode.failure !== null;
+  return (
+    shareCode.answer !== undefined &&
+    shareCode.failure !== null &&
+    !NOT_FROM_ANSWER.has(state.kind)
+  );
 }
 
 /**
@@ -392,7 +416,7 @@ export function retryControl(
   if (state.kind === "error") return { target: "config", busy: false };
   if (
     state.kind === "retry" ||
-    state.kind === "behind" ||
+    state.kind === "worker-sees" ||
     answerUncertain(state) ||
     refreshFailed(state, shareCode)
   ) {
@@ -454,8 +478,9 @@ function unhandled(value: never): never {
  * Resolve what the panel shows. Order of precedence:
  *
  * 1. the page's own saved flags: draft, then group-only (the worker's
- *    order). The worker is not asked about either; publishing or turning
- *    off group-only is the author's to do first;
+ *    order), unless the worker calls the mode damaged (`invalid_mode`,
+ *    which the worker puts first for a partner org's mode). Publishing or
+ *    turning off group-only is the author's to do first;
  * 2. query lifecycle: share-config loading (or offline) or failed, then
  *    the share code checking (see ShareCodeSnapshot) or failed with
  *    nothing to show;
@@ -463,8 +488,8 @@ function unhandled(value: never): never {
  *    unusable, a worker without the share-code route), a definite
  *    failure (a name the worker rejects included), no code at all, a link
  *    if the code resolves, else why not (a reserved name included). A
- *    draft / group-only answer here means the worker hasn't seen the
- *    page's latest save ("behind");
+ *    draft / group-only answer here means the worker and the page
+ *    disagree ("worker-sees");
  * 4. the number: missing or invalid.
  *
  * The mode's name is not checked here: the worker decides (400
@@ -477,7 +502,22 @@ export function resolveModeSharePanelState(
   modeOrg: string | null | undefined
 ): ModeSharePanelState {
   const eligibility = modeShareState(flags);
-  if (eligibility !== "ready") return { kind: eligibility };
+  if (eligibility !== "ready") {
+    // The worker's own order (#477 `staticReason`): a damaged stored mode
+    // of a partner org is `invalid_mode` before draft or group-only, since
+    // chat drops it whatever its flags. Only the worker can tell, so it is
+    // asked for every mode; any other answer leaves the page's flags in
+    // charge.
+    const { answer } = shareCode;
+    if (
+      answer?.capability === "present" &&
+      !answer.resolves &&
+      answer.reason === "invalid_mode"
+    ) {
+      return { kind: "invalid-mode" };
+    }
+    return { kind: eligibility };
+  }
   // Only a first load blocks: a background refetch keeps a ready QR.
   // Offline before it ever loaded: the settings error, with Try again.
   if (config.pending && config.paused) return { kind: "error" };
@@ -524,11 +564,12 @@ function fromWorkerAnswer(
   const resolvedOrg = answer.resolved_org ?? null;
   const uncertain = answer.resolved_org_uncertain === true;
   switch (answer.reason) {
-    // The page saved published + private-chat OK (checked first), so the
-    // worker hasn't seen that save yet.
+    // The page has it published + private-chat OK (checked first): the
+    // two sides disagree, and either may be stale.
     case "draft":
+      return { kind: "worker-sees", sees: "draft" };
     case "requires_group":
-      return { kind: "behind" };
+      return { kind: "worker-sees", sees: "group-only" };
     // A name the worker's classifier reserves (`#default`, `#none`,
     // `#clear` take a user out of their mode).
     case "reserved":
@@ -538,11 +579,9 @@ function fromWorkerAnswer(
         kind: "collision",
         resolvedOrg,
         // #477 names this same org for an alias clash inside it.
-        sameOrg:
-          resolvedOrg !== null &&
-          modeOrg !== null &&
-          modeOrg !== undefined &&
-          resolvedOrg.trim() === modeOrg.trim(),
+        // Exact, like the worker's org keys (#247/#253): " pbt" and "pbt"
+        // are different orgs, so a cross-org clash never reads as this one.
+        sameOrg: resolvedOrg !== null && resolvedOrg === modeOrg,
         uncertain,
         ...shown,
       };

@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { handleConfig } from "../worker/config";
+import worker from "../worker/index";
 import { handleModeShareCode } from "../worker/share-config";
 import type { Env } from "../worker/helpers";
 import type { SessionData } from "../worker/types";
@@ -95,7 +96,36 @@ describe("share-code route — scoping", () => {
       query: "?org=Other",
     });
     expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      error: "Cross-org config access requires isSuperAdmin",
+      code: "forbidden",
+    });
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("answers 401 and the same-origin 403 with codes, before any session work", async () => {
+    const url = `https://portal.example.test${PATH}`;
+    const noOrigin = await worker.fetch(new Request(url), testEnv);
+    expect(noOrigin.status).toBe(403);
+    expect(await noOrigin.json()).toEqual({
+      error: "Forbidden",
+      code: "forbidden",
+    });
+    const noSession = await worker.fetch(
+      new Request(url, { headers: { "X-Requested-With": "XMLHttpRequest" } }),
+      testEnv
+    );
+    expect(noSession.status).toBe(401);
+    expect(await noSession.json()).toEqual({
+      error: "Unauthorized",
+      code: "unauthorized",
+    });
+    // Other config routes keep their plain bodies.
+    const other = await worker.fetch(
+      new Request("https://portal.example.test/api/config/modes"),
+      testEnv
+    );
+    expect(await other.json()).toEqual({ error: "Forbidden" });
   });
 
   it("lets a super-admin ask about another org's mode", async () => {
@@ -114,6 +144,10 @@ describe("share-code route — scoping", () => {
     const spy = workerReplies({});
     const res = await call({ method: "POST" });
     expect(res.status).toBe(405);
+    expect(await res.json()).toEqual({
+      error: "Method not allowed",
+      code: "method_not_allowed",
+    });
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -176,8 +210,38 @@ describe("share-code route — mapping the worker's answer", () => {
       reason: "collision",
       resolved_org: "PBT",
     });
-    const res = await call({ session: makeSession({ org: " PBT" }) });
+    const res = await call();
     expect(await res.json()).toMatchObject({ resolved_org: "PBT" });
+  });
+
+  it("compares the caller's org exactly: a padded foreign org is stripped", async () => {
+    // " PBT" and "PBT" are different orgs to the worker (#247/#253).
+    for (const [sessionOrg, resolvedOrg] of [
+      ["PBT", " PBT"],
+      [" PBT", "PBT"],
+    ]) {
+      workerReplies({
+        code: "pbt/obt-coach",
+        resolves: false,
+        reason: "collision",
+        resolved_org: resolvedOrg,
+      });
+      const res = await call({ session: makeSession({ org: sessionOrg }) });
+      expect(
+        await res.json(),
+        `${sessionOrg}|${resolvedOrg}`
+      ).not.toHaveProperty("resolved_org");
+      vi.restoreAllMocks();
+    }
+    // A legacy padded org's own key, exactly: kept.
+    workerReplies({
+      code: "pbt/obt-coach",
+      resolves: false,
+      reason: "collision",
+      resolved_org: " PBT",
+    });
+    const own = await call({ session: makeSession({ org: " PBT" }) });
+    expect(await own.json()).toMatchObject({ resolved_org: " PBT" });
   });
 
   it("passes an invalid_mode answer without home_has_modes through unchanged", async () => {
@@ -457,12 +521,43 @@ describe("share-code route — mapping the worker's answer", () => {
     }
   });
 
-  it("bounds the upstream call by the timeout alone", async () => {
+  it("cancels the upstream call when the browser's request aborts", async () => {
     const spy = workerReplies({ code: "x", resolves: true });
-    await handleModeShareCode(testEnv, "PBT", "obt-coach", CALLER);
+    const client = new AbortController();
+    await handleModeShareCode(testEnv, "PBT", "obt-coach", {
+      ...CALLER,
+      signal: client.signal,
+    });
     const upstream = (spy.mock.calls[0]![1] as RequestInit).signal!;
-    expect(upstream).toBeInstanceOf(AbortSignal);
     expect(upstream.aborted).toBe(false);
+    client.abort();
+    expect(upstream.aborted).toBe(true);
+  });
+
+  it("passes the route's request signal to the handler", async () => {
+    // Pending until its signal aborts, so the abort is what ends it.
+    let upstream: AbortSignal | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_input, init) =>
+        new Promise((_, reject) => {
+          upstream = (init as RequestInit).signal!;
+          upstream.addEventListener("abort", () => reject(upstream!.reason));
+        })
+    );
+    const client = new AbortController();
+    const pending = handleConfig(
+      new Request(`https://portal.example.test${PATH}`, {
+        signal: client.signal,
+      }),
+      testEnv,
+      makeSession(),
+      PATH
+    );
+    await vi.waitFor(() => expect(upstream).toBeDefined());
+    client.abort();
+    const res = await pending;
+    expect(upstream!.aborted).toBe(true);
+    expect(res.status).toBe(499);
   });
 
   it("maps a worker 500 or a thrown fetch to 502", async () => {

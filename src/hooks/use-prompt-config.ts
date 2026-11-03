@@ -6,7 +6,11 @@ import {
 } from "@tanstack/react-query";
 import { useCallback } from "react";
 
-import { MODE_SHARE_CODE_KEY } from "@/lib/mode-share-code-api";
+import {
+  modeShareCodeKeys,
+  saveMayChangeShareCode,
+  type ModeShareCode,
+} from "@/lib/mode-share-code-api";
 import * as configApi from "@/lib/config-api";
 import type {
   OrgModes,
@@ -33,14 +37,15 @@ const keys = {
 export const modeQueryKeys = keys;
 
 /**
- * What every mode write invalidates: the org's mode list, and every
- * share-code answer (#345). A write can change which code opens a mode,
- * here or, through a cross-org slug collision, in another org, so share
- * codes are re-asked across the board rather than per mode.
+ * Re-ask the worker for this org's share codes (#345) after a write that
+ * can change one: publish or group-only, rename, delete, retire (aliases).
+ * Every mode of the org, since one mode's name or aliases can clash with
+ * another's. Other orgs' answers are left to their 20s stale time: a
+ * cross-org clash is rare, and re-asking every org on each write is not
+ * worth it.
  */
-export function invalidateModeWrites(qc: QueryClient, org: string | null) {
-  void qc.invalidateQueries({ queryKey: keys.modes(org) });
-  void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
+export function invalidateShareCodes(qc: QueryClient, org: string | null) {
+  void qc.invalidateQueries({ queryKey: modeShareCodeKeys.org(org) });
 }
 
 function normalize(org?: string | null): string | null {
@@ -154,6 +159,12 @@ export function saveModeMutationOptions(qc: QueryClient) {
       { name, org, seed }: ModeSaveTarget
     ) => {
       const key = normalize(org);
+      // Taken before any seed overwrites it: what the share code depended
+      // on before this save.
+      const before = qc.getQueryData<PromptMode>(keys.mode(name, key));
+      const lastAnswer = qc.getQueryData<ModeShareCode>(
+        modeShareCodeKeys.mode(key, name)
+      );
       if (seed) {
         // AWAIT the cancel before seeding (TanStack's optimistic-update
         // order): an in-flight GET that settles AFTER setQueryData would
@@ -178,7 +189,10 @@ export function saveModeMutationOptions(qc: QueryClient) {
       // started here captures the seeded state as its revert baseline, and
       // reconciles the optimistic rows with server truth (e.g. fresh
       // `aliases`).
-      invalidateModeWrites(qc, key);
+      void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      if (saveMayChangeShareCode(before, saved, lastAnswer)) {
+        invalidateShareCodes(qc, key);
+      }
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
     },
   };
@@ -219,7 +233,8 @@ export function useDeleteMode(org?: string | null) {
   return useMutation({
     mutationFn: (name: string) => configApi.deleteMode(name, undefined, key),
     onSuccess: () => {
-      invalidateModeWrites(qc, key);
+      void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      invalidateShareCodes(qc, key);
     },
   });
 }
@@ -286,7 +301,8 @@ export function useRenameMode(org?: string | null) {
       qc.setQueryData<OrgModes>(keys.modes(key), (prev) =>
         applyRenameToModeList(prev, name, data)
       );
-      invalidateModeWrites(qc, key);
+      void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      invalidateShareCodes(qc, key);
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
       void qc.invalidateQueries({ queryKey: keys.mode(newName, key) });
     },
@@ -326,7 +342,9 @@ export function useCloneMode(org?: string | null) {
         applyCloneToModeList(prev, data)
       );
       qc.setQueryData(keys.mode(data.name, key), data);
-      invalidateModeWrites(qc, key);
+      // A clone is stored unpublished, which chat never serves, so no
+      // share code changes.
+      void qc.invalidateQueries({ queryKey: keys.modes(key) });
       void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
     },
     onError: (error) => {
@@ -339,7 +357,7 @@ export function useCloneMode(org?: string | null) {
         error instanceof configApi.CloneCollisionError &&
         error.grantedVerbs
       ) {
-        invalidateModeWrites(qc, key);
+        void qc.invalidateQueries({ queryKey: keys.modes(key) });
       }
     },
   });
@@ -393,7 +411,8 @@ export function useRetireMode(org?: string | null) {
       );
       qc.setQueryData(keys.mode(data.name, key), data);
       qc.removeQueries({ queryKey: keys.mode(name, key) });
-      invalidateModeWrites(qc, key);
+      void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      invalidateShareCodes(qc, key);
       void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
     },
   });
