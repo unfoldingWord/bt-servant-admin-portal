@@ -113,7 +113,7 @@ Pre-commit hooks (via Husky + lint-staged) run ESLint, Prettier, typecheck, and 
 
 Each open PR gets its own ephemeral worker (URL commented on the PR), torn down by `cleanup-pr.yml` when the PR closes. Docs/mockup-only changes skip deploys. There are no direct deploys from local machines.
 
-Worker configuration (`wrangler.jsonc`): `ENGINE_BASE_URL` / `BARUCH_BASE_URL` vars, `AUTH_KV` KV namespace (users + sessions + login rate limits), and a `BARUCH` service binding (used when available to avoid same-zone subrequest restrictions). Secrets: `ENGINE_API_KEY`, `BARUCH_API_KEY`, `ADMIN_SECRET`.
+Worker configuration (`wrangler.jsonc`): `ENGINE_BASE_URL` / `BARUCH_BASE_URL` vars, `AUTH_KV` KV namespace (users + sessions + login rate limits), and a `BARUCH` service binding (used when available to avoid same-zone subrequest restrictions). Secrets: `ADMIN_API_KEY` (the engine admin key; set it on `bt-servant-admin-portal` (prod), `bt-servant-admin-portal-staging` and `bt-servant-admin-portal-dev` only after the bt-servant-worker release that adds it, bt-servant-worker PR #479, is deployed in the engine environment that worker calls, and with that engine's value. Per-PR preview workers (`bt-servant-admin-portal-pr-<N>`) call staging and need `ADMIN_API_KEY` set on each worker, or their admin calls fail once staging requires the admin key; the deploy workflows set no Worker secrets), `ENGINE_API_KEY`, `BARUCH_API_KEY`, `ADMIN_SECRET`. All engine calls go through `engineFetch()` in `worker/helpers.ts`. `ADMIN_API_KEY` and `ADMIN_SECRET` (the portal's own bootstrap auth for `/api/admin/users`) are unrelated.
 
 ## Worker BFF Routes
 
