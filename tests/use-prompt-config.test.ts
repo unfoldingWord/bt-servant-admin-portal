@@ -482,7 +482,8 @@ describe("share-code invalidation", () => {
       flagsBefore: { published: false, requires_group: false },
     };
     const context = options.onMutate(vars);
-    expect(context.before).toEqual({ published: false, requires_group: false });
+    // The context holds only the last share-code answer.
+    expect(context).toEqual({ lastAnswer: undefined });
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
     await options.onSuccess(published, vars, context);
     expect(invalidateSpy.mock.calls.map((c) => c[0]?.queryKey)).toContainEqual(

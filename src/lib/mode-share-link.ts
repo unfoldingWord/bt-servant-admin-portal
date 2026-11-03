@@ -430,6 +430,35 @@ const NOT_FROM_ANSWER: ReadonlySet<ModeSharePanelState["kind"]> = new Set([
 ]);
 
 /**
+ * Answers the panel never reuses from the cache (stale time 0), each
+ * offered with Try again: the worker and the page disagree on draft /
+ * group-only; "needs a newer BT Servant" (a plain 404 may be an edge
+ * hiccup, not an old worker); not found; and the definite failures (a
+ * rename, repair or permission change elsewhere can clear any of them).
+ */
+export function answerNeverReused(data: ModeShareCode | undefined): boolean {
+  if (workerSaysUnshareable(data)) return true;
+  return (
+    data?.capability === "upgrade-needed" ||
+    data?.capability === "not-found" ||
+    data?.capability === "failed"
+  );
+}
+
+/**
+ * Keep showing what the panel showed last while it is closed: the dialog
+ * stays mounted for its exit animation after `open` turns false, when its
+ * queries are disabled and would otherwise read as checking.
+ */
+export function frozenWhileClosed<T>(
+  open: boolean,
+  live: T,
+  lastOpen: T | undefined
+): T {
+  return open || lastOpen === undefined ? live : lastOpen;
+}
+
+/**
  * A background refresh failed while the panel shows the worker's last
  * answer, any answer (a code, or a definite state such as not-found or
  * upgrade-needed): the panel keeps it and adds a note with Try again.
@@ -480,8 +509,10 @@ export function retryControl(
   if (
     state.kind === "retry" ||
     state.kind === "worker-sees" ||
-    // A plain 404 may be an edge hiccup rather than an old worker.
+    // Never reused, so worth re-asking (see `answerNeverReused`).
     state.kind === "upgrade-needed" ||
+    state.kind === "not-found" ||
+    state.kind === "failed" ||
     answerUncertain(state) ||
     refreshFailed(state, shareCode)
   ) {

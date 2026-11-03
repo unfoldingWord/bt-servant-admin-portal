@@ -74,11 +74,12 @@ export function invalidModeNameResponse(): Response {
  * Lightweight same-origin guard: require X-Requested-With header.
  * Browsers block custom headers on cross-origin requests unless a CORS
  * preflight succeeds, and this worker sends no CORS headers, so external
- * sites cannot call these endpoints.
+ * sites cannot call these endpoints. The refusal is the BFF's own 403,
+ * with its machine-readable `code` (#345), on every route that uses it.
  */
 export function requireSameOrigin(request: Request): Response | null {
   if (request.headers.get("X-Requested-With") !== "XMLHttpRequest") {
-    return errorResponse("Forbidden", 403);
+    return authErrorResponse("Forbidden", 403);
   }
   return null;
 }

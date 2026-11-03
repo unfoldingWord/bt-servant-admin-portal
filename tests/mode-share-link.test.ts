@@ -16,6 +16,8 @@ import {
   answerUncertain,
   hasUsableWhatsAppNumber,
   homeOrgWithoutModes,
+  answerNeverReused,
+  frozenWhileClosed,
   nextRetryClick,
   refreshFailed,
   retryControl,
@@ -847,10 +849,16 @@ describe("refreshFailed and retryControl", () => {
       target: "share-code",
       busy: false,
     });
-    // Definite answers get no Try again.
+    // Not-found and the definite failures are never reused: Try again.
+    expect(retryControl({ kind: "not-found" }, snap(), idle)).toEqual({
+      target: "share-code",
+      busy: false,
+    });
     expect(
       retryControl({ kind: "failed", failure: "corrupt-record" }, snap(), idle)
-    ).toBeNull();
+    ).toEqual({ target: "share-code", busy: false });
+    // A damaged stored mode needs a repair, not a re-ask.
+    expect(retryControl({ kind: "invalid-mode" }, snap(), idle)).toBeNull();
   });
 
   it("stays visible and disabled while its re-ask runs, even once the state is checking", () => {
@@ -865,6 +873,102 @@ describe("refreshFailed and retryControl", () => {
     ).toEqual({ target: "share-code", busy: true });
     // Settled (busy cleared): back to whatever the state calls for.
     expect(retryControl({ kind: "checking-code" }, snap(), null)).toBeNull();
+  });
+});
+
+describe("answerNeverReused", () => {
+  it("is true for what may be stale or cleared elsewhere, false for a firm answer", () => {
+    const present = {
+      capability: "present" as const,
+      home_org: "uW",
+      queried_org: "PBT",
+      code: "pbt/x",
+    };
+    expect(answerNeverReused({ capability: "upgrade-needed" })).toBe(true);
+    expect(answerNeverReused({ capability: "not-found" })).toBe(true);
+    expect(
+      answerNeverReused({ capability: "failed", failure: "invalid-name" })
+    ).toBe(true);
+    expect(
+      answerNeverReused({ ...present, resolves: false, reason: "draft" })
+    ).toBe(true);
+    expect(answerNeverReused({ ...present, resolves: true })).toBe(false);
+    expect(
+      answerNeverReused({ ...present, resolves: false, reason: "collision" })
+    ).toBe(false);
+    expect(answerNeverReused({ capability: "unconfigured" })).toBe(false);
+    expect(answerNeverReused(undefined)).toBe(false);
+  });
+});
+
+describe("frozenWhileClosed", () => {
+  it("keeps the last open state while closing, so the exit doesn't flicker", () => {
+    const ready: ModeSharePanelState = {
+      kind: "ready",
+      url: "https://wa.me/1?text=%23x",
+      trigger: "#x",
+      partnerOrg: null,
+    };
+    const checking: ModeSharePanelState = { kind: "checking-code" };
+    // Open: always the live state.
+    expect(frozenWhileClosed<ModeSharePanelState>(true, checking, ready)).toBe(
+      checking
+    );
+    // Closing: the disabled query reads as checking; the last state wins.
+    expect(frozenWhileClosed<ModeSharePanelState>(false, checking, ready)).toBe(
+      ready
+    );
+    // Nothing shown yet: the live state.
+    expect(
+      frozenWhileClosed<ModeSharePanelState>(false, checking, undefined)
+    ).toBe(checking);
+  });
+
+  it("covers the closing render the panel actually computes", () => {
+    // What the panel resolves from a disabled query on close (no start
+    // taken for this key) is checking, not the answer it showed.
+    const answer = {
+      capability: "present" as const,
+      home_org: "uW",
+      queried_org: "PBT",
+      code: "x",
+      resolves: true,
+    };
+    const closingSnap = shareCodeSnapshot(
+      {
+        data: answer,
+        dataUpdatedAt: 100,
+        fetchStatus: "idle",
+        error: null,
+        isFetchedAfterMount: false,
+      },
+      { fresh: false, dataUpdatedAt: 100 }
+    );
+    expect(closingSnap.checking).toBe(true);
+    const config: ShareConfigSnapshot = {
+      pending: false,
+      paused: false,
+      error: false,
+      supported: true,
+      whatsappNumber: "15550100100",
+    };
+    const closing = resolveModeSharePanelState(
+      config,
+      closingSnap,
+      { published: true },
+      "PBT",
+      "x"
+    );
+    expect(closing).toEqual({ kind: "checking-code" });
+    const lastOpen = resolveModeSharePanelState(
+      config,
+      { answer, checking: false, failure: null },
+      { published: true },
+      "PBT",
+      "x"
+    );
+    expect(lastOpen.kind).toBe("ready");
+    expect(frozenWhileClosed(false, closing, lastOpen)).toBe(lastOpen);
   });
 });
 

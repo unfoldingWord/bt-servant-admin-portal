@@ -22,8 +22,10 @@ import {
   refreshFailed,
   retryControl,
   shownTrigger,
+  frozenWhileClosed,
   nextRetryClick,
   type ModeSharePanelState,
+  type ShareCodeSnapshot,
   type RetryClick,
   type RetryTarget,
 } from "@/lib/mode-share-link";
@@ -209,9 +211,9 @@ function ModeShareContent({
     modeName,
     requestOrg
   );
-  const shareCodeSnapshot = shareCode.snapshot;
+  const liveSnapshot = shareCode.snapshot;
 
-  const state = useMemo<ModeSharePanelState>(() => {
+  const liveState = useMemo<ModeSharePanelState>(() => {
     const data = shareConfig.data;
     return resolveModeSharePanelState(
       {
@@ -222,7 +224,7 @@ function ModeShareContent({
         supported: data?.supported === true,
         whatsappNumber: data?.supported ? data.config.whatsappNumber : null,
       },
-      shareCodeSnapshot,
+      liveSnapshot,
       flags,
       org,
       modeName
@@ -231,12 +233,26 @@ function ModeShareContent({
     flags,
     modeName,
     org,
-    shareCodeSnapshot,
+    liveSnapshot,
     shareConfig.data,
     shareConfig.fetchStatus,
     shareConfig.isError,
     shareConfig.isPending,
   ]);
+
+  // While closing, the queries are disabled and would read as checking:
+  // keep what the panel showed last while open (`frozenWhileClosed`), so
+  // the exit animation doesn't flicker through "Checking…".
+  const lastOpenRef = useRef<
+    { state: ModeSharePanelState; snapshot: ShareCodeSnapshot } | undefined
+  >(undefined);
+  const live = { state: liveState, snapshot: liveSnapshot };
+  const { state, snapshot: shareCodeSnapshot } = frozenWhileClosed(
+    open,
+    live,
+    lastOpenRef.current
+  );
+  if (open) lastOpenRef.current = live;
 
   // Secondary note for a mode the author can still fix (publish it, or
   // turn off group-only) while the number is ALSO missing, so they are not

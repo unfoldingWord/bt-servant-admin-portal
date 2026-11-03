@@ -85,11 +85,11 @@ export default {
 
     // Config endpoints — session required
     if (url.pathname.startsWith("/api/config/")) {
-      // The BFF's own 401 / 403 here carry a machine-readable `code`
-      // (#345). Engine responses passed through are left as they are.
-      if (requireSameOrigin(request)) {
-        return authErrorResponse("Forbidden", 403);
-      }
+      // The BFF's own 401 / 403 carry a machine-readable `code` (#345;
+      // `requireSameOrigin` builds its 403 the same way). Engine responses
+      // passed through are left as they are.
+      const blocked = requireSameOrigin(request);
+      if (blocked) return blocked;
 
       const session = await validateSession(request, env);
       if (!session) return authErrorResponse("Unauthorized", 401);

@@ -159,13 +159,11 @@ export interface ModeSaveTarget {
 // Exported so the cache effects can be tested against a real QueryClient
 // without React (same shape as `languageSaveMutationOptions`).
 /**
- * What a mode save snapshots before its PUT (#345): the page's synced
- * flags (from the variables) and the worker's last share-code answer, so
- * `onSuccess` can tell whether the share code may have changed. Taken in
- * `onMutate`, before any refetch or seed can overwrite the answer.
+ * What a mode save snapshots before its PUT (#345): the worker's last
+ * share-code answer, taken in `onMutate` before any refetch can replace
+ * it. The flags before the save come from the variables (`flagsBefore`).
  */
 export interface ModeSaveContext {
-  before: ModeFlags | undefined;
   lastAnswer: ModeShareCode | undefined;
 }
 
@@ -173,10 +171,9 @@ export function saveModeMutationOptions(qc: QueryClient) {
   return {
     mutationFn: ({ name, body, org }: ModeSaveTarget) =>
       configApi.putMode(name, body, undefined, org),
-    onMutate: ({ name, org, flagsBefore }: ModeSaveTarget): ModeSaveContext => {
+    onMutate: ({ name, org }: ModeSaveTarget): ModeSaveContext => {
       const key = normalize(org);
       return {
-        before: flagsBefore,
         lastAnswer: qc.getQueryData<ModeShareCode>(
           modeShareCodeKeys.mode(key, name)
         ),
@@ -184,7 +181,7 @@ export function saveModeMutationOptions(qc: QueryClient) {
     },
     onSuccess: async (
       saved: PromptMode,
-      { name, org, seed }: ModeSaveTarget,
+      { name, org, seed, flagsBefore }: ModeSaveTarget,
       context: ModeSaveContext | undefined
     ) => {
       const key = normalize(org);
@@ -213,8 +210,8 @@ export function saveModeMutationOptions(qc: QueryClient) {
       // reconciles the optimistic rows with server truth (e.g. fresh
       // `aliases`).
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
-      // No snapshot (never expected) reads as "may have changed".
-      if (saveMayChangeShareCode(context?.before, saved, context?.lastAnswer)) {
+      // No `flagsBefore` (a create or import) reads as "may have changed".
+      if (saveMayChangeShareCode(flagsBefore, saved, context?.lastAnswer)) {
         invalidateShareCodes(qc, key);
       }
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });

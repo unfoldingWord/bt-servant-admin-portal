@@ -5,7 +5,7 @@ import { getModeShareCode, modeShareCodeKeys } from "@/lib/mode-share-code-api";
 import {
   shareCodeSnapshot,
   shareCodeStart,
-  workerSaysUnshareable,
+  answerNeverReused,
   type ShareCodeQueryView,
   type ShareCodeStart,
 } from "@/lib/mode-share-link";
@@ -13,8 +13,9 @@ import {
 // Reusing an answer briefly keeps close-and-reopen instant; past that it
 // is refetched, because it depends on live data (other orgs' modes). An
 // unpublished / group-only answer is never reused: it may be the worker
-// catching up with a save, so every look re-asks. Nor is "needs a newer BT
-// Servant": a plain 404 behind it may be an edge hiccup, not an old worker.
+// catching up with a save, so every look re-asks. Nor are "needs a newer
+// BT Servant", "not found" and the definite failures (see
+// `answerNeverReused`).
 const SHARE_CODE_STALE_MS = 20_000;
 
 // #345 — the worker's answer for which `#<code>` opens this mode on
@@ -41,10 +42,7 @@ export function useModeShareCode(
     queryFn: ({ signal }) => getModeShareCode(modeName, org, signal),
     enabled: isEnabled,
     staleTime: (q) =>
-      workerSaysUnshareable(q.state.data) ||
-      q.state.data?.capability === "upgrade-needed"
-        ? 0
-        : SHARE_CODE_STALE_MS,
+      answerNeverReused(q.state.data) ? 0 : SHARE_CODE_STALE_MS,
     // Focus: off. Switching to a phone to scan the code and back must not
     // re-ask, and nothing a focus change implies makes the answer stale.
     refetchOnWindowFocus: false,
@@ -79,10 +77,10 @@ export function useModeShareCode(
   if (isEnabled && startRef.current?.key !== keyString) {
     startRef.current = { key: keyString, start: shareCodeStart(view) };
   }
+  // Kept while disabled (the dialog closing) so the last answer stays
+  // shown through the exit animation.
   const liveStart =
-    isEnabled && startRef.current?.key === keyString
-      ? startRef.current.start
-      : null;
+    startRef.current?.key === keyString ? startRef.current.start : null;
 
   const snapshot = useMemo(
     () =>

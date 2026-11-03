@@ -7,7 +7,7 @@
 // own read, merge and classifier and says which `#<code>` opens a mode
 // from the gateway org's point of view.
 
-import { BFF_AUTH_ERRORS } from "./bff-errors";
+import { BFF_AUTH_ERRORS } from "@/types/bff-errors";
 
 /**
  * Why the worker's code does not (or cannot) open the mode. The known
