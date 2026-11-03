@@ -188,8 +188,11 @@ async function fetchResourceState(
       ? `/api/v1/admin/orgs/${encodeURIComponent(org)}/languages/${encodeURIComponent(name)}`
       : `/api/v1/admin/orgs/${encodeURIComponent(org)}/modes/${encodeURIComponent(name)}`;
   const res = await engineFetch(env, enginePath);
-  if (res.status === 404) return { status: "missing" };
-  if (!res.ok) return { status: "error" };
+  if (!res.ok) {
+    // Release the unread error body before the early return.
+    await res.body?.cancel();
+    return res.status === 404 ? { status: "missing" } : { status: "error" };
+  }
   const data = (await res.json()) as Record<string, unknown>;
   // Engine wraps in { org, language|mode: {...} } — mirror of the
   // unwrap logic in src/lib/languages-api.ts + src/lib/config-api.ts.
@@ -576,6 +579,8 @@ async function fetchMcpServerOwners(
     `/api/v1/admin/orgs/${encodeURIComponent(org)}/mcp-servers`
   );
   if (!res.ok) {
+    // Release the unread error body before the early return.
+    await res.body?.cancel();
     throw new Error(`MCP pool read failed (${res.status})`);
   }
   const body = (await res.json()) as {

@@ -12,12 +12,16 @@
     "run_worker_first": ["/api/*"],
   },
   // Secrets (set per environment with `wrangler secret put`, never here):
-  //   ADMIN_API_KEY   — the engine admin key; set it on staging/prod, but
-  //                     only after the bt-servant-worker release that adds
-  //                     it (bt-servant-worker PR #479) is deployed in that
-  //                     environment, and with the same value as the
-  //                     worker's. All engine calls go through engineFetch()
-  //                     in worker/helpers.ts.
+  //   ADMIN_API_KEY   — the engine admin key. Set it on the prod, staging
+  //                     and dev workers (bt-servant-admin-portal,
+  //                     -staging, -dev) only after the bt-servant-worker
+  //                     release that adds it (bt-servant-worker PR #479)
+  //                     is deployed in the engine environment that worker
+  //                     calls, with that engine's value. Per-PR preview
+  //                     workers (-pr-<N>) call staging and need it set on
+  //                     each worker, or their admin calls fail once
+  //                     staging requires the admin key. All engine calls
+  //                     go through engineFetch() in worker/helpers.ts.
   //   ENGINE_API_KEY  — the engine key.
   //   ADMIN_SECRET    — the portal's own bootstrap auth (X-Admin-Secret on
   //                     /api/admin/users). Unrelated to ADMIN_API_KEY.

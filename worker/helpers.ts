@@ -59,8 +59,6 @@ const ROUTE_PARAMS = new Map<string, string>([
   ["modes", ":mode"],
   ["languages", ":language"],
   ["mcp-servers", ":serverId"],
-  ["groups", ":chatId"],
-  ["threads", ":threadId"],
 ]);
 
 /**
@@ -89,14 +87,6 @@ export function engineRoute(path: string): string {
     }
   }
   return out.join("/");
-}
-
-/** Engine host plus route template: what the BFF logs for an engine call. */
-export function engineCallLabel(
-  env: Pick<Env, "ENGINE_BASE_URL">,
-  path: string
-): string {
-  return `${env.ENGINE_BASE_URL}${engineRoute(path)}`;
 }
 
 /**
