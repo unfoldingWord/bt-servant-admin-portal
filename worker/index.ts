@@ -20,7 +20,12 @@ import {
 } from "./chat";
 import { handleConfig } from "./config";
 import type { Env } from "./helpers";
-import { authErrorResponse, errorResponse, requireSameOrigin } from "./helpers";
+import {
+  authErrorResponse,
+  engineKeyMissingResponse,
+  errorResponse,
+  requireSameOrigin,
+} from "./helpers";
 import { handleShareConfig } from "./share-config";
 
 export default {
@@ -66,6 +71,8 @@ export default {
       if (!session) {
         return errorResponse("Unauthorized", 401);
       }
+      const keyMissing = engineKeyMissingResponse(env, url.pathname);
+      if (keyMissing) return keyMissing;
 
       if (url.pathname === "/api/chat/stream") {
         return handleStream(request, env, session);
@@ -93,6 +100,9 @@ export default {
 
       const session = await validateSession(request, env);
       if (!session) return authErrorResponse("Unauthorized", 401);
+      // Route label only: config paths can carry user ids.
+      const keyMissing = engineKeyMissingResponse(env, "/api/config/*");
+      if (keyMissing) return keyMissing;
 
       return handleConfig(request, env, session, url.pathname);
     }

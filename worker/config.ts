@@ -1,9 +1,11 @@
 import type { Env } from "./helpers";
 import {
   crossOrgForbidden,
-  invalidOrg,
+  discardBody,
+  engineFetch,
   errorResponse,
   invalidModeNameResponse,
+  invalidOrg,
   isPathShapedOrg,
   safeDecode,
 } from "./helpers";
@@ -95,9 +97,7 @@ async function proxyToEngine(
     return errorResponse("Method not allowed", 405);
   }
 
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${env.ENGINE_API_KEY}`,
-  };
+  const headers: Record<string, string> = {};
 
   let body: string | undefined;
   if (request.method === "PUT" || request.method === "POST") {
@@ -113,7 +113,7 @@ async function proxyToEngine(
     }
   }
 
-  const engineRes = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
+  const engineRes = await engineFetch(env, enginePath, {
     method: request.method,
     headers,
     body,
@@ -203,11 +203,12 @@ async function fetchResourceState(
     kind === "language"
       ? `/api/v1/admin/orgs/${encodeURIComponent(org)}/languages/${encodeURIComponent(name)}`
       : `/api/v1/admin/orgs/${encodeURIComponent(org)}/modes/${encodeURIComponent(name)}`;
-  const res = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
-    headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
-  });
-  if (res.status === 404) return { status: "missing" };
-  if (!res.ok) return { status: "error" };
+  const res = await engineFetch(env, enginePath);
+  if (!res.ok) {
+    // Release the unread error body before the early return.
+    await discardBody(res);
+    return res.status === 404 ? { status: "missing" } : { status: "error" };
+  }
   const data = (await res.json()) as Record<string, unknown>;
   // Engine wraps in { org, language|mode: {...} } — mirror of the
   // unwrap logic in src/lib/languages-api.ts + src/lib/config-api.ts.
@@ -606,11 +607,13 @@ async function fetchMcpServerOwners(
   env: Env,
   org: string
 ): Promise<Map<string, string | undefined>> {
-  const res = await fetch(
-    `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(org)}/mcp-servers`,
-    { headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` } }
+  const res = await engineFetch(
+    env,
+    `/api/v1/admin/orgs/${encodeURIComponent(org)}/mcp-servers`
   );
   if (!res.ok) {
+    // Release the unread error body before the early return.
+    await discardBody(res);
     throw new Error(`MCP pool read failed (${res.status})`);
   }
   const body = (await res.json()) as {
@@ -1502,11 +1505,14 @@ export async function handleConfig(
   return errorResponse("Not found", 404);
 }
 
-// Exported for unit tests in tests/config-verb-perms.test.ts. Internal use
-// of these helpers stays inside this module; no other production caller
-// should reach into them.
+// Exported for unit tests in tests/config-authz.test.ts (verb-perms
+// helpers) and tests/admin-api-key.test.ts (fetchResourceState,
+// fetchMcpServerOwners). Internal use of these helpers stays inside this
+// module; no other production caller should reach into them.
 export const __testInternals = {
   computeRequiredVerbsForPut,
+  fetchMcpServerOwners,
+  fetchResourceState,
   hasRights,
   rightsFor,
 };

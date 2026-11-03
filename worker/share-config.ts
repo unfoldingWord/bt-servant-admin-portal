@@ -1,5 +1,5 @@
 import type { Env } from "./helpers";
-import { invalidOrg, jsonResponse } from "./helpers";
+import { engineFetch, invalidOrg, jsonResponse } from "./helpers";
 import {
   parseShareCodeAnswer,
   SHARE_CODE_ERRORS,
@@ -179,8 +179,8 @@ export async function handleModeShareCode(
   if (homeOrg === undefined || !isUsableHomeOrg(homeOrg)) {
     return unconfigured();
   }
-  const url =
-    `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(org)}` +
+  const path =
+    `/api/v1/admin/orgs/${encodeURIComponent(org)}` +
     `/modes/${encodeURIComponent(modeName)}/share-code` +
     `?home_org=${encodeURIComponent(homeOrg)}`;
   // Bounded by the timeout, and cancelled when the browser goes away
@@ -200,10 +200,11 @@ export async function handleModeShareCode(
     shareCodeError(message, SHARE_CODE_ERRORS.engineError, 502);
   let res: Response;
   try {
-    res = await fetch(url, {
-      headers: { Authorization: `Bearer ${env.ENGINE_API_KEY}` },
-      signal,
-    });
+    // engineFetch sets the engine key (the admin key, with its
+    // ENGINE_API_KEY fallback) and logs an engine 401/403 as
+    // engine_auth_error; the response comes back unchanged, so the
+    // `engine_auth` mapping below still applies.
+    res = await engineFetch(env, path, { signal });
   } catch {
     // A worker that doesn't answer in time is a 504: the client's
     // transient "server" state, with Try again.

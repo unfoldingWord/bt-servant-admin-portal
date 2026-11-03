@@ -76,8 +76,20 @@ describe("share-code route — scoping", () => {
       "https://engine.example.test/api/v1/admin/orgs/PBT/modes/obt-coach/share-code?home_org=unfoldingWord"
     );
     const init = spy.mock.calls[0]![1] as RequestInit;
+    // Through engineFetch: without ADMIN_API_KEY, the ENGINE_API_KEY
+    // fallback; the abort signal still rides along.
     expect(new Headers(init.headers).get("Authorization")).toBe(
       "Bearer test-engine-key"
+    );
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("sends the admin key when ADMIN_API_KEY is set (engineFetch)", async () => {
+    const spy = workerReplies({ code: "pbt/obt-coach", resolves: true });
+    await call({ env: { ...testEnv, ADMIN_API_KEY: "test-admin-key" } });
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(new Headers(init.headers).get("Authorization")).toBe(
+      "Bearer test-admin-key"
     );
   });
 
@@ -577,12 +589,24 @@ describe("share-code route — mapping the worker's answer", () => {
   it("maps the worker refusing the BFF's credentials (401 / 403) to 502 engine_auth", async () => {
     for (const status of [401, 403]) {
       workerReplies({ error: "Unauthorized" }, status);
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
       const res = await call();
       expect(res.status, String(status)).toBe(502);
       expect(await res.json()).toEqual({
         error: "BT Servant refused the portal's credentials",
         code: "engine_auth",
       });
+      // engineFetch's neutral diagnostic, with the route template only.
+      const logged = log.mock.calls.map((c) => String(c[0]));
+      expect(
+        logged.some(
+          (line) =>
+            line.includes('"event":"engine_auth_error"') &&
+            line.includes("/api/v1/admin/orgs/:org/modes/:mode/share-code")
+        ),
+        String(status)
+      ).toBe(true);
+      expect(logged.join("\n")).not.toContain("PBT");
       vi.restoreAllMocks();
     }
   });

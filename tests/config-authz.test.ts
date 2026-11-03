@@ -1742,6 +1742,34 @@ describe("#240 rename rights migration", () => {
     expect(after.mode_publish_rights).toEqual(["spoken", "zulu"]);
   });
 
+  it("engine 403 (e.g. a rejected engine key) → passes through as 403 and the migration is compensated", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: ["spoken"],
+    });
+    spyFetchRenameEngine({
+      sourceSlug: "spoken",
+      targetSlug: "conversation",
+      engineStatus: 403,
+    });
+
+    const res = await handleConfig(
+      makeRenameRequest("spoken", "conversation"),
+      env,
+      makeSession({ isAdmin: true }),
+      "/api/config/modes/spoken/_rename"
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "engine says no" });
+
+    const after = await readRightsUser("shepherd@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken"]);
+    expect(after.mode_publish_rights).toEqual(["spoken"]);
+  });
+
   it("engine fetch THROWS after expand → 502 and the rights superset is retained (rd-2 F5)", async () => {
     // Ambiguous outcome: the rename may or may not have applied.
     // Compensating a rename that landed would strand shepherds, so the
@@ -2295,6 +2323,32 @@ describe("config authz — #241 PR B mode clone (_clone)", () => {
       "/api/config/modes/spoken/_clone"
     );
     expect(res.status).toBe(409);
+    expect(res.headers.get("X-Bootstrap-Grant")).toBeNull();
+    const after = await readRightsUser("shepherd@acme.com");
+    expect(after.mode_edit_rights).toEqual(["spoken"]);
+    expect(after.mode_publish_rights).toEqual([]);
+  });
+
+  it("engine 403 on the clone (e.g. a rejected engine key) → passes through as 403, grant compensated, no header", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await seedRightsUser({
+      email: "shepherd@acme.com",
+      org: "acme",
+      mode_edit_rights: ["spoken"],
+      mode_publish_rights: [],
+    });
+    spyFetchCloneEngine("missing", { status: 403 });
+    const res = await handleConfig(
+      makeCloneRequest("spoken", { newName: "spoken-v2" }),
+      env,
+      makeSession({
+        email: "shepherd@acme.com",
+        mode_edit_rights: ["spoken"],
+        mode_publish_rights: [],
+      }),
+      "/api/config/modes/spoken/_clone"
+    );
+    expect(res.status).toBe(403);
     expect(res.headers.get("X-Bootstrap-Grant")).toBeNull();
     const after = await readRightsUser("shepherd@acme.com");
     expect(after.mode_edit_rights).toEqual(["spoken"]);
