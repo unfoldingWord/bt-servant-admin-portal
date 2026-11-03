@@ -325,7 +325,10 @@ export function shareCodeSnapshot(
 interface Shown {
   /** E.g. `#fia` or `#pbt/obt-coach`. */
   trigger: string;
-  /** The mode's org when the code is org-qualified, else null. */
+  /**
+   * The org the answer is about (the BFF's `queried_org`) when the code
+   * is org-qualified, else null.
+   */
   partnerOrg: string | null;
 }
 
@@ -501,17 +504,19 @@ export function retryControl(
 }
 
 /**
- * The gateway org to warn about when the worker reports it has no modes
- * at all (`home_has_modes: false`), else null. Shown beside whatever the
+ * The gateway org's note when the worker reports it has no modes at all
+ * (`home_has_modes: false`), else null; `name` is null when the BFF
+ * withheld the org's name. Shown beside whatever the
  * panel's state is, never instead of it: a partner mode can still resolve.
  */
 export function homeOrgWithoutModes(
   data: ModeShareCode | undefined
-): string | null {
+): { name: string | null } | null {
   if (data?.capability !== "present" || data.home_has_modes !== false) {
     return null;
   }
-  return data.home_org || null;
+  // The BFF names it only to a super-admin or its own org's admins.
+  return { name: data.home_org || null };
 }
 
 /** Fails the typecheck when a union gains a variant nobody handles. */
@@ -546,13 +551,11 @@ export function resolveModeSharePanelState(
   config: ShareConfigSnapshot,
   shareCode: ShareCodeSnapshot,
   flags: { published?: boolean; requires_group?: boolean },
-  modeOrg: string | null | undefined,
   modeName: string
 ): ModeSharePanelState {
   return resolveWithShareCode(
     resolvePreWorkerStage(config, flags, modeName),
-    shareCode,
-    modeOrg
+    shareCode
   );
 }
 
@@ -597,8 +600,7 @@ export function resolvePreWorkerStage(
 /** Steps 5–6: the pre-worker stage, then the share code and its answer. */
 export function resolveWithShareCode(
   stage: PreWorkerStage,
-  shareCode: ShareCodeSnapshot,
-  modeOrg: string | null | undefined
+  shareCode: ShareCodeSnapshot
 ): ModeSharePanelState {
   if (!stage.needsShareCode) return stage.state;
   if (shareCode.checking) return { kind: "checking-code" };
@@ -617,7 +619,7 @@ export function resolveWithShareCode(
     case "upgrade-needed":
       return { kind: "upgrade-needed" };
     case "present":
-      return fromWorkerAnswer(answer, stage.digits, modeOrg);
+      return fromWorkerAnswer(answer, stage.digits);
     default:
       return unhandled(answer);
   }
@@ -626,8 +628,7 @@ export function resolveWithShareCode(
 /** The worker answered: render its verdict, building a link only if it resolves. */
 function fromWorkerAnswer(
   answer: Extract<ModeShareCode, { capability: "present" }>,
-  digits: string,
-  modeOrg: string | null | undefined
+  digits: string
 ): ModeSharePanelState {
   const { code } = answer;
   if (code === null) {
@@ -635,7 +636,9 @@ function fromWorkerAnswer(
   }
   const shown: Shown = {
     trigger: modeShareTrigger(code),
-    partnerOrg: code.includes("/") ? (modeOrg?.trim() ?? null) : null,
+    // The org the BFF asked about, exactly as sent: the org this code's
+    // answer is about, never the page's (possibly still settling) org.
+    partnerOrg: code.includes("/") ? answer.queried_org : null,
   };
   if (answer.resolves) {
     return linkState(buildShareLinkFromCode(digits, code), shown);

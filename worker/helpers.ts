@@ -49,6 +49,21 @@ export function authErrorResponse(
  * alike: the org param, the resolved org, or the worker's `invalid_org`
  * for the mode's org.
  */
+/**
+ * 403 code `cross_org_forbidden`: another org's config without
+ * super-admin. Deterministic, so a client can show it as a definite
+ * answer rather than a retryable one.
+ */
+export function crossOrgForbidden(): Response {
+  return jsonResponse(
+    {
+      error: "Cross-org config access requires isSuperAdmin",
+      code: BFF_ERRORS.crossOrgForbidden,
+    },
+    403
+  );
+}
+
 export function invalidOrg(message = "Invalid org"): Response {
   return jsonResponse({ error: message, code: BFF_ERRORS.invalidOrg }, 400);
 }

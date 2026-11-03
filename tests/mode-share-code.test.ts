@@ -98,7 +98,7 @@ describe("share-code route — scoping", () => {
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({
       error: "Cross-org config access requires isSuperAdmin",
-      code: "forbidden",
+      code: "cross_org_forbidden",
     });
     expect(spy).not.toHaveBeenCalled();
   });
@@ -217,9 +217,34 @@ describe("share-code route — mapping the worker's answer", () => {
       resolves: false,
       reason: "collision",
       resolved_org: "PBT",
-      home_org: GATEWAY,
       queried_org: "PBT",
     });
+  });
+
+  it("names home_org (WHATSAPP_ORG) only to a super-admin or that org's own admins", async () => {
+    workerReplies({ code: "pbt/x", resolves: true, home_has_modes: false });
+    // Another org's admin: withheld, the same rule as resolved_org.
+    const other = (await (await call()).json()) as Record<string, unknown>;
+    expect(other).not.toHaveProperty("home_org");
+    expect(other).toMatchObject({ home_has_modes: false, queried_org: "PBT" });
+    // The gateway org's own admin: named.
+    expect(
+      await (await call({ session: makeSession({ org: GATEWAY }) })).json()
+    ).toMatchObject({ home_org: GATEWAY });
+    // Exact, like resolved_org: a padded own org is another org.
+    expect(
+      await (
+        await call({ session: makeSession({ org: ` ${GATEWAY}` }) })
+      ).json()
+    ).not.toHaveProperty("home_org");
+    // A super-admin, about any org: named.
+    expect(
+      await (
+        await call({
+          session: makeSession({ isAdmin: true, isSuperAdmin: true }),
+        })
+      ).json()
+    ).toMatchObject({ home_org: GATEWAY });
   });
 
   it("names another org in resolved_org only to a super-admin", async () => {
@@ -292,7 +317,6 @@ describe("share-code route — mapping the worker's answer", () => {
     const body = (await (await call()).json()) as Record<string, unknown>;
     expect(body).toEqual({
       capability: "present",
-      home_org: GATEWAY,
       queried_org: "PBT",
       code: "pbt/x",
       resolves: false,
@@ -336,7 +360,6 @@ describe("share-code route — mapping the worker's answer", () => {
     expect(await (await call()).json()).toMatchObject({
       capability: "present",
       home_has_modes: false,
-      home_org: GATEWAY,
       queried_org: "PBT",
     });
     vi.restoreAllMocks();
@@ -412,10 +435,27 @@ describe("share-code route — mapping the worker's answer", () => {
     });
   });
 
+  it("reads a JSON 404 that isn't an object as transient engine_error, not unsupported", async () => {
+    for (const body of ["null", '"nope"', "[]", "7"]) {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(body, { status: 404 })
+      );
+      const res = await call();
+      expect(res.status, body).toBe(502);
+      expect(await res.json(), body).toEqual({
+        error: "Engine error",
+        code: "engine_error",
+      });
+    }
+  });
+
   it("uses a padded WHATSAPP_ORG exactly, for home_org", async () => {
     const padded = { ...env, WHATSAPP_ORG: " unfoldingWord" } as Env;
     const spy = workerReplies({ code: "x", resolves: true });
-    const res = await call({ env: padded });
+    const res = await call({
+      env: padded,
+      session: makeSession({ isAdmin: true, isSuperAdmin: true }),
+    });
     expect(String(spy.mock.calls[0]![0])).toContain(
       "home_org=%20unfoldingWord"
     );
@@ -512,6 +552,23 @@ describe("share-code route — mapping the worker's answer", () => {
       expect(await res.json()).toEqual({
         error: "Invalid org parameter",
         code: "invalid_org",
+      });
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("codes the cross-org 403 as deterministic on every config route", async () => {
+    const spy = workerReplies({});
+    for (const path of [PATH, "/api/config/modes/obt-coach"]) {
+      const res = await call({
+        query: "?org=Other",
+        path,
+        session: makeSession({ isAdmin: true }),
+      });
+      expect(res.status, path).toBe(403);
+      expect(await res.json()).toEqual({
+        error: "Cross-org config access requires isSuperAdmin",
+        code: "cross_org_forbidden",
       });
     }
     expect(spy).not.toHaveBeenCalled();

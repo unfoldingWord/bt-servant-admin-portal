@@ -58,14 +58,15 @@ export interface ShareCodeAnswer {
 /** The 200 bodies of the share-code route. */
 export type ModeShareCodeResponse =
   /**
-   * The worker answered. The BFF adds `home_org` (WHATSAPP_ORG, as sent)
-   * and `queried_org`: the exact org string it asked the worker about.
+   * The worker answered. The BFF adds `queried_org`: the exact org string
+   * it asked the worker about; and `home_org` (WHATSAPP_ORG, as sent)
+   * only for a super-admin or when it is exactly `queried_org`.
    * `resolved_org` is compared to `queried_org` byte for byte (the
    * worker's own org keys are exact, #247/#253), never trimmed.
    */
   | ({
       capability: "present";
-      home_org: string;
+      home_org?: string;
       queried_org: string;
     } & ShareCodeAnswer)
   /**

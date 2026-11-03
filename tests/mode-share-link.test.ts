@@ -307,7 +307,6 @@ describe("resolveModeSharePanelState", () => {
     opts: {
       config?: ShareConfigSnapshot;
       flags?: { published?: boolean; requires_group?: boolean };
-      org?: string | null;
       name?: string;
     } = {}
   ) =>
@@ -315,12 +314,11 @@ describe("resolveModeSharePanelState", () => {
       opts.config ?? config,
       shareCode,
       opts.flags ?? ready,
-      opts.org === undefined ? "PBT" : opts.org,
       opts.name ?? "obt-coach"
     );
 
   it("builds a home mode's bare link from the worker's code", () => {
-    expect(run(home, { org: "acme" })).toEqual({
+    expect(run(home)).toEqual({
       kind: "ready",
       url: "https://wa.me/573001234567?text=%23fia",
       trigger: "#fia",
@@ -330,6 +328,21 @@ describe("resolveModeSharePanelState", () => {
 
   it("builds a partner mode's qualified link from the worker's code", () => {
     expect(run(partner)).toEqual(partnerReady);
+  });
+
+  it("names the card's org from the answer's queried_org, exactly as sent", () => {
+    // Never a trimmed page org: a legacy padded org stays as the BFF asked.
+    expect(
+      run(
+        present({
+          code: "pbt/obt-coach",
+          resolves: true,
+          queried_org: " PBT",
+        })
+      )
+    ).toMatchObject({ kind: "ready", partnerOrg: " PBT" });
+    // A bare code names no partner org, whatever was queried.
+    expect(run(home)).toMatchObject({ partnerOrg: null });
   });
 
   it("trusts a resolving code the portal's own name rules would reject", () => {
@@ -474,16 +487,16 @@ describe("resolveModeSharePanelState", () => {
         queried_org: queried,
       });
     // A super-admin on a legacy padded org: the BFF queried " PBT".
-    expect(run(clash(" PBT", " PBT"), { org: " PBT" })).toMatchObject({
+    expect(run(clash(" PBT", " PBT"))).toMatchObject({
       kind: "collision",
       sameOrg: true,
     });
     // " PBT" and "PBT" are different orgs to the worker, either way round,
     // whatever the page calls the mode's org.
-    expect(run(clash(" PBT", "PBT"), { org: "PBT" })).toMatchObject({
+    expect(run(clash(" PBT", "PBT"))).toMatchObject({
       sameOrg: false,
     });
-    expect(run(clash("PBT", " PBT"), { org: " PBT" })).toMatchObject({
+    expect(run(clash("PBT", " PBT"))).toMatchObject({
       sameOrg: false,
     });
   });
@@ -615,6 +628,7 @@ describe("resolveModeSharePanelState", () => {
       "bad-request",
       "corrupt-record",
       "engine-auth",
+      "cross-org-forbidden",
     ] as const) {
       expect(run(code({ capability: "failed", failure }))).toEqual({
         kind: "failed",
@@ -625,8 +639,8 @@ describe("resolveModeSharePanelState", () => {
 
   it("offers no code for any mode on a worker without the route, home included", () => {
     const upgrade = code({ capability: "upgrade-needed" });
-    for (const org of ["acme", "unfoldingWord", "PBT"]) {
-      const state = run(upgrade, { org });
+    for (const name of ["fia", "obt-coach"]) {
+      const state = run(upgrade, { name });
       expect(state).toEqual({ kind: "upgrade-needed" });
       expect(shownTrigger(state)).toBeNull();
     }
@@ -951,7 +965,7 @@ describe("closing render keeps the answer", () => {
     whatsappNumber: "15550100100",
   };
   const resolve = (snap: ShareCodeSnapshot) =>
-    resolveModeSharePanelState(config, snap, { published: true }, "PBT", "x");
+    resolveModeSharePanelState(config, snap, { published: true }, "x");
 
   it("shows the same ready state on the closing render as on the last open one", () => {
     // Open: a reopen past the stale time fetched a fresh answer.
@@ -1102,7 +1116,6 @@ describe("per-open snapshot: shareCodeStart and shareCodeSnapshot", () => {
         },
         failed,
         { published: true },
-        "PBT",
         "a"
       )
     ).toEqual({ kind: "retry", cause: "network" });
@@ -1153,7 +1166,6 @@ describe("per-open snapshot: shareCodeStart and shareCodeSnapshot", () => {
       config,
       snap,
       { published: true },
-      "PBT",
       "a"
     );
     expect(state).toEqual({ kind: "retry", cause: "network" });
@@ -1226,9 +1238,14 @@ describe("homeOrgWithoutModes", () => {
     queried_org: "PBT",
   };
   it("names the gateway org only when the worker says it has no modes", () => {
-    expect(homeOrgWithoutModes({ ...base, home_has_modes: false })).toBe(
-      "unfoldingWord"
-    );
+    expect(homeOrgWithoutModes({ ...base, home_has_modes: false })).toEqual({
+      name: "unfoldingWord",
+    });
+    // Withheld by the BFF (not a super-admin, not the caller's own org):
+    // the note shows with no name.
+    const withheld = { ...base, home_has_modes: false };
+    delete (withheld as { home_org?: string }).home_org;
+    expect(homeOrgWithoutModes(withheld)).toEqual({ name: null });
     expect(homeOrgWithoutModes({ ...base, home_has_modes: true })).toBeNull();
     expect(homeOrgWithoutModes(base)).toBeNull();
     expect(homeOrgWithoutModes(undefined)).toBeNull();

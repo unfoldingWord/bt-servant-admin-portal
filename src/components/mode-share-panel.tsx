@@ -144,12 +144,9 @@ export function ModeSharePanel({
         }}
       >
         <ModeShareContent
-          key={JSON.stringify([
-            openCount,
-            shown.org,
-            shown.requestOrg,
-            shown.modeName,
-          ])}
+          // Not the org: an org that settles mid-open changes the
+          // share-code query's key (which carries it), not the mount.
+          key={JSON.stringify([openCount, shown.modeName])}
           open={open}
           {...shown}
         />
@@ -216,8 +213,8 @@ function ModeShareContent({
   const shareCodeSnapshot = shareCode.snapshot;
 
   const state = useMemo<ModeSharePanelState>(
-    () => resolveWithShareCode(preWorker, shareCodeSnapshot, org),
-    [org, preWorker, shareCodeSnapshot]
+    () => resolveWithShareCode(preWorker, shareCodeSnapshot),
+    [preWorker, shareCodeSnapshot]
   );
 
   // Secondary note for a mode the author can still fix (publish it, or
@@ -550,8 +547,17 @@ function ModeShareContent({
 
       {emptyHomeOrg && (
         <p className="text-muted-foreground text-xs">
-          WhatsApp&rsquo;s org ({emptyHomeOrg}) has no modes yet — check
-          WHATSAPP_ORG if that&rsquo;s unexpected.
+          {emptyHomeOrg.name !== null ? (
+            <>
+              WhatsApp&rsquo;s org ({emptyHomeOrg.name}) has no modes yet —
+              check WHATSAPP_ORG if that&rsquo;s unexpected.
+            </>
+          ) : (
+            <>
+              BT Servant on WhatsApp has no modes in its org yet; ask
+              unfoldingWord to check WHATSAPP_ORG.
+            </>
+          )}
         </p>
       )}
 
@@ -759,6 +765,8 @@ function describeFailure(failure: ShareCodeFailure): string {
       return "BT Servant couldn't read this request. Reload the page and try again.";
     case "corrupt-record":
       return "This org's modes record is damaged, so the code can't be checked. Ask unfoldingWord to repair it.";
+    case "cross-org-forbidden":
+      return "Your account can't see this org's modes, so its WhatsApp code can't be checked. Ask an unfoldingWord admin for access.";
     case "engine-auth":
       return "The portal can't authenticate to BT Servant, so this is a configuration problem; tell an unfoldingWord admin.";
   }

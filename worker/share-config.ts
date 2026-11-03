@@ -196,8 +196,8 @@ export async function handleModeShareCode(
   const clientGone = () => new Response(null, { status: 499 });
   const timedOut = () =>
     shareCodeError("Engine timeout", SHARE_CODE_ERRORS.engineTimeout, 504);
-  const engineError = () =>
-    shareCodeError("Engine error", SHARE_CODE_ERRORS.engineError, 502);
+  const engineError = (message = "Engine error") =>
+    shareCodeError(message, SHARE_CODE_ERRORS.engineError, 502);
   let res: Response;
   try {
     res = await fetch(url, {
@@ -209,11 +209,7 @@ export async function handleModeShareCode(
     // transient "server" state, with Try again.
     if (timeout.aborted) return timedOut();
     if (opts.signal?.aborted) return clientGone();
-    return shareCodeError(
-      "Engine unreachable",
-      SHARE_CODE_ERRORS.engineError,
-      502
-    );
+    return engineError("Engine unreachable");
   }
   const read = await readBody(res, signal);
   if (read.kind === "aborted") {
@@ -237,11 +233,13 @@ export async function handleModeShareCode(
     // A JSON 404 with an `error` means the route exists and something
     // else went wrong: a generic error, with Try again.
     if (error !== null) return engineError();
-    // A non-JSON or empty 404 is a worker without the route (Hono's plain
-    // "404 Not Found"): one "needs a newer BT Servant" state for every
-    // mode. The deploy order puts the worker with #477 in production
-    // first, so there is no bare-slug fallback.
-    if (read.kind === "not-json" || body === null) {
+    // Only a fully received non-JSON or empty 404 is a worker without the
+    // route (Hono's plain "404 Not Found"): one "needs a newer BT
+    // Servant" state for every mode. The deploy order puts the worker
+    // with #477 in production first, so there is no bare-slug fallback.
+    // A JSON 404 that isn't an error object (`null`, a string, an array)
+    // came from something that speaks JSON: transient, below.
+    if (read.kind === "not-json") {
       return shareCodeError(
         "Share codes need a newer BT Servant",
         SHARE_CODE_ERRORS.shareCodeUnsupported,
@@ -292,19 +290,29 @@ export async function handleModeShareCode(
   if (!res.ok) return engineError();
 
   const answer = parseShareCodeAnswer(body);
-  if (answer === null) {
-    return shareCodeError(
-      "Malformed engine response",
-      SHARE_CODE_ERRORS.engineError,
-      502
-    );
-  }
+  if (answer === null) return engineError("Malformed engine response");
   return jsonResponse({
     capability: "present",
-    home_org: homeOrg,
+    ...homeOrgFor(homeOrg, org, opts.caller),
     queried_org: org,
     ...withoutForeignOrg(answer, org, opts.caller),
   } satisfies ModeShareCodeResponse);
+}
+
+/**
+ * `home_org` (WHATSAPP_ORG) names the gateway's org. The same rule as
+ * `resolved_org`: a super-admin sees it; anyone else only when it is,
+ * exactly, the org this route asked about (their own). Without it the
+ * panel's "no modes" note doesn't name the org.
+ */
+function homeOrgFor(
+  homeOrg: string,
+  queried: string,
+  caller: ShareCodeCaller
+): { home_org?: string } {
+  return caller.isSuperAdmin || homeOrg === queried
+    ? { home_org: homeOrg }
+    : {};
 }
 
 /**

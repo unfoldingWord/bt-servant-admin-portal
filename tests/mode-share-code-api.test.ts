@@ -221,13 +221,57 @@ describe("getModeShareCode", () => {
     }
   });
 
+  it("reads a present answer without home_org (withheld by the BFF)", async () => {
+    mockFetch(200, {
+      capability: "present",
+      code: "pbt/x",
+      resolves: true,
+      queried_org: "PBT",
+      home_has_modes: false,
+    });
+    const answer = await getModeShareCode("x", null);
+    expect(answer).toMatchObject({ capability: "present", queried_org: "PBT" });
+    expect(answer).not.toHaveProperty("home_org");
+  });
+
+  it("answers a cross-org 403 as a definite failure; any other 403 stays retryable", async () => {
+    mockFetch(403, {
+      error: "Cross-org config access requires isSuperAdmin",
+      code: "cross_org_forbidden",
+    });
+    await expect(getModeShareCode("x", "Other")).resolves.toEqual({
+      capability: "failed",
+      failure: "cross-org-forbidden",
+    });
+    // The same-origin guard, an uncoded body, or one that can't be read:
+    // retryable "forbidden". A 401 stays "signed-out".
+    for (const body of [{ error: "Forbidden", code: "forbidden" }, "nope"]) {
+      mockFetch(403, body);
+      await expect(getModeShareCode("x", null)).rejects.toMatchObject({
+        kind: "forbidden",
+      });
+    }
+    mockFetch(401, { error: "Unauthorized", code: "unauthorized" });
+    await expect(getModeShareCode("x", null)).rejects.toMatchObject({
+      kind: "signed-out",
+    });
+  });
+
   it("throws a server error for a malformed 200", async () => {
     for (const body of [
       "not json",
       { capability: "present", code: 7, resolves: true },
       { capability: "present", code: "x" },
-      // A present answer without the BFF's home_org isn't one.
-      { capability: "present", code: "x", resolves: true },
+      // A present answer without the BFF's queried_org isn't one.
+      { capability: "present", code: "x", resolves: true, home_org: "uW" },
+      // A home_org that isn't a string isn't one either.
+      {
+        capability: "present",
+        code: "x",
+        resolves: true,
+        home_org: 7,
+        queried_org: "PBT",
+      },
       { capability: "who-knows" },
     ]) {
       mockFetch(200, body);
@@ -237,7 +281,7 @@ describe("getModeShareCode", () => {
     }
   });
 
-  it("decides 401 / 403 / 503 by status before reading the body", async () => {
+  it("decides 401 / 503 by status before reading the body, and a 403 whose body is cut off as retryable", async () => {
     const cut = (status: number) =>
       new Response(
         new ReadableStream({

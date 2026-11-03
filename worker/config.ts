@@ -1,6 +1,6 @@
 import type { Env } from "./helpers";
 import {
-  authErrorResponse,
+  crossOrgForbidden,
   invalidOrg,
   errorResponse,
   invalidModeNameResponse,
@@ -535,10 +535,7 @@ function orgErrorResponse(error: OrgResolutionError): Response {
     case "invalid-org-param":
       return invalidOrg("Invalid org parameter");
     case "cross-org-forbidden":
-      return authErrorResponse(
-        "Cross-org config access requires isSuperAdmin",
-        403
-      );
+      return crossOrgForbidden();
     case "invalid-org":
       return invalidOrg();
   }

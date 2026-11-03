@@ -70,7 +70,12 @@ export type ShareCodeFailure =
    * 502 code `engine_auth`: BT Servant refused the portal's own credentials.
    * A configuration problem; never retried on its own.
    */
-  | "engine-auth";
+  | "engine-auth"
+  /**
+   * 403 code `cross_org_forbidden`: another org's modes without
+   * super-admin. Deterministic for this session, so not retried on its own.
+   */
+  | "cross-org-forbidden";
 
 /** A transient outcome worth retrying. */
 export type ShareCodeTransient =
@@ -85,7 +90,10 @@ export type ShareCodeTransient =
    * session blip mustn't stick for the stale time.
    */
   | "signed-out"
-  /** 403: no access to this org's modes. Retryable for the same reason. */
+  /**
+   * 403 without a deterministic code (e.g. the same-origin guard).
+   * Retryable for the same reason.
+   */
   | "forbidden";
 
 /**
@@ -143,7 +151,7 @@ export async function getModeShareCode(
   // 401 still says "signed out".
   if (res.status === 503) throw new ShareCodeRequestError("unavailable");
   if (res.status === 401) throw new ShareCodeRequestError("signed-out");
-  if (res.status === 403) throw new ShareCodeRequestError("forbidden");
+  if (res.status === 403) return forbiddenAnswer(res, signal);
   const data = await readJsonBody(res, signal);
   // The BFF's machine-readable code; the human `error` text is never read.
   const code = typeof data?.code === "string" ? data.code : null;
@@ -185,6 +193,27 @@ async function readJsonBody(
   } catch {
     return null;
   }
+}
+
+/**
+ * A 403: definite when the BFF codes it deterministic (another org
+ * without super-admin), else a retryable "forbidden", also when its body
+ * can't be read.
+ */
+async function forbiddenAnswer(
+  res: Response,
+  signal: AbortSignal | undefined
+): Promise<ModeShareCode> {
+  let data: Record<string, unknown> | null = null;
+  try {
+    data = await readJsonBody(res, signal);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+  }
+  if (data?.code === SHARE_CODE_ERRORS.crossOrgForbidden) {
+    return { capability: "failed", failure: "cross-org-forbidden" };
+  }
+  throw new ShareCodeRequestError("forbidden");
 }
 
 /**
@@ -239,14 +268,17 @@ export function parseShareCodeResponse(
       const answer = parseShareCodeAnswer(data);
       if (
         answer === null ||
-        typeof data.home_org !== "string" ||
+        (data.home_org !== undefined && typeof data.home_org !== "string") ||
         typeof data.queried_org !== "string"
       ) {
         return null;
       }
       return {
         capability: "present",
-        home_org: data.home_org,
+        // Absent when the BFF withholds it (not the caller's own org).
+        ...(typeof data.home_org === "string"
+          ? { home_org: data.home_org }
+          : {}),
         queried_org: data.queried_org,
         ...answer,
       };
