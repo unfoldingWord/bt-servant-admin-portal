@@ -63,35 +63,43 @@ export type ModeShareCodeResponse =
    */
   | { capability: "unconfigured" };
 
-/** Error bodies the route can answer with, besides the 200s above. */
+/**
+ * Machine-readable `code` on every error body of the share-code route
+ * (`{error, code}`); the client switches on `code` only, never on the
+ * human `error` text. The first four are also the WORKER's own `error`
+ * strings (#477), which is how the BFF reads them.
+ */
 export const SHARE_CODE_ERRORS = {
   /** 404: no such mode in this org. */
   modeNotFound: "mode_not_found",
-  /** 500, permanent: the org's stored modes record is not valid JSON. */
+  /** 500, permanent: the org's stored modes record is unreadable. */
   corruptModesRecord: "corrupt_modes_record",
-  /** 400 from the worker: the mode name fails its pattern. */
+  /** 400: the mode name fails the worker's pattern, or the BFF couldn't decode it. */
   invalidModeName: "invalid_mode_name",
   /**
-   * 400 from the worker: `:org` or `home_org` is empty or too long for a KV
-   * key. Its `field` says which (`"org"` | `"home_org"`); the BFF answers
-   * `home_org` as `unconfigured` and passes the rest through.
+   * 400: the mode's org is invalid (the BFF's own org resolution, or the
+   * worker's `invalid_org` with `field: "org"`). The worker's `field:
+   * "home_org"` answers are WHATSAPP_ORG's, so the BFF turns them into
+   * `unconfigured` instead.
    */
   invalidOrg: "invalid_org",
+  /** 400: any other bad request. */
+  badRequest: "bad_request",
   /**
-   * 404 from the BFF: the worker has no share-code route (any 404 without
-   * `mode_not_found`). The panel says a newer BT Servant is needed.
+   * 404: the worker has no share-code route (a non-JSON or empty 404). The
+   * panel says a newer BT Servant is needed.
    */
   shareCodeUnsupported: "share_code_unsupported",
-  /** 400 from the BFF: a mode-name path segment it couldn't decode. */
-  bffInvalidModeName: "Invalid mode name",
-  /**
-   * Prefix of the BFF's org-resolution 400s (`resolveOrg` in
-   * worker/config.ts): "Invalid org" and "Invalid org parameter".
-   */
-  bffInvalidOrgPrefix: "Invalid org",
-  /** 504 from the BFF: the worker didn't answer in time. */
-  bffTimeout: "Engine timeout",
+  /** 503: the worker couldn't list or read modes just now. */
+  modesUnavailable: "modes_unavailable",
+  /** 504: the worker didn't answer (or finish answering) in time. */
+  engineTimeout: "engine_timeout",
+  /** 502: anything else from the worker the BFF can't use. */
+  engineError: "engine_error",
 } as const;
+
+export type ShareCodeErrorCode =
+  (typeof SHARE_CODE_ERRORS)[keyof typeof SHARE_CODE_ERRORS];
 
 /**
  * Shape-check the answer fields, or null when they aren't an answer. Used

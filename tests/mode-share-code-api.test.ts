@@ -105,21 +105,29 @@ describe("getModeShareCode", () => {
     });
   });
 
-  it("returns each definite failure as an answer", async () => {
+  it("returns each definite failure as an answer, switching on the BFF's code only", async () => {
     const cases: [number, unknown][] = [
-      [404, { error: "mode_not_found" }],
+      [404, { error: "Mode not found", code: "mode_not_found" }],
       [401, { error: "Unauthorized" }],
       [403, { error: "Forbidden" }],
-      [400, { error: "invalid_mode_name" }],
-      [400, { error: "Invalid mode name" }],
-      [400, { error: "invalid_org", message: "too long for a KV key" }],
+      [400, { error: "Invalid mode name", code: "invalid_mode_name" }],
+      [400, { error: "Invalid org", code: "invalid_org" }],
+      [400, { error: "Bad request", code: "bad_request" }],
+      // The human text alone means nothing: no code, a generic bad request.
       [400, { error: "Invalid org parameter" }],
-      [400, { error: "Invalid org" }],
-      [400, { error: "bad_request" }],
+      [400, { error: "invalid_mode_name" }],
       [400, "not json"],
-      [500, { error: "corrupt_modes_record" }],
-      [404, { error: "share_code_unsupported" }],
+      [500, { error: "Corrupt modes record", code: "corrupt_modes_record" }],
+      [
+        404,
+        {
+          error: "Share codes need a newer BT Servant",
+          code: "share_code_unsupported",
+        },
+      ],
+      // A portal without the route: non-JSON or empty.
       [404, "404 Not Found"],
+      [404, ""],
     ];
     const got = [];
     for (const [status, body] of cases) {
@@ -131,16 +139,28 @@ describe("getModeShareCode", () => {
       { capability: "failed", failure: "signed-out" },
       { capability: "failed", failure: "forbidden" },
       { capability: "failed", failure: "invalid-name" },
-      { capability: "failed", failure: "invalid-name" },
       { capability: "failed", failure: "org-invalid" },
-      { capability: "failed", failure: "org-invalid" },
-      { capability: "failed", failure: "org-invalid" },
+      { capability: "failed", failure: "bad-request" },
+      { capability: "failed", failure: "bad-request" },
       { capability: "failed", failure: "bad-request" },
       { capability: "failed", failure: "bad-request" },
       { capability: "failed", failure: "corrupt-record" },
       { capability: "upgrade-needed" },
       { capability: "upgrade-needed" },
+      { capability: "upgrade-needed" },
     ]);
+  });
+
+  it("reads any other JSON 404 as a route that exists: a transient server error", async () => {
+    for (const body of [
+      { error: "mode_not_found" },
+      { error: "Engine error", code: "engine_error" },
+    ]) {
+      mockFetch(404, body);
+      await expect(getModeShareCode("x", null)).rejects.toMatchObject({
+        kind: "server",
+      });
+    }
   });
 
   it("throws a typed error for each transient outcome, so a refetch keeps the last answer", async () => {

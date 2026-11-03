@@ -1,9 +1,11 @@
 import type { Env } from "./helpers";
-import { errorResponse, jsonResponse } from "./helpers";
+import { jsonResponse } from "./helpers";
 import {
   parseShareCodeAnswer,
   SHARE_CODE_ERRORS,
   type ModeShareCodeResponse,
+  type ShareCodeAnswer,
+  type ShareCodeErrorCode,
 } from "../src/types/mode-share-code";
 
 // #311 — read-only share configuration for the per-mode WhatsApp QR.
@@ -72,23 +74,69 @@ function presentOrNull(value: string | undefined): string | null {
 // the worker contract is additive, and the panel reads an unknown reason
 // as "does not open this mode".
 
-/** How long the BFF waits for the worker's share-code answer. */
+/** How long the BFF waits for the worker's share-code answer, body included. */
 export const SHARE_CODE_UPSTREAM_TIMEOUT_MS = 10_000;
+
+/** `/api/config/modes/{name}/share-code`; group 1 is the encoded mode name. */
+export const SHARE_CODE_PATH = /^\/api\/config\/modes\/([^/]+)\/share-code$/;
+
+/**
+ * An error body of the share-code route: a human `error` plus the
+ * machine-readable `code` the client switches on.
+ */
+export function shareCodeError(
+  message: string,
+  code: ShareCodeErrorCode,
+  status: number
+): Response {
+  return jsonResponse({ error: message, code }, status);
+}
+
+/** Who is asking, for what the answer may name. */
+export interface ShareCodeCaller {
+  org: string;
+  isSuperAdmin: boolean;
+}
+
+/** The worker's body: parsed JSON, not JSON (or empty), or cut off by the timeout. */
+type BodyRead =
+  | { kind: "json"; body: unknown }
+  | { kind: "not-json" }
+  | { kind: "timeout" };
+
+async function readBody(
+  res: Response,
+  timeout: AbortSignal
+): Promise<BodyRead> {
+  try {
+    return { kind: "json", body: await res.json() };
+  } catch (error) {
+    // The timeout covers the body too: a stalled body is a 504, not a
+    // "not JSON" body (which, on a 404, would read as an older worker).
+    const name = error instanceof Error ? error.name : "";
+    if (timeout.aborted || name === "AbortError" || name === "TimeoutError") {
+      return { kind: "timeout" };
+    }
+    return { kind: "not-json" };
+  }
+}
 
 export async function handleModeShareCode(
   env: Env,
   org: string,
   modeName: string,
   opts: {
+    /** The session asking; decides whether `resolved_org` may be named. */
+    caller: ShareCodeCaller;
     /** Overridable for tests. */
     timeoutMs?: number;
-  } = {}
+  }
 ): Promise<Response> {
   // Used EXACTLY as set: the worker's home check is an exact KV key match
   // (`<org>:modes`), so trimming here could ask from a different org than
   // the gateway sends. This pre-check is only a cheap guard that skips a
   // round trip for a value that can't work; the worker is authoritative,
-  // and its `invalid_org` names the field it rejected (mapped below).
+  // and its 400s name the field they rejected (mapped below).
   const homeOrg = env.WHATSAPP_ORG;
   if (homeOrg === undefined || !isUsableHomeOrg(homeOrg)) {
     return jsonResponse({
@@ -99,14 +147,17 @@ export async function handleModeShareCode(
     `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(org)}` +
     `/modes/${encodeURIComponent(modeName)}/share-code` +
     `?home_org=${encodeURIComponent(homeOrg)}`;
-  // Bounded by a timeout only. Closing the panel cancels the browser's
-  // request (the share-code query is cancelled on close), but this upstream
-  // call is not tied to it: `request.signal` only reports a client
-  // disconnect behind the `enable_request_signal` compatibility flag, which
-  // this Worker doesn't set.
+  // Bounded by a timeout only. A closed panel cancels the browser's
+  // request, but this upstream call is not tied to it: `request.signal`
+  // only reports a client disconnect behind the `enable_request_signal`
+  // compatibility flag, which this Worker doesn't set.
   const timeout = AbortSignal.timeout(
     opts.timeoutMs ?? SHARE_CODE_UPSTREAM_TIMEOUT_MS
   );
+  const timedOut = () =>
+    shareCodeError("Engine timeout", SHARE_CODE_ERRORS.engineTimeout, 504);
+  const engineError = () =>
+    shareCodeError("Engine error", SHARE_CODE_ERRORS.engineError, 502);
   let res: Response;
   try {
     res = await fetch(url, {
@@ -116,56 +167,117 @@ export async function handleModeShareCode(
   } catch {
     // A worker that doesn't answer in time is a 504: the client's
     // transient "server" state, with Try again.
-    if (timeout.aborted) {
-      return errorResponse(SHARE_CODE_ERRORS.bffTimeout, 504);
-    }
-    return errorResponse("Engine unreachable", 502);
+    if (timeout.aborted) return timedOut();
+    return shareCodeError(
+      "Engine unreachable",
+      SHARE_CODE_ERRORS.engineError,
+      502
+    );
   }
-  const body = (await res.json().catch(() => null)) as Record<
-    string,
-    unknown
-  > | null;
+  const read = await readBody(res, timeout);
+  if (read.kind === "timeout") return timedOut();
+  const body =
+    read.kind === "json" && read.body !== null && typeof read.body === "object"
+      ? (read.body as Record<string, unknown>)
+      : null;
   const error = typeof body?.error === "string" ? body.error : null;
 
   if (res.status === 404) {
     if (error === SHARE_CODE_ERRORS.modeNotFound) {
-      return errorResponse(SHARE_CODE_ERRORS.modeNotFound, 404);
+      return shareCodeError(
+        "Mode not found",
+        SHARE_CODE_ERRORS.modeNotFound,
+        404
+      );
     }
-    // Any other 404 means this worker has no share-code route (Hono's
-    // plain "404 Not Found"), or something in front of it doesn't: one
-    // "needs a newer BT Servant" state, with no code for any mode. The
-    // deploy order puts the worker with #477 in production first, so there
-    // is no bare-slug fallback.
-    return errorResponse(SHARE_CODE_ERRORS.shareCodeUnsupported, 404);
+    // A JSON 404 with an `error` means the route exists and something
+    // else went wrong: a generic error, with Try again.
+    if (error !== null) return engineError();
+    // A non-JSON or empty 404 is a worker without the route (Hono's plain
+    // "404 Not Found"): one "needs a newer BT Servant" state for every
+    // mode. The deploy order puts the worker with #477 in production
+    // first, so there is no bare-slug fallback.
+    if (read.kind === "not-json" || body === null) {
+      return shareCodeError(
+        "Share codes need a newer BT Servant",
+        SHARE_CODE_ERRORS.shareCodeUnsupported,
+        404
+      );
+    }
+    return engineError();
   }
   // Every 503 (`detail`: list_failed, read_failed, listing_lag) is
   // transient on the worker's side; the panel offers a retry.
-  if (res.status === 503) return errorResponse("modes_unavailable", 503);
-  // Permanent: the org's stored modes record isn't valid JSON. Passed
-  // through as itself so the panel can say so instead of offering a retry.
+  if (res.status === 503) {
+    return shareCodeError(
+      "Modes unavailable",
+      SHARE_CODE_ERRORS.modesUnavailable,
+      503
+    );
+  }
+  // Permanent: the org's stored modes record is unreadable (not JSON, or
+  // not a modes record). Passed through so the panel can say so instead of
+  // offering a retry.
   if (res.status === 500 && error === SHARE_CODE_ERRORS.corruptModesRecord) {
-    return errorResponse(SHARE_CODE_ERRORS.corruptModesRecord, 500);
+    return shareCodeError(
+      "Corrupt modes record",
+      SHARE_CODE_ERRORS.corruptModesRecord,
+      500
+    );
   }
   if (res.status === 400) {
-    // The worker names which org it rejected (#477). `home_org` is
-    // WHATSAPP_ORG, so it is this environment's configuration, not the
-    // mode's org; `org` (or no field) is the mode's org.
-    if (error === SHARE_CODE_ERRORS.invalidOrg && body?.field === "home_org") {
+    // The worker names the field it rejected (#477). `home_org` is
+    // WHATSAPP_ORG (`invalid_org` or `home_org_required`), so it is this
+    // environment's configuration, not the mode's org.
+    if (body?.field === "home_org") {
       return jsonResponse({
         capability: "unconfigured",
       } satisfies ModeShareCodeResponse);
     }
-    return errorResponse(error ?? "bad_request", 400);
+    if (error === SHARE_CODE_ERRORS.invalidOrg) {
+      return shareCodeError("Invalid org", SHARE_CODE_ERRORS.invalidOrg, 400);
+    }
+    if (error === SHARE_CODE_ERRORS.invalidModeName) {
+      return shareCodeError(
+        "Invalid mode name",
+        SHARE_CODE_ERRORS.invalidModeName,
+        400
+      );
+    }
+    return shareCodeError("Bad request", SHARE_CODE_ERRORS.badRequest, 400);
   }
-  if (!res.ok) return errorResponse("Engine error", 502);
+  if (!res.ok) return engineError();
 
   const answer = parseShareCodeAnswer(body);
-  if (answer === null) return errorResponse("Malformed engine response", 502);
+  if (answer === null) {
+    return shareCodeError(
+      "Malformed engine response",
+      SHARE_CODE_ERRORS.engineError,
+      502
+    );
+  }
   return jsonResponse({
     capability: "present",
     home_org: homeOrg,
-    ...answer,
+    ...withoutForeignOrg(answer, opts.caller),
   } satisfies ModeShareCodeResponse);
+}
+
+/**
+ * `resolved_org` names the org whose mode a code opens instead. Only a
+ * super-admin, or a caller whose own org it is, may see that name: other
+ * orgs' mode names are not theirs to learn. Without it the panel says
+ * "another org's mode".
+ */
+function withoutForeignOrg(
+  answer: ShareCodeAnswer,
+  caller: ShareCodeCaller
+): ShareCodeAnswer {
+  if (answer.resolved_org === undefined || caller.isSuperAdmin) return answer;
+  if (answer.resolved_org.trim() === caller.org.trim()) return answer;
+  const rest = { ...answer };
+  delete rest.resolved_org;
+  return rest;
 }
 
 /** Cloudflare KV's key limit, in bytes; the worker applies it to `<org>:modes`. */

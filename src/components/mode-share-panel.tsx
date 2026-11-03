@@ -19,7 +19,6 @@ import {
   modeShareState,
   retryControl,
   shownTrigger,
-  validateModeShareSlug,
   nextRetryClick,
   type ModeSharePanelState,
   type RetryClick,
@@ -96,7 +95,7 @@ export function ModeSharePanel({
   // but the page has already dropped the latch (`modeName` is "" and the
   // label/flags may belong to the next selection). Freeze what was shown
   // at the last open render so the status region and card do not flicker
-  // through "can't encode this name" on the way out.
+  // on the way out.
   const frozenRef = useRef({
     modeName: liveModeName,
     modeLabel: liveModeLabel,
@@ -111,7 +110,7 @@ export function ModeSharePanel({
       flags: liveFlags,
     };
   }
-  const { modeName, modeLabel, org, flags } = open
+  const shown = open
     ? {
         modeName: liveModeName,
         modeLabel: liveModeLabel,
@@ -120,18 +119,65 @@ export function ModeSharePanel({
       }
     : frozenRef.current;
 
-  // Fetch only once the panel has been opened; the result is cached for
-  // the session, so later opens are instant.
+  // Each open is its own mount of the content (#345): a reopen during the
+  // exit animation still gets a fresh one. The share-code query lives in
+  // it, so TanStack's per-mount state is per open, and closing (the
+  // unmount after the exit animation) cancels a request still in flight.
+  const [openCount, setOpenCount] = useState(open ? 1 : 0);
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setOpenCount((n) => n + 1);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        id={MODE_SHARE_DIALOG_ID}
+        className="sm:max-w-md"
+        onCloseAutoFocus={(event) => {
+          const target = returnFocusTo?.current;
+          // Null when the opener has unmounted (selection cleared); let
+          // Radix fall through to its default rather than focus nothing.
+          if (!target) return;
+          event.preventDefault();
+          target.focus();
+        }}
+      >
+        <ModeShareContent
+          key={JSON.stringify([openCount, shown.org, shown.modeName])}
+          open={open}
+          {...shown}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface ModeShareContentProps {
+  open: boolean;
+  modeName: string;
+  modeLabel?: string;
+  org: string | null;
+  flags: ModeFlags;
+}
+
+/** Everything inside the dialog, mounted once per open. */
+function ModeShareContent({
+  open,
+  modeName,
+  modeLabel,
+  org,
+  flags,
+}: ModeShareContentProps) {
+  // Session-cached operator config; asked while open.
   const shareConfig = useShareConfig(open);
-  // The worker's answer for which code opens this mode (#345). Not asked
-  // for a slug the panel refuses on its own (it would only 400).
-  // Asked only for a mode the page itself can't refuse: a shareable slug,
-  // published, not group-only (`resolveModeSharePanelState` checks those
-  // first, from the page's own saved flags).
+  // The worker's answer for which code opens this mode (#345), asked only
+  // for a mode the page itself can't refuse: published and not group-only
+  // (`resolveModeSharePanelState` checks those first, from the page's own
+  // saved flags). The name is the worker's to judge.
   const shareCode = useModeShareCode(
-    open &&
-      validateModeShareSlug(modeName) === "ok" &&
-      modeShareState(flags) === "ready",
+    open && modeShareState(flags) === "ready",
     modeName,
     org
   );
@@ -142,6 +188,7 @@ export function ModeSharePanel({
     return resolveModeSharePanelState(
       {
         pending: shareConfig.isPending,
+        paused: shareConfig.fetchStatus === "paused",
         // A failed refetch over an answer keeps it (TanStack keeps `data`).
         error: shareConfig.isError && data === undefined,
         supported: data?.supported === true,
@@ -149,15 +196,14 @@ export function ModeSharePanel({
       },
       shareCodeSnapshot,
       flags,
-      org,
-      modeName
+      org
     );
   }, [
     flags,
-    modeName,
     org,
     shareCodeSnapshot,
     shareConfig.data,
+    shareConfig.fetchStatus,
     shareConfig.isError,
     shareConfig.isPending,
   ]);
@@ -180,16 +226,15 @@ export function ModeSharePanel({
     : null;
   const showRefreshFailed = refreshFailed(state, shareCodeSnapshot);
 
-  // Try again (see `retryControl`). Busy follows the retried query's own
-  // fetching, for the (open, mode) pair it was clicked in: on from the
-  // click, off once that query has fetched and stopped. A refetch that a
-  // mode write cancels and restarts stays busy; closing the panel or
-  // switching modes drops it.
-  const retryPair = open ? JSON.stringify([org, modeName]) : null;
+  // Try again (see `retryControl`, `nextRetryClick`). Busy follows the
+  // retried query's own fetch status: on from the click, off once that
+  // query has fetched and stopped, or is paused offline. A refetch that a
+  // mode write cancels and restarts stays busy. Closing drops it with
+  // this mount.
   const [retryClick, setRetryClick] = useState<RetryClick | null>(null);
-  const liveClick = nextRetryClick(retryClick, retryPair, {
-    config: shareConfig.isFetching,
-    "share-code": shareCode.fetching,
+  const liveClick = nextRetryClick(retryClick, {
+    config: shareConfig.fetchStatus,
+    "share-code": shareCode.fetchStatus,
   });
   if (liveClick !== retryClick) setRetryClick(liveClick);
   const retry = retryControl(
@@ -198,8 +243,7 @@ export function ModeSharePanel({
     liveClick?.target ?? null
   );
   const runRetry = (target: RetryTarget) => {
-    if (retryPair === null) return;
-    setRetryClick({ pair: retryPair, target, started: false });
+    setRetryClick({ target, started: false });
     const refetch =
       target === "config" ? shareConfig.refetch() : shareCode.refetch();
     // Fallback for a refetch that never showed as fetching: once it has
@@ -207,9 +251,7 @@ export function ModeSharePanel({
     // again) fetching.
     void refetch.finally(() =>
       setRetryClick((c) =>
-        c !== null && c.pair === retryPair && c.target === target
-          ? { ...c, started: true }
-          : c
+        c !== null && c.target === target ? { ...c, started: true } : c
       )
     );
   };
@@ -357,224 +399,213 @@ export function ModeSharePanel({
   }, [buildDownloadSvg, cancelPngJob, modeName, org]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        id={MODE_SHARE_DIALOG_ID}
-        className="sm:max-w-md"
-        onCloseAutoFocus={(event) => {
-          const target = returnFocusTo?.current;
-          // Null when the opener has unmounted (selection cleared); let
-          // Radix fall through to its default rather than focus nothing.
-          if (!target) return;
-          event.preventDefault();
-          target.focus();
-        }}
-      >
-        <DialogHeader>
-          <DialogTitle>Share on WhatsApp</DialogTitle>
-          {/* Stable description (Radix reads it once, on open). What changes
+    <>
+      <DialogHeader>
+        <DialogTitle>Share on WhatsApp</DialogTitle>
+        {/* Stable description (Radix reads it once, on open). What changes
               — settings loaded, code ready, or why not — lives in the status
               region below, same split as the priorities panel. */}
-          <DialogDescription>
-            A QR code and link that open this mode in WhatsApp.
-          </DialogDescription>
-        </DialogHeader>
+        <DialogDescription>
+          A QR code and link that open this mode in WhatsApp.
+        </DialogDescription>
+      </DialogHeader>
 
-        <p
-          role="status"
-          aria-live="polite"
-          aria-busy={state.kind === "loading"}
-          className="text-muted-foreground -mt-2 text-sm"
-        >
-          {describe(state, modeName)}
-        </p>
+      <p
+        role="status"
+        aria-live="polite"
+        aria-busy={
+          state.kind === "loading-config" || state.kind === "checking-code"
+        }
+        className="text-muted-foreground -mt-2 text-sm"
+      >
+        {describe(state, modeName)}
+      </p>
 
-        {/* The card. Always white, in dark mode too: it is the thing that
+      {/* The card. Always white, in dark mode too: it is the thing that
             gets printed and scanned, and a scanner wants black on white. The
             3px top strip is the Modes accent (#78) so it reads as one of
             ours on paper as well as on screen. */}
-        <div
-          className="mx-auto w-full max-w-[19rem] overflow-hidden rounded-xl border border-neutral-200 bg-white text-neutral-900 shadow-sm"
-          style={{ borderTopWidth: 3, borderTopColor: "var(--brand-modes)" }}
-        >
-          <div className="px-5 pt-4">
-            <p className="text-[10px] font-semibold tracking-[0.18em] text-neutral-500 uppercase">
-              BT Servant · WhatsApp
-            </p>
-            <p className="mt-1 truncate text-base font-semibold" title={title}>
-              {title}
-            </p>
-          </div>
-          <div className="px-5 py-4">
-            <div className="aspect-square w-full">
-              {matrix ? (
-                <QrSvg
-                  matrix={matrix}
-                  label={`QR code that opens WhatsApp with ${trigger ?? ""} ready to send`}
-                />
-              ) : (
-                // Decorative: the live description above carries the same
-                // words, so this is hidden to avoid a double announcement.
-                <div
-                  className="flex size-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-neutral-300 text-neutral-400"
-                  aria-hidden="true"
-                >
-                  <QrCode className="size-8" strokeWidth={1.25} />
-                  <span className="text-xs font-medium tracking-wide">
-                    {placeholderLabel(state)}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-          {trigger && (
-            <div className="border-t border-dashed border-neutral-200 px-5 py-3 text-center">
-              <p
-                className={cn(
-                  "font-mono text-lg font-medium tracking-tight break-all",
-                  !ready && "text-neutral-400"
-                )}
-              >
-                {trigger}
-              </p>
-              {/* A partner's code opens a mode from another org than the
-                  WhatsApp number's; say whose, on paper as well (#345). */}
-              {partnerOrg && (
-                <p
-                  className="mt-0.5 truncate text-xs text-neutral-500"
-                  title={partnerOrg}
-                >
-                  A mode from {partnerOrg}
-                </p>
-              )}
-            </div>
-          )}
+      <div
+        className="mx-auto w-full max-w-[19rem] overflow-hidden rounded-xl border border-neutral-200 bg-white text-neutral-900 shadow-sm"
+        style={{ borderTopWidth: 3, borderTopColor: "var(--brand-modes)" }}
+      >
+        <div className="px-5 pt-4">
+          <p className="text-[10px] font-semibold tracking-[0.18em] text-neutral-500 uppercase">
+            BT Servant · WhatsApp
+          </p>
+          <p className="mt-1 truncate text-base font-semibold" title={title}>
+            {title}
+          </p>
         </div>
-
-        {retry && (
-          <div className="flex justify-center">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={retry.busy}
-              onClick={() => runRetry(retry.target)}
-            >
-              {retry.busy ? "Checking…" : "Try again"}
-            </Button>
-          </div>
-        )}
-
-        {state.kind === "ready" && (
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2">
-              {/* Read-only input, not <code>: focusable, fully selectable,
-                  and scrolls instead of truncating — the manual fallback
-                  when the clipboard API is unavailable. */}
-              <Input
-                readOnly
-                value={state.url}
-                aria-label="Share link"
-                onFocus={(e) => e.currentTarget.select()}
-                className="h-8 min-w-0 flex-1 font-mono text-xs"
+        <div className="px-5 py-4">
+          <div className="aspect-square w-full">
+            {matrix ? (
+              <QrSvg
+                matrix={matrix}
+                label={`QR code that opens WhatsApp with ${trigger ?? ""} ready to send`}
               />
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => void handleCopy()}
-                aria-label={copied ? "Link copied" : "Copy link"}
-                className="shrink-0"
+            ) : (
+              // Decorative: the live description above carries the same
+              // words, so this is hidden to avoid a double announcement.
+              <div
+                className="flex size-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-neutral-300 text-neutral-400"
+                aria-hidden="true"
               >
-                {copied ? <Check /> : <Copy />}
-                {copied ? "Copied" : "Copy"}
-              </Button>
-            </div>
-            <span className="sr-only" aria-live="polite">
-              {copied ? "Link copied" : ""}
-            </span>
-            {copyError && (
-              <p className="text-destructive text-xs" role="alert">
-                {copyError}
+                <QrCode className="size-8" strokeWidth={1.25} />
+                <span className="text-xs font-medium tracking-wide">
+                  {placeholderLabel(state)}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+        {trigger && (
+          <div className="border-t border-dashed border-neutral-200 px-5 py-3 text-center">
+            <p
+              className={cn(
+                "font-mono text-lg font-medium tracking-tight break-all",
+                !ready && "text-neutral-400"
+              )}
+            >
+              {trigger}
+            </p>
+            {/* A partner's code opens a mode from another org than the
+                  WhatsApp number's; say whose, on paper as well (#345). */}
+            {partnerOrg && (
+              <p
+                className="mt-0.5 truncate text-xs text-neutral-500"
+                title={partnerOrg}
+              >
+                A mode from {partnerOrg}
               </p>
             )}
           </div>
         )}
+      </div>
 
-        {answerUncertain(state) && (
-          <p className="text-muted-foreground text-xs">
-            Some orgs couldn&rsquo;t be checked just now, so this may change.
-            Try again to re-check.
-          </p>
-        )}
+      {retry && (
+        <div className="flex justify-center">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={retry.busy}
+            onClick={() => runRetry(retry.target)}
+          >
+            {retry.busy ? "Checking…" : "Try again"}
+          </Button>
+        </div>
+      )}
 
-        {showRefreshFailed && (
-          <p className="text-muted-foreground text-xs">
-            Couldn&rsquo;t re-check just now. This is BT Servant&rsquo;s last
-            answer.
-          </p>
-        )}
-
-        {emptyHomeOrg && (
-          <p className="text-muted-foreground text-xs">
-            WhatsApp&rsquo;s org ({emptyHomeOrg}) has no modes yet — check
-            WHATSAPP_ORG if that&rsquo;s unexpected.
-          </p>
-        )}
-
-        {numberMissing && (
-          <p className="text-muted-foreground text-xs">
-            Also: the WhatsApp number isn't configured for this environment yet,
-            so no code can be made until it is.
-          </p>
-        )}
-
-        {downloadError && (
-          <p className="text-destructive text-xs" role="alert">
-            {downloadError}
-          </p>
-        )}
-
-        {state.kind === "ready" && (
-          // Stack the actions instead of a single justify-between row: at
-          // `sm:max-w-md` the three buttons together are wider than the
-          // dialog's content box and spilled past its right edge (#311).
-          // A full-width primary over an equal-width download pair follows
-          // the dialog's own vertical rhythm; the pair wraps rather than
-          // spilling, so it holds at every realistic viewport width.
-          <DialogFooter className="flex-col sm:flex-col sm:justify-normal">
-            <Button size="sm" variant="ghost" asChild>
-              <a href={state.url} target="_blank" rel="noopener noreferrer">
-                <ExternalLink />
-                Open in WhatsApp
-                <span className="sr-only"> (opens in a new tab)</span>
-              </a>
+      {state.kind === "ready" && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            {/* Read-only input, not <code>: focusable, fully selectable,
+                  and scrolls instead of truncating — the manual fallback
+                  when the clipboard API is unavailable. */}
+            <Input
+              readOnly
+              value={state.url}
+              aria-label="Share link"
+              onFocus={(e) => e.currentTarget.select()}
+              className="h-8 min-w-0 flex-1 font-mono text-xs"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handleCopy()}
+              aria-label={copied ? "Link copied" : "Copy link"}
+              className="shrink-0"
+            >
+              {copied ? <Check /> : <Copy />}
+              {copied ? "Copied" : "Copy"}
             </Button>
-            {/* flex-wrap so the pair stacks rather than overflowing on very
+          </div>
+          <span className="sr-only" aria-live="polite">
+            {copied ? "Link copied" : ""}
+          </span>
+          {copyError && (
+            <p className="text-destructive text-xs" role="alert">
+              {copyError}
+            </p>
+          )}
+        </div>
+      )}
+
+      {answerUncertain(state) && (
+        <p className="text-muted-foreground text-xs">
+          Some orgs couldn&rsquo;t be checked just now, so this may change. Try
+          again to re-check.
+        </p>
+      )}
+
+      {showRefreshFailed && (
+        <p className="text-muted-foreground text-xs">
+          Couldn&rsquo;t re-check just now. This is BT Servant&rsquo;s last
+          answer.
+        </p>
+      )}
+
+      {emptyHomeOrg && (
+        <p className="text-muted-foreground text-xs">
+          WhatsApp&rsquo;s org ({emptyHomeOrg}) has no modes yet — check
+          WHATSAPP_ORG if that&rsquo;s unexpected.
+        </p>
+      )}
+
+      {numberMissing && (
+        <p className="text-muted-foreground text-xs">
+          Also: the WhatsApp number isn't configured for this environment yet,
+          so no code can be made until it is.
+        </p>
+      )}
+
+      {downloadError && (
+        <p className="text-destructive text-xs" role="alert">
+          {downloadError}
+        </p>
+      )}
+
+      {state.kind === "ready" && (
+        // Stack the actions instead of a single justify-between row: at
+        // `sm:max-w-md` the three buttons together are wider than the
+        // dialog's content box and spilled past its right edge (#311).
+        // A full-width primary over an equal-width download pair follows
+        // the dialog's own vertical rhythm; the pair wraps rather than
+        // spilling, so it holds at every realistic viewport width.
+        <DialogFooter className="flex-col sm:flex-col sm:justify-normal">
+          <Button size="sm" variant="ghost" asChild>
+            <a href={state.url} target="_blank" rel="noopener noreferrer">
+              <ExternalLink />
+              Open in WhatsApp
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>
+          </Button>
+          {/* flex-wrap so the pair stacks rather than overflowing on very
                 narrow (sub-~334px) viewports, where two whitespace-nowrap
                 buttons no longer fit side by side (#311 review). */}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleDownloadSvg}
-                className="flex-1"
-              >
-                <Download />
-                Download SVG
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleDownloadPng}
-                className="flex-1"
-              >
-                <Download />
-                Download PNG
-              </Button>
-            </div>
-          </DialogFooter>
-        )}
-      </DialogContent>
-    </Dialog>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleDownloadSvg}
+              className="flex-1"
+            >
+              <Download />
+              Download SVG
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleDownloadPng}
+              className="flex-1"
+            >
+              <Download />
+              Download PNG
+            </Button>
+          </div>
+        </DialogFooter>
+      )}
+    </>
   );
 }
 
@@ -603,8 +634,10 @@ function QrSvg({
 
 function describe(state: ModeSharePanelState, modeName: string): string {
   switch (state.kind) {
-    case "loading":
+    case "loading-config":
       return "Checking the WhatsApp settings…";
+    case "checking-code":
+      return "Checking this mode's WhatsApp code…";
     case "error":
       return "Couldn't load the WhatsApp settings.";
     case "retry":
@@ -627,8 +660,6 @@ function describe(state: ModeSharePanelState, modeName: string): string {
       return "This mode's saved settings are damaged, so BT Servant on WhatsApp can't open it. Ask unfoldingWord to check the mode.";
     case "upgrade-needed":
       return "Share codes need a newer BT Servant version.";
-    case "slug-invalid":
-      return "This mode's name can't be encoded as a trigger. Rename it to lowercase letters, digits, and hyphens to share it by QR.";
     case "slug-reserved":
       return `“${modeName}” is a reserved word — on WhatsApp, #${modeName} takes a user out of their mode, so modes with this name aren't shared by QR. Rename the mode to share it.`;
     case "org-unencodable":
@@ -636,6 +667,9 @@ function describe(state: ModeSharePanelState, modeName: string): string {
     case "org-skipped":
       return `BT Servant on WhatsApp doesn't read this org's modes, so ${state.trigger} wouldn't open this one.`;
     case "collision":
+      if (state.sameOrg) {
+        return `${state.trigger} already opens another mode in this org, not this one. Rename the mode to share it by QR.`;
+      }
       return state.resolvedOrg
         ? `${state.trigger} opens ${state.resolvedOrg}'s mode, not this one. Rename the mode or ask unfoldingWord to rename an org.`
         : `${state.trigger} opens another org's mode, not this one. Rename the mode or ask unfoldingWord to rename an org.`;
@@ -660,7 +694,8 @@ function describe(state: ModeSharePanelState, modeName: string): string {
 
 function placeholderLabel(state: ModeSharePanelState): string {
   switch (state.kind) {
-    case "loading":
+    case "loading-config":
+    case "checking-code":
       return "Loading";
     case "error":
     case "retry":
@@ -683,7 +718,6 @@ function placeholderLabel(state: ModeSharePanelState): string {
       return "Can't encode this code";
     case "upgrade-needed":
       return "Needs a newer version";
-    case "slug-invalid":
     case "slug-reserved":
       return "Can't encode this name";
     case "org-unencodable":

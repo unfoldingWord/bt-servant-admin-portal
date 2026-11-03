@@ -15,12 +15,10 @@ import {
   refreshFailed,
   retryControl,
   workerBehindPage,
-  nextOpenMark,
   shareCodeSnapshot,
-  type OpenMark,
+  shareCodeStart,
   type ShareCodeQueryView,
   shownTrigger,
-  validateModeShareSlug,
   type ModeSharePanelState,
   type ShareCodeSnapshot,
   type ShareConfigSnapshot,
@@ -118,38 +116,6 @@ describe("buildShareLinkFromCode — bare codes", () => {
       ok: false,
       reason: "code-unencodable",
     });
-  });
-});
-
-describe("validateModeShareSlug — the stored slug", () => {
-  it("refuses a slug the worker's MODE_NAME_PATTERN would reject instead of rewriting it", () => {
-    // A rewritten slug would encode a trigger for a DIFFERENT mode. The
-    // worker pattern has no underscore (the portal's slugify keeps it) and
-    // caps at 64 chars.
-    for (const bad of [
-      "",
-      "Fia Mode",
-      "fia mode",
-      "fia-mode?x=1",
-      "-fia-",
-      "fia-",
-      "#fia",
-      "a/b",
-      "kids_mode2",
-      "a".repeat(65),
-    ]) {
-      expect(validateModeShareSlug(bad), bad).toBe("slug-invalid");
-    }
-    expect(validateModeShareSlug("a".repeat(64))).toBe("ok");
-  });
-
-  it("refuses the worker's reserved clear-mode tokens", () => {
-    // `#default` / `#none` / `#clear` deactivate the current mode in the
-    // classifier before any mode matching runs.
-    for (const reserved of ["default", "none", "clear"]) {
-      expect(validateModeShareSlug(reserved)).toBe("slug-reserved");
-    }
-    expect(validateModeShareSlug("default-mode")).toBe("ok");
   });
 });
 
@@ -267,35 +233,37 @@ describe("buildModeShareFilename", () => {
 // that a link is built only from a code that resolves, and that no state
 // shows a trigger the worker didn't hand back.
 describe("nextRetryClick", () => {
-  const idle = { config: false, "share-code": false };
-  const busy = { config: false, "share-code": true };
-  const click = { pair: "A", target: "share-code", started: false } as const;
+  const idle = { config: "idle", "share-code": "idle" } as const;
+  const busy = { config: "idle", "share-code": "fetching" } as const;
+  const offline = { config: "idle", "share-code": "paused" } as const;
+  const click = { target: "share-code", started: false } as const;
 
   it("stays busy from the click until the retried query has fetched and stopped", () => {
     // Click render: not fetching yet, still busy.
-    expect(nextRetryClick(click, "A", idle)).toBe(click);
-    const started = nextRetryClick(click, "A", busy);
+    expect(nextRetryClick(click, idle)).toBe(click);
+    const started = nextRetryClick(click, busy);
     expect(started).toEqual({ ...click, started: true });
     // A cancel-and-restart (mode write) keeps it fetching: still busy.
-    expect(nextRetryClick(started, "A", busy)).toBe(started);
-    expect(nextRetryClick(started, "A", idle)).toBeNull();
+    expect(nextRetryClick(started, busy)).toBe(started);
+    expect(nextRetryClick(started, idle)).toBeNull();
   });
 
-  it("drops a click from another (open, mode) pair: closed or switched", () => {
-    expect(nextRetryClick(click, null, busy)).toBeNull();
-    expect(nextRetryClick(click, "B", busy)).toBeNull();
+  it("ends when the retried query is paused offline, so Try again stays usable", () => {
+    expect(nextRetryClick(click, offline)).toBeNull();
+    expect(nextRetryClick({ ...click, started: true }, offline)).toBeNull();
   });
 
   it("follows the target's own query, not the other one", () => {
-    const config = { ...click, target: "config", started: true } as const;
-    expect(nextRetryClick(config, "A", busy)).toBeNull();
-    expect(nextRetryClick(null, "A", busy)).toBeNull();
+    const config = { target: "config", started: true } as const;
+    expect(nextRetryClick(config, busy)).toBeNull();
+    expect(nextRetryClick(null, busy)).toBeNull();
   });
 });
 
 describe("resolveModeSharePanelState", () => {
   const config: ShareConfigSnapshot = {
     pending: false,
+    paused: false,
     error: false,
     supported: true,
     whatsappNumber: "+57 300 123 4567",
@@ -342,19 +310,17 @@ describe("resolveModeSharePanelState", () => {
       config?: ShareConfigSnapshot;
       flags?: { published?: boolean; requires_group?: boolean };
       org?: string | null;
-      name?: string;
     } = {}
   ) =>
     resolveModeSharePanelState(
       opts.config ?? config,
       shareCode,
       opts.flags ?? ready,
-      opts.org === undefined ? "PBT" : opts.org,
-      opts.name ?? "obt-coach"
+      opts.org === undefined ? "PBT" : opts.org
     );
 
   it("builds a home mode's bare link from the worker's code", () => {
-    expect(run(home, { org: "acme", name: "fia" })).toEqual({
+    expect(run(home, { org: "acme" })).toEqual({
       kind: "ready",
       url: "https://wa.me/573001234567?text=%23fia",
       trigger: "#fia",
@@ -392,13 +358,24 @@ describe("resolveModeSharePanelState", () => {
     expect(run(miss("collision", "pbt"))).toEqual({
       kind: "collision",
       resolvedOrg: "pbt",
+      sameOrg: false,
       uncertain: false,
       ...partnerShown,
     });
-    // #477: a collision whose winner is hidden has no resolved_org.
+    // #477: a collision whose winner is hidden (or stripped by the BFF:
+    // another org's name, for a non-super-admin) has no resolved_org.
     expect(run(miss("collision"))).toEqual({
       kind: "collision",
       resolvedOrg: null,
+      sameOrg: false,
+      uncertain: false,
+      ...partnerShown,
+    });
+    // #477 cd20c99: an alias clash inside this same org names this org.
+    expect(run(miss("collision", "PBT"))).toEqual({
+      kind: "collision",
+      resolvedOrg: "PBT",
+      sameOrg: true,
       uncertain: false,
       ...partnerShown,
     });
@@ -434,6 +411,7 @@ describe("resolveModeSharePanelState", () => {
     expect(collision).toEqual({
       kind: "collision",
       resolvedOrg: null,
+      sameOrg: false,
       uncertain: true,
       ...partnerShown,
     });
@@ -484,10 +462,6 @@ describe("resolveModeSharePanelState", () => {
     expect(
       run(unasked, { flags: { published: true, requires_group: true } })
     ).toEqual({ kind: "group-only" });
-    // ...but after the slug checks.
-    expect(run(unasked, { flags: {}, name: "default" })).toEqual({
-      kind: "slug-reserved",
-    });
   });
 
   it("says the worker is behind when it says draft / group-only for a page-published mode", () => {
@@ -545,16 +519,29 @@ describe("resolveModeSharePanelState", () => {
   it("offers no code for any mode on a worker without the route, home included", () => {
     const upgrade = code({ capability: "upgrade-needed" });
     for (const org of ["acme", "unfoldingWord", "PBT"]) {
-      const state = run(upgrade, { org, name: "fia" });
+      const state = run(upgrade, { org });
       expect(state).toEqual({ kind: "upgrade-needed" });
       expect(shownTrigger(state)).toBeNull();
     }
   });
 
   it("checks while there is no current answer and a fetch runs (first load, reopen)", () => {
-    expect(run({ ...settled, checking: true })).toEqual({ kind: "loading" });
+    expect(run({ ...settled, checking: true })).toEqual({
+      kind: "checking-code",
+    });
     expect(run(partner, { config: { ...config, pending: true } })).toEqual({
-      kind: "loading",
+      kind: "loading-config",
+    });
+  });
+
+  it("names share-config offline before it ever loaded as the settings error, with Try again", () => {
+    const state = run(partner, {
+      config: { ...config, pending: true, paused: true },
+    });
+    expect(state).toEqual({ kind: "error" });
+    expect(retryControl(state, settled, null)).toEqual({
+      target: "config",
+      busy: false,
     });
   });
 
@@ -589,17 +576,16 @@ describe("resolveModeSharePanelState", () => {
     });
   });
 
-  it("names the mode's identity first, before any request state", () => {
-    const loading: ShareCodeSnapshot = { ...settled, checking: true };
-    expect(run(loading, { name: "Fia Mode" })).toEqual({
-      kind: "slug-invalid",
-    });
-    expect(run(loading, { name: "default" })).toEqual({
-      kind: "slug-reserved",
-    });
-    // A stored slug never contains `/`, whatever the worker would say.
-    expect(run(partner, { name: "pbt/obt-coach" })).toEqual({
-      kind: "slug-invalid",
+  it("leaves the mode's name to the worker: reserved and invalid names are its answers", () => {
+    // No local name check: the worker answers `reserved` or 400
+    // invalid_mode_name, and the panel says so.
+    expect(run(miss("reserved"))).toEqual({ kind: "slug-reserved" });
+    expect(
+      run(code({ capability: "failed", failure: "invalid-name" }))
+    ).toEqual({ kind: "failed", failure: "invalid-name" });
+    // While it is asked, the panel checks rather than refusing up front.
+    expect(run({ ...settled, checking: true })).toEqual({
+      kind: "checking-code",
     });
   });
 
@@ -650,7 +636,7 @@ describe("refreshFailed and retryControl", () => {
       )
     ).toBe(false);
     expect(
-      refreshFailed({ kind: "loading" }, snap({ failure: "server" }))
+      refreshFailed({ kind: "checking-code" }, snap({ failure: "server" }))
     ).toBe(false);
   });
 
@@ -682,20 +668,18 @@ describe("refreshFailed and retryControl", () => {
     ).toBeNull();
   });
 
-  it("stays visible and disabled while its re-ask runs, even once the state is loading", () => {
-    // Try again on the settings error: share-config refetches, the state
-    // turns to loading, and the button must stay, busy, until the refetch
-    // promise settles.
-    expect(retryControl({ kind: "loading" }, snap(), "config")).toEqual({
+  it("stays visible and disabled while its re-ask runs, even once the state is checking", () => {
+    // Try again on the settings error: share-config refetches, and the
+    // button must stay, busy, until that query has fetched and stopped.
+    expect(retryControl({ kind: "loading-config" }, snap(), "config")).toEqual({
       target: "config",
       busy: true,
     });
-    expect(retryControl({ kind: "loading" }, snap(), "share-code")).toEqual({
-      target: "share-code",
-      busy: true,
-    });
+    expect(
+      retryControl({ kind: "checking-code" }, snap(), "share-code")
+    ).toEqual({ target: "share-code", busy: true });
     // Settled (busy cleared): back to whatever the state calls for.
-    expect(retryControl({ kind: "loading" }, snap(), null)).toBeNull();
+    expect(retryControl({ kind: "checking-code" }, snap(), null)).toBeNull();
   });
 });
 
@@ -721,68 +705,72 @@ describe("workerBehindPage", () => {
   });
 });
 
-describe("open-detection: nextOpenMark and shareCodeSnapshot", () => {
+// The panel mounts the share-code query once per open, so "after mount"
+// (TanStack's isFetchedAfterMount) means "in this open". `start` is the
+// one thing the hook takes at the first render it asks.
+describe("per-open snapshot: shareCodeStart and shareCodeSnapshot", () => {
   const answerA = {
     capability: "present" as const,
     home_org: "uW",
     code: "pbt/a",
     resolves: true,
   };
-  const answerB = { ...answerA, code: "pbt/b" };
-  const closed: OpenMark = { openKey: null, at: 0, freshAtOpen: false };
   const view = (over: Partial<ShareCodeQueryView>): ShareCodeQueryView => ({
     data: undefined,
     dataUpdatedAt: 0,
-    isFetching: false,
+    fetchStatus: "idle",
     error: null,
+    isFetchedAfterMount: false,
     ...over,
   });
-  const cache = (dataUpdatedAt: number, isStale: boolean, hasData = true) => ({
-    dataUpdatedAt,
-    hasData,
-    isStale,
-  });
 
-  it("keeps the mark while (open, key) is unchanged, and starts one when it changes", () => {
-    const m = nextOpenMark(closed, "k1", cache(100, true));
-    expect(m).toEqual({ openKey: "k1", at: 100, freshAtOpen: false });
-    expect(nextOpenMark(m, "k1", cache(200, false))).toBe(m);
-    expect(nextOpenMark(m, "k2", cache(300, false))).toEqual({
-      openKey: "k2",
-      at: 300,
-      freshAtOpen: true,
-    });
-    expect(nextOpenMark(m, null, cache(300, false, false))).toEqual({
-      openKey: null,
-      at: 300,
-      freshAtOpen: false,
-    });
+  it("takes a fresh start only from an idle first look at cached data", () => {
+    // TanStack's first result is optimistic: a stale answer already shows
+    // as fetching (or paused, offline).
+    expect(shareCodeStart(view({ data: answerA, dataUpdatedAt: 100 }))).toEqual(
+      { fresh: true, dataUpdatedAt: 100 }
+    );
+    for (const fetchStatus of ["fetching", "paused"] as const) {
+      expect(
+        shareCodeStart(view({ data: answerA, dataUpdatedAt: 100, fetchStatus }))
+          .fresh
+      ).toBe(false);
+    }
+    expect(shareCodeStart(view({})).fresh).toBe(false);
   });
 
   it("checks on a reopen past the stale time, then shows the fresh answer", () => {
-    const mark = nextOpenMark(closed, "k1", cache(100, true));
+    const first = view({
+      data: answerA,
+      dataUpdatedAt: 100,
+      fetchStatus: "fetching",
+    });
+    const start = shareCodeStart(first);
+    expect(shareCodeSnapshot(first, start)).toEqual({
+      answer: undefined,
+      checking: true,
+      failure: null,
+    });
     expect(
       shareCodeSnapshot(
-        view({ data: answerA, dataUpdatedAt: 100, isFetching: true }),
-        mark
+        view({ data: answerA, dataUpdatedAt: 150, isFetchedAfterMount: true }),
+        start
       )
-    ).toEqual({ answer: undefined, checking: true, failure: null });
-    expect(
-      shareCodeSnapshot(view({ data: answerA, dataUpdatedAt: 150 }), mark)
     ).toEqual({ answer: answerA, checking: false, failure: null });
   });
 
   it("never offers a previous open's answer when this open's refetch failed", () => {
-    // Reopen past the stale time; the refetch fails. The only data is from
-    // a previous open: the panel shows the failure (Try again), not 'ready'.
-    const mark = nextOpenMark(closed, "k1", cache(100, true));
+    const start = shareCodeStart(
+      view({ data: answerA, dataUpdatedAt: 100, fetchStatus: "fetching" })
+    );
     const failed = shareCodeSnapshot(
       view({
         data: answerA,
         dataUpdatedAt: 100,
         error: new ShareCodeRequestError("network"),
+        isFetchedAfterMount: true,
       }),
-      mark
+      start
     );
     expect(failed).toEqual({
       answer: undefined,
@@ -793,89 +781,122 @@ describe("open-detection: nextOpenMark and shareCodeSnapshot", () => {
       resolveModeSharePanelState(
         {
           pending: false,
+          paused: false,
           error: false,
           supported: true,
           whatsappNumber: "15550100100",
         },
         failed,
         { published: true },
-        "PBT",
-        "a"
+        "PBT"
       )
     ).toEqual({ kind: "retry", cause: "network" });
   });
 
-  it("keeps a fresh cached answer shown at reopen through a later background refetch", () => {
-    // Reopen within the stale time: shown at once, no fetch...
-    const mark = nextOpenMark(closed, "k1", cache(100, false));
-    expect(
-      shareCodeSnapshot(view({ data: answerA, dataUpdatedAt: 100 }), mark)
-    ).toEqual({ answer: answerA, checking: false, failure: null });
-    // ...then a mode write invalidates it: the refetch runs in the
-    // background and the card keeps the answer.
-    expect(
-      shareCodeSnapshot(
-        view({ data: answerA, dataUpdatedAt: 100, isFetching: true }),
-        mark
-      )
-    ).toEqual({ answer: answerA, checking: false, failure: null });
-    // A failed background refetch keeps it too, with the failure noted.
-    expect(
-      shareCodeSnapshot(
-        view({
-          data: answerA,
-          dataUpdatedAt: 100,
-          error: new ShareCodeRequestError("server"),
-        }),
-        mark
-      )
-    ).toEqual({ answer: answerA, checking: false, failure: "server" });
+  it("never shows a previous open's failed refresh on a fresh open", () => {
+    // The last open's background refresh failed: the cache still holds
+    // that error next to a fresh answer. This mount fetched nothing yet,
+    // so the error isn't this open's.
+    const cached = view({
+      data: answerA,
+      dataUpdatedAt: 100,
+      error: new ShareCodeRequestError("server"),
+    });
+    expect(shareCodeSnapshot(cached, shareCodeStart(cached))).toEqual({
+      answer: answerA,
+      checking: false,
+      failure: null,
+    });
+    // With no answer at all, a stale error is not shown either: it checks.
+    const empty = view({
+      error: new ShareCodeRequestError("server"),
+      fetchStatus: "fetching",
+    });
+    expect(shareCodeSnapshot(empty, shareCodeStart(empty))).toEqual({
+      answer: undefined,
+      checking: true,
+      failure: null,
+    });
   });
 
-  it("keeps an answer fetched this open through a background refresh, and a failed one", () => {
-    const mark = { openKey: "k1", at: 100, freshAtOpen: false };
-    const fetched = view({ data: answerA, dataUpdatedAt: 150 });
-    expect(
-      shareCodeSnapshot({ ...fetched, isFetching: true }, mark).checking
-    ).toBe(false);
+  it("names offline (paused) as the network failure with Try again, not checking", () => {
+    const paused = view({ fetchStatus: "paused" });
+    const snap = shareCodeSnapshot(paused, shareCodeStart(paused));
+    expect(snap).toEqual({
+      answer: undefined,
+      checking: false,
+      failure: "network",
+    });
+    const config: ShareConfigSnapshot = {
+      pending: false,
+      paused: false,
+      error: false,
+      supported: true,
+      whatsappNumber: "15550100100",
+    };
+    const state = resolveModeSharePanelState(
+      config,
+      snap,
+      { published: true },
+      "PBT"
+    );
+    expect(state).toEqual({ kind: "retry", cause: "network" });
+    expect(retryControl(state, snap, null)).toEqual({
+      target: "share-code",
+      busy: false,
+    });
+    // Paused under an answer shown this open: kept, with the refresh note.
+    const start = shareCodeStart(view({ data: answerA, dataUpdatedAt: 100 }));
     expect(
       shareCodeSnapshot(
-        { ...fetched, error: new ShareCodeRequestError("network") },
-        mark
+        view({ data: answerA, dataUpdatedAt: 100, fetchStatus: "paused" }),
+        start
       )
     ).toEqual({ answer: answerA, checking: false, failure: "network" });
   });
 
-  it("treats a key change while open like a fresh open", () => {
-    let mark = nextOpenMark(closed, "k1", cache(0, true, false));
+  it("keeps a fresh cached answer shown at reopen through a later background refetch", () => {
+    const first = view({ data: answerA, dataUpdatedAt: 100 });
+    const start = shareCodeStart(first);
+    expect(shareCodeSnapshot(first, start)).toEqual({
+      answer: answerA,
+      checking: false,
+      failure: null,
+    });
+    // A mode write invalidates it: the refetch runs in the background and
+    // the card keeps the answer.
     expect(
-      shareCodeSnapshot(view({ data: answerA, dataUpdatedAt: 150 }), mark)
-        .answer
-    ).toBe(answerA);
-    // k2's cached answer is stale: while k2 fetches, it is not offered.
-    mark = nextOpenMark(mark, "k2", cache(50, true));
-    expect(mark).toEqual({ openKey: "k2", at: 50, freshAtOpen: false });
+      shareCodeSnapshot({ ...first, fetchStatus: "fetching" }, start)
+    ).toEqual({ answer: answerA, checking: false, failure: null });
+    // A failed background refetch keeps it too, with the failure noted.
     expect(
       shareCodeSnapshot(
-        view({ data: answerB, dataUpdatedAt: 50, isFetching: true }),
-        mark
+        {
+          ...first,
+          error: new ShareCodeRequestError("server"),
+          isFetchedAfterMount: true,
+        },
+        start
       )
-    ).toEqual({ answer: undefined, checking: true, failure: null });
-    // A key with no cache at all checks until its first answer.
-    mark = nextOpenMark(mark, "k3", cache(0, true, false));
-    expect(shareCodeSnapshot(view({}), mark).checking).toBe(true);
+    ).toEqual({ answer: answerA, checking: false, failure: "server" });
   });
 
-  it("names a first-load failure, with no answer", () => {
-    const mark = { openKey: "k1", at: 0, freshAtOpen: false };
+  it("names a first-load failure in this open, with no answer", () => {
+    const start = shareCodeStart(view({ fetchStatus: "fetching" }));
     expect(
       shareCodeSnapshot(
-        view({ error: new ShareCodeRequestError("unavailable") }),
-        mark
+        view({
+          error: new ShareCodeRequestError("unavailable"),
+          isFetchedAfterMount: true,
+        }),
+        start
       )
     ).toEqual({ answer: undefined, checking: false, failure: "unavailable" });
     expect(
-      shareCodeSnapshot(view({ error: new Error("boom") }), mark).failure
+      shareCodeSnapshot(
+        view({ error: new Error("boom"), isFetchedAfterMount: true }),
+        start
+      ).failure
     ).toBe("server");
   });
 });
@@ -900,7 +921,7 @@ describe("homeOrgWithoutModes", () => {
 
 describe("shownTrigger", () => {
   it("returns the code only for states that carry one", () => {
-    expect(shownTrigger({ kind: "loading" })).toBeNull();
+    expect(shownTrigger({ kind: "checking-code" })).toBeNull();
     expect(shownTrigger({ kind: "upgrade-needed" })).toBeNull();
     expect(
       shownTrigger({ kind: "capped", trigger: "#pbt/x", partnerOrg: "PBT" })
@@ -920,16 +941,5 @@ describe("isModeShareOpen", () => {
     expect(isModeShareOpen("fia", null)).toBe(false);
     // A → B: never a frame of B's name under A's flags.
     expect(isModeShareOpen("fia", "mast")).toBe(false);
-  });
-});
-
-describe("validateModeShareSlug", () => {
-  it("mirrors the worker's name pattern and reserved tokens", () => {
-    expect(validateModeShareSlug("fia-mode")).toBe("ok");
-    expect(validateModeShareSlug("kids_mode")).toBe("slug-invalid");
-    expect(validateModeShareSlug("")).toBe("slug-invalid");
-    for (const r of ["default", "none", "clear"]) {
-      expect(validateModeShareSlug(r)).toBe("slug-reserved");
-    }
   });
 });

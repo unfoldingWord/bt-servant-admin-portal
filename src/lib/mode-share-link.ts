@@ -41,23 +41,6 @@ export const WA_ME_ORIGIN = "https://wa.me";
 // shorter — not a formal E.164 minimum.
 const E164_DIGITS = /^[1-9][0-9]{6,14}$/;
 
-// The worker's `MODE_NAME_PATTERN` (bt-servant-worker
-// src/types/prompt-overrides.ts): lowercase alphanumerics and inner
-// hyphens, 1–64 chars, no underscores. Stricter than the portal's
-// `slugifyModeName` (which keeps `_`), and the one the worker enforces on
-// every mode route — so it is the one a trigger has to satisfy.
-const MODE_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
-
-// Reserved by the worker's classifier as "clear the active mode"
-// (`CLEAR_TOKENS`, src/services/classifier/index.ts). Checked BEFORE mode
-// matching there, so `#default` can never reach a mode named `default`;
-// a QR for one would silently deactivate whatever mode the user had.
-const RESERVED_TRIGGERS: ReadonlySet<string> = new Set([
-  "default",
-  "none",
-  "clear",
-]);
-
 /**
  * Reduce an operator-entered WhatsApp number to the digit string `wa.me`
  * expects. Accepts the `+`, spaces, hyphens, dots, and parentheses people
@@ -81,20 +64,6 @@ export function normalizeWhatsAppNumber(
  */
 export function modeShareTrigger(name: string): string {
   return `#${name}`;
-}
-
-export type ModeShareSlugVerdict = "ok" | "slug-invalid" | "slug-reserved";
-
-/**
- * Can this slug be carried by a `#` trigger at all? Independent of the
- * number and of publish state — it is about the mode's identity, so the
- * panel reports it before anything else (a draft named `default` should
- * hear "rename", not "publish"). A stored slug never contains `/`.
- */
-export function validateModeShareSlug(slug: string): ModeShareSlugVerdict {
-  if (!MODE_NAME_PATTERN.test(slug)) return "slug-invalid";
-  if (RESERVED_TRIGGERS.has(slug)) return "slug-reserved";
-  return "ok";
 }
 
 // Upper bound on a worker code put in a link. Two 64-char halves and the
@@ -204,6 +173,8 @@ export function isModeShareOpen(
 export interface ShareConfigSnapshot {
   /** First load: nothing known yet. */
   pending: boolean;
+  /** That first load is waiting for the network (offline). */
+  paused: boolean;
   /**
    * The last fetch failed and there is no answer to fall back on. A failed
    * or running background refetch over an answer blocks nothing.
@@ -220,85 +191,84 @@ export interface ShareConfigSnapshot {
  */
 export interface ShareCodeSnapshot {
   /**
-   * The answer to show. TanStack keeps it through a refetch, also a failed
-   * one; it is withheld only while `checking`.
+   * The answer to show: one shown in this open of the panel. TanStack
+   * keeps it through a refetch, also a failed one; it is withheld only
+   * while `checking`.
    */
   answer: ModeShareCode | undefined;
   /**
-   * The current query key is fetching and has no data from this open of
-   * the panel (first load, a reopen past the stale time, or a key change
-   * while open): never Copy/Download on an answer about to be replaced.
+   * Fetching with no answer from this open yet (first load, or a reopen
+   * whose cached answer was stale): never Copy/Download on an answer about
+   * to be replaced.
    */
   checking: boolean;
-  /** The last fetch failed transiently (with or without a current answer). */
+  /**
+   * Why the last fetch in this open didn't answer: a transient failure, or
+   * "network" while the query is paused offline. Null otherwise.
+   */
   failure: ShareCodeTransient | null;
 }
 
 /**
- * Which (open, query key) pair the panel is showing, and what the share
- * code's cache held when that pair began.
+ * What `useModeShareCode` reads from its TanStack query. The panel mounts
+ * the query per open, so "after mount" means "in this open".
  */
-export interface OpenMark {
-  /** The query key while the panel is open; null while closed. */
-  openKey: string | null;
-  /** The cache's `dataUpdatedAt` when the pair began. */
-  at: number;
-  /**
-   * The cache held a FRESH answer when the pair began. It is shown at once
-   * (no fetch), so it counts as shown in this open: a later background
-   * refetch keeps it on the card.
-   */
-  freshAtOpen: boolean;
-}
-
-/** Start a new mark when (open, key) changes; otherwise keep it. */
-export function nextOpenMark(
-  prev: OpenMark,
-  openKey: string | null,
-  cache: { dataUpdatedAt: number; hasData: boolean; isStale: boolean }
-): OpenMark {
-  if (prev.openKey === openKey) return prev;
-  return {
-    openKey,
-    at: cache.dataUpdatedAt,
-    freshAtOpen: cache.hasData && !cache.isStale,
-  };
-}
-
-/** What `useModeShareCode` reads from its TanStack query. */
 export interface ShareCodeQueryView {
   data: ModeShareCode | undefined;
   dataUpdatedAt: number;
-  isFetching: boolean;
+  fetchStatus: "fetching" | "paused" | "idle";
   error: unknown;
+  /** TanStack's own: a fetch (success or error) finished since mount. */
+  isFetchedAfterMount: boolean;
 }
 
 /**
- * The snapshot for the current (open, key).
- *
- * An answer counts as shown in this open when it was fresh in the cache
- * at open (shown at once) or was fetched since. Only that answer is ever
- * offered: a background refetch keeps it, and a failed one keeps it with
- * the refresh note. Data from a previous open that was stale at open is
- * never offered. While its refetch runs the panel is "checking", and if
- * that refetch fails the panel shows the failure with Try again, not the
- * old answer.
+ * What the cache held when this mount first asked, taken once. TanStack's
+ * first result is optimistic: a stale or missing answer already shows as
+ * fetching (or paused, offline), so an idle answer there was fresh. A
+ * fresh answer is shown at once and stays through a later background
+ * refetch; a stale one is shown only once a fetch since replaces it.
+ */
+export interface ShareCodeStart {
+  fresh: boolean;
+  dataUpdatedAt: number;
+}
+
+export function shareCodeStart(view: ShareCodeQueryView): ShareCodeStart {
+  return {
+    fresh: view.data !== undefined && view.fetchStatus === "idle",
+    dataUpdatedAt: view.dataUpdatedAt,
+  };
+}
+
+/**
+ * The snapshot for this open. An answer counts as shown when it was fresh
+ * at the start or was fetched since. An error counts only when it came
+ * from a fetch in this open (`isFetchedAfterMount`), so a failed refresh
+ * from a previous open never shows. Paused (offline) is the network
+ * failure, with Try again, not "checking".
  */
 export function shareCodeSnapshot(
-  q: ShareCodeQueryView,
-  mark: OpenMark
+  view: ShareCodeQueryView,
+  start: ShareCodeStart
 ): ShareCodeSnapshot {
-  const noError = q.error === null || q.error === undefined;
-  const shownThisOpen =
-    q.data !== undefined && (mark.freshAtOpen || q.dataUpdatedAt > mark.at);
+  const shown =
+    view.data !== undefined &&
+    (start.fresh || view.dataUpdatedAt > start.dataUpdatedAt);
+  const failed =
+    view.isFetchedAfterMount && view.error !== null && view.error !== undefined;
+  const failure: ShareCodeTransient | null =
+    view.fetchStatus === "paused"
+      ? "network"
+      : failed
+        ? view.error instanceof ShareCodeRequestError
+          ? view.error.kind
+          : "server"
+        : null;
   return {
-    answer: shownThisOpen ? q.data : undefined,
-    checking: !shownThisOpen && (q.isFetching || noError),
-    failure: noError
-      ? null
-      : q.error instanceof ShareCodeRequestError
-        ? q.error.kind
-        : "server",
+    answer: shown ? view.data : undefined,
+    checking: !shown && failure === null,
+    failure,
   };
 }
 
@@ -316,12 +286,14 @@ interface Shown {
  * show a trigger the worker did not hand back.
  */
 export type ModeSharePanelState =
-  | { kind: "loading" }
+  /** Share-config hasn't loaded yet. */
+  | { kind: "loading-config" }
+  /** Share-config is loaded; this mode's code is being checked. */
+  | { kind: "checking-code" }
   | { kind: "error" }
   | { kind: "retry"; cause: ShareCodeTransient }
   | { kind: "failed"; failure: ShareCodeFailure }
   | { kind: "not-found" }
-  | { kind: "slug-invalid" }
   | { kind: "slug-reserved" }
   | { kind: "org-unconfigured" }
   | { kind: "upgrade-needed" }
@@ -333,6 +305,11 @@ export type ModeSharePanelState =
   | ({
       kind: "collision";
       resolvedOrg: string | null;
+      /**
+       * The code opens another mode of this same org (an alias clash),
+       * not another org's.
+       */
+      sameOrg: boolean;
       /** Another org couldn't be read: this may change on a re-check. */
       uncertain: boolean;
     } & Shown)
@@ -402,9 +379,9 @@ export type RetryTarget = "config" | "share-code";
  * The Try again control: shown for a retryable state (the settings error
  * re-asks share-config; everything else the share code), and for a
  * background refresh that failed under an answer on the card. While the
- * re-ask it started runs (`busy`, see `nextRetryClick`) it stays on screen, disabled ("Checking…"), even if
- * the state behind it turns to "loading", so it can't queue repeated
- * calls.
+ * re-ask it started runs (`busy`, see `nextRetryClick`) it stays on
+ * screen, disabled ("Checking…"), even if the state behind it turns to
+ * checking, so it can't queue repeated calls.
  */
 export function retryControl(
   state: ModeSharePanelState,
@@ -424,31 +401,33 @@ export function retryControl(
   return null;
 }
 
-/** A Try again click, tied to the (open, mode) pair it was made in. */
+/** A Try again click in this open of the panel. */
 export interface RetryClick {
-  /** The pair's key; a click from another pair (or a closed panel) is void. */
-  pair: string;
   target: RetryTarget;
   /** The retried query has been seen fetching (or its refetch settled). */
   started: boolean;
 }
 
+/** A TanStack query's `fetchStatus`. */
+export type FetchStatus = "fetching" | "paused" | "idle";
+
 /**
  * The click still in force for this render, or null. Busy is the retried
  * query's own fetching: it lasts from the click until that query has
  * fetched and stopped, so a refetch cancelled and restarted under it (a
- * mode write) stays busy. A click from another pair (closed, or switched
- * mode) is dropped. Returns `prev` itself when nothing changed.
+ * mode write) stays busy. Paused (offline) ends it, so Try again stays
+ * available while the panel says to check the connection. Returns `prev`
+ * itself when nothing changed. The panel's per-open mount drops a click
+ * on close.
  */
 export function nextRetryClick(
   prev: RetryClick | null,
-  pair: string | null,
-  fetching: Record<RetryTarget, boolean>
+  status: Record<RetryTarget, FetchStatus>
 ): RetryClick | null {
   if (prev === null) return null;
-  if (prev.pair !== pair) return null;
-  const isFetching = fetching[prev.target];
-  if (isFetching) return prev.started ? prev : { ...prev, started: true };
+  const s = status[prev.target];
+  if (s === "paused") return null;
+  if (s === "fetching") return prev.started ? prev : { ...prev, started: true };
   return prev.started ? null : prev;
 }
 
@@ -474,35 +453,37 @@ function unhandled(value: never): never {
 /**
  * Resolve what the panel shows. Order of precedence:
  *
- * 1. the mode's identity, from its stored slug alone: a slug no trigger
- *    can carry, then a reserved clear-word;
- * 2. the page's own saved flags: draft, then group-only (the worker's
+ * 1. the page's own saved flags: draft, then group-only (the worker's
  *    order). The worker is not asked about either; publishing or turning
  *    off group-only is the author's to do first;
- * 3. query lifecycle: share-config loading or failed, then the share code
- *    checking (see ShareCodeSnapshot) or failed with nothing to show;
- * 4. the worker's answer, as is: configuration (WHATSAPP_ORG unset or
+ * 2. query lifecycle: share-config loading (or offline) or failed, then
+ *    the share code checking (see ShareCodeSnapshot) or failed with
+ *    nothing to show;
+ * 3. the worker's answer, as is: configuration (WHATSAPP_ORG unset or
  *    unusable, a worker without the share-code route), a definite
- *    failure, no code at all, a link if the code resolves, else why not.
- *    A draft / group-only answer here means the worker hasn't seen the
+ *    failure (a name the worker rejects included), no code at all, a link
+ *    if the code resolves, else why not (a reserved name included). A
+ *    draft / group-only answer here means the worker hasn't seen the
  *    page's latest save ("behind");
- * 5. the number: missing or invalid.
+ * 4. the number: missing or invalid.
+ *
+ * The mode's name is not checked here: the worker decides (400
+ * `invalid_mode_name`, reason `reserved`).
  */
 export function resolveModeSharePanelState(
   config: ShareConfigSnapshot,
   shareCode: ShareCodeSnapshot,
   flags: { published?: boolean; requires_group?: boolean },
-  modeOrg: string | null | undefined,
-  modeName: string
+  modeOrg: string | null | undefined
 ): ModeSharePanelState {
-  const slugVerdict = validateModeShareSlug(modeName);
-  if (slugVerdict !== "ok") return { kind: slugVerdict };
   const eligibility = modeShareState(flags);
   if (eligibility !== "ready") return { kind: eligibility };
   // Only a first load blocks: a background refetch keeps a ready QR.
-  if (config.pending) return { kind: "loading" };
+  // Offline before it ever loaded: the settings error, with Try again.
+  if (config.pending && config.paused) return { kind: "error" };
+  if (config.pending) return { kind: "loading-config" };
   if (config.error) return { kind: "error" };
-  if (shareCode.checking) return { kind: "loading" };
+  if (shareCode.checking) return { kind: "checking-code" };
   const { answer } = shareCode;
   if (answer === undefined) {
     return { kind: "retry", cause: shareCode.failure ?? "server" };
@@ -548,12 +529,23 @@ function fromWorkerAnswer(
     case "draft":
     case "requires_group":
       return { kind: "behind" };
-    // Already refused from the slug above; kept for a worker whose clear
-    // tokens grow.
+    // A name the worker's classifier reserves (`#default`, `#none`,
+    // `#clear` take a user out of their mode).
     case "reserved":
       return { kind: "slug-reserved" };
     case "collision":
-      return { kind: "collision", resolvedOrg, uncertain, ...shown };
+      return {
+        kind: "collision",
+        resolvedOrg,
+        // #477 names this same org for an alias clash inside it.
+        sameOrg:
+          resolvedOrg !== null &&
+          modeOrg !== null &&
+          modeOrg !== undefined &&
+          resolvedOrg.trim() === modeOrg.trim(),
+        uncertain,
+        ...shown,
+      };
     case "ambiguous":
       return { kind: "ambiguous", resolvedOrg, uncertain, ...shown };
     case "capped":

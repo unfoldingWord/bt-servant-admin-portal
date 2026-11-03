@@ -14,7 +14,11 @@ import {
   type RightsField,
 } from "./rights-migration";
 import type { LanguageRights, SessionData } from "./types";
-import { handleModeShareCode } from "./share-config";
+import {
+  handleModeShareCode,
+  SHARE_CODE_PATH,
+  shareCodeError,
+} from "./share-config";
 import { SHARE_CODE_ERRORS } from "../src/types/mode-share-code";
 
 // `undefined` is the back-compat default for users predating the rights
@@ -532,10 +536,7 @@ function resolveOrg(
     const trimmed = orgParam.trim();
     if (!trimmed) {
       return {
-        error: errorResponse(
-          `${SHARE_CODE_ERRORS.bffInvalidOrgPrefix} parameter`,
-          400
-        ),
+        error: errorResponse("Invalid org parameter", 400),
       };
     }
     if (trimmed === session.org.trim()) {
@@ -568,7 +569,7 @@ function resolveOrg(
   // stopped here.
   if (isPathShapedOrg(resolved.org)) {
     return {
-      error: errorResponse(SHARE_CODE_ERRORS.bffInvalidOrgPrefix, 400),
+      error: errorResponse("Invalid org", 400),
     };
   }
 
@@ -623,6 +624,11 @@ export async function handleConfig(
 ): Promise<Response> {
   const resolved = resolveOrg(request, session);
   if ("error" in resolved) {
+    // The share-code route's errors carry a machine-readable `code` (#345);
+    // resolveOrg's own messages stay as they are for every other route.
+    if (resolved.error.status === 400 && SHARE_CODE_PATH.test(pathname)) {
+      return shareCodeError("Invalid org", SHARE_CODE_ERRORS.invalidOrg, 400);
+    }
     return resolved.error;
   }
   // Named so the raw-vs-encoded distinction travels with the variable:
@@ -1164,16 +1170,25 @@ export async function handleConfig(
   // session for its own org, super-admins cross-org (`resolveOrg`). The
   // RAW resolved org goes to the worker, so it reads the same key the
   // mode GET does.
-  const modeShareCodeMatch = pathname.match(
-    /^\/api\/config\/modes\/([^/]+)\/share-code$/
-  );
+  const modeShareCodeMatch = pathname.match(SHARE_CODE_PATH);
   if (modeShareCodeMatch?.[1]) {
     if (request.method !== "GET") {
       return errorResponse("Method not allowed", 405);
     }
     const modeName = safeDecode(modeShareCodeMatch[1]);
-    if (modeName === null) return invalidModeNameResponse();
-    return handleModeShareCode(env, resolved.org, modeName);
+    if (modeName === null) {
+      return shareCodeError(
+        "Invalid mode name",
+        SHARE_CODE_ERRORS.invalidModeName,
+        400
+      );
+    }
+    return handleModeShareCode(env, resolved.org, modeName, {
+      caller: {
+        org: session.org,
+        isSuperAdmin: session.isSuperAdmin === true,
+      },
+    });
   }
 
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);

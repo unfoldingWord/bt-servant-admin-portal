@@ -26,13 +26,13 @@ export type ShareCodeFailure =
   | "signed-out"
   /** 403: the caller can't read this org's modes. */
   | "forbidden"
-  /** 400 `invalid_mode_name` (worker), or a path the BFF couldn't decode. */
+  /** 400 code `invalid_mode_name`: the worker's pattern, or a path the BFF couldn't decode. */
   | "invalid-name"
-  /** 400 `invalid_org` (worker), or the BFF's org resolution (`Invalid org…`). */
+  /** 400 code `invalid_org`: the mode's org (BFF org resolution, or the worker's `field: "org"`). */
   | "org-invalid"
   /** Any other 400. */
   | "bad-request"
-  /** 500 `corrupt_modes_record`: permanent until the record is repaired. */
+  /** 500 code `corrupt_modes_record`: permanent until the record is repaired. */
   | "corrupt-record";
 
 /** A transient outcome worth retrying. */
@@ -69,7 +69,8 @@ export type ModeShareCode =
   /** 404 `mode_not_found`: no such mode in this org. */
   | { capability: "not-found" }
   /**
-   * Any other 404: the worker (or this BFF) has no share-code route. No
+   * 404 `share_code_unsupported`, or a non-JSON / empty 404: the worker
+   * (or this BFF) has no share-code route. No
    * code is offered for any mode until BT Servant is upgraded.
    */
   | { capability: "upgrade-needed" }
@@ -98,15 +99,12 @@ export async function getModeShareCode(
     string,
     unknown
   > | null;
-  const error = typeof data?.error === "string" ? data.error : "";
+  // The BFF's machine-readable code; the human `error` text is never read.
+  const code = typeof data?.code === "string" ? data.code : null;
   if (res.status === 503) throw new ShareCodeRequestError("unavailable");
-  if (res.status === 404) {
-    return error === SHARE_CODE_ERRORS.modeNotFound
-      ? { capability: "not-found" }
-      : { capability: "upgrade-needed" };
-  }
+  if (res.status === 404) return notFoundAnswer(data, code);
   if (!res.ok) {
-    const failure = definiteFailure(res.status, error);
+    const failure = definiteFailure(res.status, code);
     if (failure === null) throw new ShareCodeRequestError("server");
     return { capability: "failed", failure };
   }
@@ -115,23 +113,40 @@ export async function getModeShareCode(
   return parsed;
 }
 
-/** Name a definite failure by status and error body, or null when it's transient. */
+/**
+ * A 404: the mode is gone, or the share-code route doesn't exist (the
+ * BFF's `share_code_unsupported`, or a non-JSON / empty 404 from a portal
+ * without the route). Any other JSON 404 means the route exists and
+ * something else failed: transient.
+ */
+function notFoundAnswer(
+  data: Record<string, unknown> | null,
+  code: string | null
+): ModeShareCode {
+  if (code === SHARE_CODE_ERRORS.modeNotFound)
+    return { capability: "not-found" };
+  if (code === SHARE_CODE_ERRORS.shareCodeUnsupported) {
+    return { capability: "upgrade-needed" };
+  }
+  if (data === null || typeof data !== "object") {
+    return { capability: "upgrade-needed" };
+  }
+  throw new ShareCodeRequestError("server");
+}
+
+/** Name a definite failure by status and code, or null when it's transient. */
 function definiteFailure(
   status: number,
-  error: string
+  code: string | null
 ): ShareCodeFailure | null {
   if (status === 401) return "signed-out";
   if (status === 403) return "forbidden";
   if (status === 400) {
-    if (error === SHARE_CODE_ERRORS.invalidModeName) return "invalid-name";
-    if (error === SHARE_CODE_ERRORS.bffInvalidModeName) return "invalid-name";
-    if (error === SHARE_CODE_ERRORS.invalidOrg) return "org-invalid";
-    if (error.startsWith(SHARE_CODE_ERRORS.bffInvalidOrgPrefix)) {
-      return "org-invalid";
-    }
+    if (code === SHARE_CODE_ERRORS.invalidModeName) return "invalid-name";
+    if (code === SHARE_CODE_ERRORS.invalidOrg) return "org-invalid";
     return "bad-request";
   }
-  if (status === 500 && error === SHARE_CODE_ERRORS.corruptModesRecord) {
+  if (status === 500 && code === SHARE_CODE_ERRORS.corruptModesRecord) {
     return "corrupt-record";
   }
   return null;

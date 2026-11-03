@@ -52,6 +52,8 @@ function call(
   );
 }
 
+const CALLER = { caller: { org: "PBT", isSuperAdmin: false } };
+
 function workerReplies(body: unknown, status = 200) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     Promise.resolve(
@@ -129,7 +131,7 @@ describe("share-code route — mapping the worker's answer", () => {
       code: "pbt/obt-coach",
       resolves: false,
       reason: "collision",
-      resolved_org: "pbt",
+      resolved_org: "PBT",
       worker_version: "2.59.0",
     });
     const res = await call();
@@ -138,9 +140,44 @@ describe("share-code route — mapping the worker's answer", () => {
       code: "pbt/obt-coach",
       resolves: false,
       reason: "collision",
-      resolved_org: "pbt",
+      resolved_org: "PBT",
       home_org: GATEWAY,
     });
+  });
+
+  it("names another org in resolved_org only to a super-admin", async () => {
+    const collision = {
+      code: "pbt/obt-coach",
+      resolves: false,
+      reason: "collision",
+      resolved_org: "Secret Partner",
+    };
+    // An org admin of PBT: another org's name is stripped.
+    workerReplies(collision);
+    const admin = await call({ session: makeSession({ isAdmin: true }) });
+    const adminBody = (await admin.json()) as Record<string, unknown>;
+    expect(adminBody).not.toHaveProperty("resolved_org");
+    expect(adminBody).toMatchObject({ reason: "collision" });
+    vi.restoreAllMocks();
+    // A super-admin sees it.
+    workerReplies(collision);
+    const superAdmin = await call({
+      session: makeSession({ isAdmin: true, isSuperAdmin: true }),
+    });
+    expect(await superAdmin.json()).toMatchObject({
+      resolved_org: "Secret Partner",
+    });
+  });
+
+  it("keeps resolved_org when it is the caller's own org (an alias clash inside it)", async () => {
+    workerReplies({
+      code: "pbt/obt-coach",
+      resolves: false,
+      reason: "collision",
+      resolved_org: "PBT",
+    });
+    const res = await call({ session: makeSession({ org: " PBT" }) });
+    expect(await res.json()).toMatchObject({ resolved_org: "PBT" });
   });
 
   it("passes an invalid_mode answer without home_has_modes through unchanged", async () => {
@@ -237,24 +274,30 @@ describe("share-code route — mapping the worker's answer", () => {
     expect(res.status).toBe(404);
   });
 
-  it("answers every other 404 as share_code_unsupported, home org included", async () => {
-    // A worker without the route (Hono's plain "404 Not Found"), an empty
-    // body, or any JSON 404 other than mode_not_found: one state, no
-    // bare-slug fallback for any mode.
-    const bodies: unknown[] = [
-      "404 Not Found",
-      "",
-      { error: "something_else" },
-    ];
-    for (const body of bodies) {
+  it("answers only a non-JSON or empty 404 as share_code_unsupported, home org included", async () => {
+    // A worker without the route answers Hono's plain "404 Not Found".
+    for (const body of ["404 Not Found", ""]) {
       for (const org of ["PBT", GATEWAY]) {
         workerReplies(body, 404);
         const res = await call({ session: makeSession({ org }) });
         expect(res.status, `${JSON.stringify(body)} ${org}`).toBe(404);
-        expect(await res.json()).toEqual({ error: "share_code_unsupported" });
+        expect(await res.json()).toEqual({
+          error: "Share codes need a newer BT Servant",
+          code: "share_code_unsupported",
+        });
         vi.restoreAllMocks();
       }
     }
+  });
+
+  it("reads a JSON 404 with any other error as a route that exists: a generic error", async () => {
+    workerReplies({ error: "something_else" }, 404);
+    const res = await call();
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({
+      error: "Engine error",
+      code: "engine_error",
+    });
   });
 
   it("uses a padded WHATSAPP_ORG exactly, for home_org", async () => {
@@ -267,21 +310,30 @@ describe("share-code route — mapping the worker's answer", () => {
     expect(await res.json()).toMatchObject({ home_org: " unfoldingWord" });
   });
 
-  it("passes the worker's 400 invalid_org through for the org copy", async () => {
-    workerReplies({ error: "invalid_org", message: "too long" }, 400);
-    const res = await call();
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "invalid_org" });
+  it("passes invalid_org with field org (or no field) through as code invalid_org", async () => {
+    for (const body of [
+      { error: "invalid_org", field: "org", message: "too long" },
+      { error: "invalid_org", message: "too long" },
+    ]) {
+      workerReplies(body, 400);
+      const res = await call();
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: "Invalid org",
+        code: "invalid_org",
+      });
+      vi.restoreAllMocks();
+    }
   });
 
-  it("passes invalid_org with field org (or no field) through for the org copy", async () => {
+  it("answers home_org_required (field home_org) as WHATSAPP_ORG unconfigured", async () => {
     workerReplies(
-      { error: "invalid_org", field: "org", message: "too long" },
+      { error: "home_org_required", field: "home_org", message: "required" },
       400
     );
-    const res = await call();
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "invalid_org" });
+    expect(await (await call()).json()).toEqual({
+      capability: "unconfigured",
+    });
   });
 
   it("answers invalid_org with field home_org as WHATSAPP_ORG unconfigured", async () => {
@@ -318,12 +370,43 @@ describe("share-code route — mapping the worker's answer", () => {
     );
     const res = await call();
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "corrupt_modes_record" });
+    expect(await res.json()).toEqual({
+      error: "Corrupt modes record",
+      code: "corrupt_modes_record",
+    });
   });
 
-  it("passes any other 400 through", async () => {
+  it("gives every other 400 a code: invalid_mode_name, else bad_request", async () => {
     workerReplies({ error: "invalid_mode_name" }, 400);
-    expect((await call()).status).toBe(400);
+    const name = await call();
+    expect(name.status).toBe(400);
+    expect(await name.json()).toEqual({
+      error: "Invalid mode name",
+      code: "invalid_mode_name",
+    });
+    vi.restoreAllMocks();
+    workerReplies({ error: "something_new" }, 400);
+    expect(await (await call()).json()).toEqual({
+      error: "Bad request",
+      code: "bad_request",
+    });
+  });
+
+  it("gives the BFF's own org-resolution 400 the invalid_org code on this route only", async () => {
+    const spy = workerReplies({});
+    const res = await call({ query: "?org=%20" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Invalid org",
+      code: "invalid_org",
+    });
+    expect(spy).not.toHaveBeenCalled();
+    // Another route keeps resolveOrg's own message, without a code.
+    const other = await call({
+      query: "?org=%20",
+      path: "/api/config/modes/obt-coach",
+    });
+    expect(await other.json()).toEqual({ error: "Invalid org parameter" });
   });
 
   it("answers 504 when the worker doesn't answer in time", async () => {
@@ -336,15 +419,47 @@ describe("share-code route — mapping the worker's answer", () => {
         })
     );
     const res = await handleModeShareCode(testEnv, "PBT", "obt-coach", {
+      ...CALLER,
       timeoutMs: 20,
     });
     expect(res.status).toBe(504);
-    expect(await res.json()).toEqual({ error: "Engine timeout" });
+    expect(await res.json()).toEqual({
+      error: "Engine timeout",
+      code: "engine_timeout",
+    });
+  });
+
+  it("answers 504 when the body read is cut off by the timeout, even on a 404", async () => {
+    // Headers arrived; the body then fails with the timeout's own error.
+    // Without this it would read as "not JSON", and a 404 as an older worker.
+    for (const [status, name] of [
+      [404, "TimeoutError"],
+      [200, "AbortError"],
+    ] as const) {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new DOMException("cut off", name));
+            },
+          }),
+          { status }
+        )
+      );
+      const res = await handleModeShareCode(
+        testEnv,
+        "PBT",
+        "obt-coach",
+        CALLER
+      );
+      expect(res.status, `${status} ${name}`).toBe(504);
+      vi.restoreAllMocks();
+    }
   });
 
   it("bounds the upstream call by the timeout alone", async () => {
     const spy = workerReplies({ code: "x", resolves: true });
-    await handleModeShareCode(testEnv, "PBT", "obt-coach");
+    await handleModeShareCode(testEnv, "PBT", "obt-coach", CALLER);
     const upstream = (spy.mock.calls[0]![1] as RequestInit).signal!;
     expect(upstream).toBeInstanceOf(AbortSignal);
     expect(upstream.aborted).toBe(false);
@@ -360,7 +475,7 @@ describe("share-code route — mapping the worker's answer", () => {
 
   it("answers unconfigured, not the worker's invalid_org, for an unusable WHATSAPP_ORG", async () => {
     // The worker's own rule: `<org>:modes` within 512 bytes (and not
-    // empty). Checked here so a worker invalid_org is only ever the mode's.
+    // empty). A cheap guard only: the worker is authoritative (its `field`).
     for (const bad of ["a".repeat(507), "é".repeat(254)]) {
       const spy = workerReplies({});
       const res = await call({ env: { ...env, WHATSAPP_ORG: bad } as Env });
@@ -386,6 +501,16 @@ describe("share-code route — mapping the worker's answer", () => {
 
 describe("mode routes — a malformed %-escape in the name is a 400, not a 500", () => {
   const BAD = "%E0%A4%A";
+  it("GET <bad>/share-code answers with the invalid_mode_name code", async () => {
+    const spy = workerReplies({});
+    const res = await call({ path: `/api/config/modes/${BAD}/share-code` });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Invalid mode name",
+      code: "invalid_mode_name",
+    });
+    expect(spy).not.toHaveBeenCalled();
+  });
   for (const [method, path] of [
     ["GET", `/api/config/modes/${BAD}`],
     ["PUT", `/api/config/modes/${BAD}`],
@@ -393,7 +518,6 @@ describe("mode routes — a malformed %-escape in the name is a 400, not a 500",
     ["POST", `/api/config/modes/${BAD}/_rename`],
     ["POST", `/api/config/modes/${BAD}/_clone`],
     ["POST", `/api/config/modes/${BAD}/_retire`],
-    ["GET", `/api/config/modes/${BAD}/share-code`],
   ] as const) {
     it(`${method} ${path.replace(BAD, "<bad>")}`, async () => {
       const spy = workerReplies({});
