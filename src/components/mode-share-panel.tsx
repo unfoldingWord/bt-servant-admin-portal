@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from "react";
@@ -156,7 +157,12 @@ export function ModeSharePanel({
         }}
       >
         <ModeShareContent
-          key={JSON.stringify([openCount, shown.org, shown.modeName])}
+          key={JSON.stringify([
+            openCount,
+            shown.org,
+            shown.requestOrg,
+            shown.modeName,
+          ])}
           open={open}
           {...shown}
         />
@@ -254,30 +260,34 @@ function ModeShareContent({
   // retried query's own fetch status: on from the click, off once that
   // query has fetched and stopped, or is paused offline. A refetch that a
   // mode write cancels and restarts stays busy. Closing drops it with
-  // this mount.
-  const [retryClick, setRetryClick] = useState<RetryClick | null>(null);
-  const liveClick = nextRetryClick(retryClick, {
+  // this mount. The click lives in a ref, advanced each render; `rerender`
+  // only asks for a render when the ref changes outside one.
+  const retryClickRef = useRef<RetryClick | null>(null);
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+  retryClickRef.current = nextRetryClick(retryClickRef.current, {
     config: shareConfig.fetchStatus,
     "share-code": shareCode.fetchStatus,
   });
-  if (liveClick !== retryClick) setRetryClick(liveClick);
   const retry = retryControl(
     state,
     shareCodeSnapshot,
-    liveClick?.target ?? null
+    retryClickRef.current?.target ?? null
   );
   const runRetry = (target: RetryTarget) => {
-    setRetryClick({ target, started: false });
+    retryClickRef.current = { target, started: false };
+    rerender();
     const refetch =
       target === "config" ? shareConfig.refetch() : shareCode.refetch();
     // Fallback for a refetch that never showed as fetching: once it has
     // settled, the next render clears busy unless the query is (still or
     // again) fetching.
-    void refetch.finally(() =>
-      setRetryClick((c) =>
-        c !== null && c.target === target ? { ...c, started: true } : c
-      )
-    );
+    void refetch.finally(() => {
+      const click = retryClickRef.current;
+      if (click !== null && click.target === target && !click.started) {
+        retryClickRef.current = { ...click, started: true };
+        rerender();
+      }
+    });
   };
 
   const title = modeLabel?.trim() || humanizeModeSlug(modeName);

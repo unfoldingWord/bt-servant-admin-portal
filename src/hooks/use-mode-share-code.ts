@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { getModeShareCode, modeShareCodeKeys } from "@/lib/mode-share-code-api";
@@ -13,7 +13,8 @@ import {
 // Reusing an answer briefly keeps close-and-reopen instant; past that it
 // is refetched, because it depends on live data (other orgs' modes). An
 // unpublished / group-only answer is never reused: it may be the worker
-// catching up with a save, so every look re-asks.
+// catching up with a save, so every look re-asks. Nor is "needs a newer BT
+// Servant": a plain 404 behind it may be an edge hiccup, not an old worker.
 const SHARE_CODE_STALE_MS = 20_000;
 
 // #345 — the worker's answer for which `#<code>` opens this mode on
@@ -34,12 +35,16 @@ export function useModeShareCode(
   org: string | null
 ) {
   const isEnabled = enabled && modeName !== "";
+  const queryKey = modeShareCodeKeys.mode(org, modeName);
   const query = useQuery({
-    queryKey: modeShareCodeKeys.mode(org, modeName),
+    queryKey,
     queryFn: ({ signal }) => getModeShareCode(modeName, org, signal),
     enabled: isEnabled,
     staleTime: (q) =>
-      workerSaysUnshareable(q.state.data) ? 0 : SHARE_CODE_STALE_MS,
+      workerSaysUnshareable(q.state.data) ||
+      q.state.data?.capability === "upgrade-needed"
+        ? 0
+        : SHARE_CODE_STALE_MS,
     // Focus: off. Switching to a phone to scan the code and back must not
     // re-ask, and nothing a focus change implies makes the answer stale.
     refetchOnWindowFocus: false,
@@ -61,16 +66,23 @@ export function useModeShareCode(
     refetch,
   } = query;
 
-  // What the cache held the first time this mount asked (see
-  // ShareCodeStart). Taken during render, once, so the very render that
-  // starts asking already knows.
-  const [start, setStart] = useState<ShareCodeStart | null>(null);
+  // What the cache held the first time this mount asked for this key (see
+  // ShareCodeStart). Taken during render, once per key, so the very render
+  // that starts asking already knows; a key change (org or mode) takes a
+  // new one.
+  const startRef = useRef<{ key: string; start: ShareCodeStart } | null>(null);
   const view = useMemo<ShareCodeQueryView>(
     () => ({ data, dataUpdatedAt, fetchStatus, error, isFetchedAfterMount }),
     [data, dataUpdatedAt, error, fetchStatus, isFetchedAfterMount]
   );
-  const liveStart = start ?? (isEnabled ? shareCodeStart(view) : null);
-  if (liveStart !== start) setStart(liveStart);
+  const keyString = JSON.stringify(queryKey);
+  if (isEnabled && startRef.current?.key !== keyString) {
+    startRef.current = { key: keyString, start: shareCodeStart(view) };
+  }
+  const liveStart =
+    isEnabled && startRef.current?.key === keyString
+      ? startRef.current.start
+      : null;
 
   const snapshot = useMemo(
     () =>

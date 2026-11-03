@@ -257,15 +257,15 @@ describe("saveModeMutationOptions — opt-in seed", () => {
   it("without `seed`, only invalidates (the #306 rule for ordinary editor saves)", async () => {
     const qc = makeClient();
     qc.setQueryData<OrgModes>(modeQueryKeys.modes(null), { modes: [] });
-    // An autosave over a mode whose flags it doesn't change.
-    qc.setQueryData(modeQueryKeys.mode("spoken", null), saved);
     const setSpy = vi.spyOn(qc, "setQueryData");
     const cancelSpy = vi.spyOn(qc, "cancelQueries");
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    // An autosave: the page's synced flags match what the save stored.
     await settleSave(qc, saved, {
       name: "spoken",
       body: { document: "fresh" },
       org: null,
+      flagsBefore: { published: false, requires_group: false },
     });
     expect(setSpy).not.toHaveBeenCalled();
     expect(cancelSpy).not.toHaveBeenCalled();
@@ -464,24 +464,25 @@ describe("share-code invalidation", () => {
     ).toBe(true);
   });
 
-  it("decides from the onMutate snapshot, not the cache at onSuccess", async () => {
+  it("takes `before` from the page's synced flags in the variables, not the query cache", async () => {
     const qc = new QueryClient();
-    const draft: PromptMode = {
+    // The cache already shows the published row (a refetch raced the
+    // save); the page's synced flags still say draft.
+    const published: PromptMode = {
       name: "spoken",
       document: "x",
-      published: false,
+      published: true,
     };
-    qc.setQueryData(modeQueryKeys.mode("spoken", null), draft);
+    qc.setQueryData(modeQueryKeys.mode("spoken", null), published);
     const options = saveModeMutationOptions(qc);
     const vars: ModeSaveTarget = {
       name: "spoken",
       body: { document: "x", published: true },
       org: null,
+      flagsBefore: { published: false, requires_group: false },
     };
     const context = options.onMutate(vars);
-    // A refetch lands the published row before the save settles.
-    const published = { ...draft, published: true };
-    qc.setQueryData(modeQueryKeys.mode("spoken", null), published);
+    expect(context.before).toEqual({ published: false, requires_group: false });
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
     await options.onSuccess(published, vars, context);
     expect(invalidateSpy.mock.calls.map((c) => c[0]?.queryKey)).toContainEqual(

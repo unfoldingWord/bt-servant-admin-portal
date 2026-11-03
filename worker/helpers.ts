@@ -1,4 +1,4 @@
-import { SHARE_CODE_ERRORS } from "@/types/mode-share-code";
+import { BFF_AUTH_ERRORS } from "@/types/bff-errors";
 
 export interface Env {
   ENGINE_BASE_URL: string;
@@ -40,8 +40,8 @@ export function authErrorResponse(
       error: message,
       code:
         status === 401
-          ? SHARE_CODE_ERRORS.unauthorized
-          : SHARE_CODE_ERRORS.forbidden,
+          ? BFF_AUTH_ERRORS.unauthorized
+          : BFF_AUTH_ERRORS.forbidden,
     },
     status
   );
@@ -63,13 +63,11 @@ export function safeDecode(segment: string): string | null {
 
 /**
  * The 400 for a mode-name path segment `safeDecode` couldn't read. The
- * share-code route passes its machine-readable `code` (#345).
+ * share-code route answers with its coded counterpart
+ * (`shareCodeInvalidModeName` in share-config.ts).
  */
-export function invalidModeNameResponse(code?: string): Response {
-  return jsonResponse(
-    { error: "Invalid mode name", ...(code !== undefined ? { code } : {}) },
-    400
-  );
+export function invalidModeNameResponse(): Response {
+  return errorResponse("Invalid mode name", 400);
 }
 
 /**

@@ -7,6 +7,8 @@
 // own read, merge and classifier and says which `#<code>` opens a mode
 // from the gateway org's point of view.
 
+import { BFF_AUTH_ERRORS } from "./bff-errors";
+
 /**
  * Why the worker's code does not (or cannot) open the mode. The known
  * values are listed; the worker contract is additive, so any other string
@@ -94,10 +96,8 @@ export const SHARE_CODE_ERRORS = {
   invalidOrg: "invalid_org",
   /** 400: any other bad request. */
   badRequest: "bad_request",
-  /** 401: no valid session. */
-  unauthorized: "unauthorized",
-  /** 403: not same-origin, or another org's modes without super-admin. */
-  forbidden: "forbidden",
+  /** 401 / 403: the BFF's generic auth codes, shared with every /api/config route. */
+  ...BFF_AUTH_ERRORS,
   /** 405: the route is GET only. */
   methodNotAllowed: "method_not_allowed",
   /**

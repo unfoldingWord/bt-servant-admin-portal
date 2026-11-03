@@ -17,8 +17,10 @@ import {
 import type { LanguageRights, SessionData } from "./types";
 import {
   handleModeShareCode,
+  invalidOrg,
   SHARE_CODE_PATH,
   shareCodeError,
+  shareCodeInvalidModeName,
 } from "./share-config";
 import { SHARE_CODE_ERRORS } from "@/types/mode-share-code";
 
@@ -547,7 +549,7 @@ function shareCodeOrgError(error: OrgResolutionError): Response {
   switch (error) {
     case "invalid-org-param":
     case "invalid-org":
-      return shareCodeError("Invalid org", SHARE_CODE_ERRORS.invalidOrg, 400);
+      return invalidOrg();
     case "cross-org-forbidden":
       return authErrorResponse(
         "Cross-org config access requires isSuperAdmin",
@@ -673,7 +675,7 @@ export async function handleConfig(
     }
     const modeName = safeDecode(modeShareCodeMatch[1]);
     if (modeName === null) {
-      return invalidModeNameResponse(SHARE_CODE_ERRORS.invalidModeName);
+      return shareCodeInvalidModeName();
     }
     return handleModeShareCode(env, resolved.org, modeName, {
       caller: { isSuperAdmin: session.isSuperAdmin === true },

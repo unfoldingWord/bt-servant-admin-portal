@@ -92,6 +92,33 @@ export function shareCodeError(
   return jsonResponse({ error: message, code }, status);
 }
 
+// One source per shape the share-code route answers with more than once.
+
+/** WHATSAPP_ORG can't be used: the 200 `unconfigured` answer. */
+export function unconfigured(): Response {
+  return jsonResponse({
+    capability: "unconfigured",
+  } satisfies ModeShareCodeResponse);
+}
+
+/** 400 code `invalid_org`: the mode's org (BFF org resolution or the worker). */
+export function invalidOrg(): Response {
+  return shareCodeError("Invalid org", SHARE_CODE_ERRORS.invalidOrg, 400);
+}
+
+/**
+ * 400 code `invalid_mode_name`: a name the worker rejects, or a path
+ * segment the BFF couldn't decode. The coded counterpart of the generic
+ * routes' `invalidModeNameResponse`.
+ */
+export function shareCodeInvalidModeName(): Response {
+  return shareCodeError(
+    "Invalid mode name",
+    SHARE_CODE_ERRORS.invalidModeName,
+    400
+  );
+}
+
 /** Who is asking, for what the answer may name. */
 export interface ShareCodeCaller {
   isSuperAdmin: boolean;
@@ -153,9 +180,7 @@ export async function handleModeShareCode(
   // below).
   const homeOrg = env.WHATSAPP_ORG;
   if (homeOrg === undefined || !isUsableHomeOrg(homeOrg)) {
-    return jsonResponse({
-      capability: "unconfigured",
-    } satisfies ModeShareCodeResponse);
+    return unconfigured();
   }
   const url =
     `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(org)}` +
@@ -251,20 +276,10 @@ export async function handleModeShareCode(
     // The worker names the field it rejected (#477). `home_org` is
     // WHATSAPP_ORG (`invalid_org` or `home_org_required`), so it is this
     // environment's configuration, not the mode's org.
-    if (body?.field === "home_org") {
-      return jsonResponse({
-        capability: "unconfigured",
-      } satisfies ModeShareCodeResponse);
-    }
-    if (error === SHARE_CODE_ERRORS.invalidOrg) {
-      return shareCodeError("Invalid org", SHARE_CODE_ERRORS.invalidOrg, 400);
-    }
+    if (body?.field === "home_org") return unconfigured();
+    if (error === SHARE_CODE_ERRORS.invalidOrg) return invalidOrg();
     if (error === SHARE_CODE_ERRORS.invalidModeName) {
-      return shareCodeError(
-        "Invalid mode name",
-        SHARE_CODE_ERRORS.invalidModeName,
-        400
-      );
+      return shareCodeInvalidModeName();
     }
     return shareCodeError("Bad request", SHARE_CODE_ERRORS.badRequest, 400);
   }

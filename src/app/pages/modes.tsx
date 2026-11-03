@@ -443,6 +443,7 @@ export function ModesPage() {
         {
           name: target,
           org: contextOrg,
+          flagsBefore: sent,
           body: {
             label: serverLabel,
             description: serverDescription,
@@ -1127,6 +1128,7 @@ export function ModesPage() {
         const saved = await saveMode.mutateAsync({
           name,
           org: contextOrg,
+          flagsBefore: lastSyncedFlagsRef.current,
           body: {
             label: serverLabel,
             description: serverDescription,
@@ -1179,6 +1181,7 @@ export function ModesPage() {
         const saved = await saveMode.mutateAsync({
           name: target,
           org: contextOrg,
+          flagsBefore: lastSyncedFlagsRef.current,
           body: {
             label: serverLabel,
             description: serverDescription,
@@ -1248,6 +1251,7 @@ export function ModesPage() {
         const saved = await saveMode.mutateAsync({
           name: target,
           org: contextOrg,
+          flagsBefore: sent,
           seed: true,
           body: {
             label: serverLabel,
@@ -1329,6 +1333,7 @@ export function ModesPage() {
         const saved = await saveMode.mutateAsync({
           name: target,
           org: contextOrg,
+          flagsBefore: lastSyncedFlagsRef.current,
           body: {
             label: serverLabel,
             description: serverDescription,
@@ -1588,6 +1593,7 @@ export function ModesPage() {
           const saved = await saveMode.mutateAsync({
             name: target.name,
             org,
+            flagsBefore: sent,
             // The label is NOT a local tracker — every other PUT re-asserts
             // `serverLabel` straight from the per-mode cache — so seed the
             // cache from this response before `isPending` drops. Otherwise

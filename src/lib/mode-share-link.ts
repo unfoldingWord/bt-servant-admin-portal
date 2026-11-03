@@ -58,12 +58,20 @@ export function normalizeWhatsAppNumber(
   return E164_DIGITS.test(digits) ? digits : null;
 }
 
-/** Whether the share-config number can go in a link: set, and E.164. */
-export function whatsAppNumberState(
+/**
+ * The share-config number as `wa.me` digits, or why it can't go in a
+ * link: unset, or not a plausible E.164 number.
+ */
+export function whatsAppNumber(
   raw: string | null | undefined
-): "ok" | "unconfigured" | "number-invalid" {
-  if (!raw || raw.trim() === "") return "unconfigured";
-  return normalizeWhatsAppNumber(raw) === null ? "number-invalid" : "ok";
+):
+  | { ok: true; digits: string }
+  | { ok: false; kind: "unconfigured" | "number-invalid" } {
+  if (!raw || raw.trim() === "") return { ok: false, kind: "unconfigured" };
+  const digits = normalizeWhatsAppNumber(raw);
+  return digits === null
+    ? { ok: false, kind: "number-invalid" }
+    : { ok: true, digits };
 }
 
 /**
@@ -73,7 +81,7 @@ export function whatsAppNumberState(
 export function hasUsableWhatsAppNumber(
   raw: string | null | undefined
 ): boolean {
-  return whatsAppNumberState(raw) === "ok";
+  return whatsAppNumber(raw).ok;
 }
 
 /**
@@ -84,19 +92,26 @@ export function modeShareTrigger(name: string): string {
   return `#${name}`;
 }
 
-// The worker's `MODE_NAME_PATTERN` (bt-servant-worker
-// src/types/prompt-overrides.ts): lowercase alphanumerics and inner
+// Mirrors bt-servant-worker at cd20c99 (the #477 contract this PR targets):
+// `MODE_NAME_PATTERN` in src/types/prompt-overrides.ts:79, which the
+// share-code route's 400 `invalid_mode_name` applies; and `CLEAR_TOKENS`
+// in src/services/classifier/index.ts:82, which its `reserved` reason
+// applies (src/utils/mode-share-code.ts uses both but defines neither).
+// tests/mode-share-link.test.ts pins both values, so a change here is a
+// deliberate one, made with the worker's.
+//
+// The worker's `MODE_NAME_PATTERN`: lowercase alphanumerics and inner
 // hyphens, 1–64 chars, no underscores. Stricter than the portal's
 // `slugifyModeName` (which keeps `_`), and the one the worker enforces on
 // every mode route (400 `invalid_mode_name`) — so it is the one a trigger
 // has to satisfy.
-const MODE_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+export const MODE_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 // Reserved by the worker's classifier as "clear the active mode"
 // (`CLEAR_TOKENS`, src/services/classifier/index.ts). Checked BEFORE mode
 // matching there, so `#default` can never reach a mode named `default`;
 // a QR for one would silently deactivate whatever mode the user had.
-const RESERVED_TRIGGERS: ReadonlySet<string> = new Set([
+export const RESERVED_TRIGGERS: ReadonlySet<string> = new Set([
   "default",
   "none",
   "clear",
@@ -135,30 +150,21 @@ export function isUrlSafeShareCode(code: string): boolean {
   return code.length <= MAX_SHARE_CODE_LENGTH && SHARE_CODE_SHAPE.test(code);
 }
 
-export type ModeShareLinkFailure =
-  | "number-missing"
-  | "number-invalid"
-  | "code-unencodable";
-
 export type ModeShareLinkResult =
-  | { ok: true; url: string; digits: string; trigger: string }
-  | { ok: false; reason: ModeShareLinkFailure };
+  | { ok: true; url: string; trigger: string }
+  | { ok: false; reason: "code-unencodable" };
 
 /**
  * Build the share link for a code: the worker's code when it says the code
- * resolves (bare or `<orgslug>/<slug>`). The code is trusted as given;
- * this is the one
- * place that checks it can be carried in a URL (`isUrlSafeShareCode`).
+ * resolves (bare or `<orgslug>/<slug>`), on a number already normalised
+ * to `wa.me` digits (`whatsAppNumber`). The code is trusted as given;
+ * this is the one place that checks it can be carried in a URL
+ * (`isUrlSafeShareCode`).
  */
 export function buildShareLinkFromCode(
-  rawNumber: string | null | undefined,
+  digits: string,
   code: string
 ): ModeShareLinkResult {
-  if (!rawNumber || rawNumber.trim() === "") {
-    return { ok: false, reason: "number-missing" };
-  }
-  const digits = normalizeWhatsAppNumber(rawNumber);
-  if (!digits) return { ok: false, reason: "number-invalid" };
   if (!isUrlSafeShareCode(code)) {
     return { ok: false, reason: "code-unencodable" };
   }
@@ -167,7 +173,7 @@ export function buildShareLinkFromCode(
   // into `%2F` (the worker's own welcome link does the same); the code's
   // [a-z0-9-] alphabet is untouched, which is what keeps the link legible.
   const url = `${WA_ME_ORIGIN}/${digits}?text=${encodeURIComponent(trigger)}`;
-  return { ok: true, url, digits, trigger };
+  return { ok: true, url, trigger };
 }
 
 export type ModeShareState = "ready" | "group-only" | "draft";
@@ -474,6 +480,8 @@ export function retryControl(
   if (
     state.kind === "retry" ||
     state.kind === "worker-sees" ||
+    // A plain 404 may be an edge hiccup rather than an old worker.
+    state.kind === "upgrade-needed" ||
     answerUncertain(state) ||
     refreshFailed(state, shareCode)
   ) {
@@ -572,9 +580,10 @@ export function resolveModeSharePanelState(
   if (config.error) return { kind: "error" };
   // The number before the worker: without a usable one no link can be
   // built, so the worker isn't asked (see `hasUsableWhatsAppNumber`).
-  const number = config.supported ? config.whatsappNumber : null;
-  const numberState = whatsAppNumberState(number);
-  if (numberState !== "ok") return { kind: numberState };
+  const number = whatsAppNumber(
+    config.supported ? config.whatsappNumber : null
+  );
+  if (!number.ok) return { kind: number.kind };
   if (shareCode.checking) return { kind: "checking-code" };
   const { answer } = shareCode;
   if (answer === undefined) {
@@ -591,7 +600,7 @@ export function resolveModeSharePanelState(
     case "upgrade-needed":
       return { kind: "upgrade-needed" };
     case "present":
-      return fromWorkerAnswer(answer, number, modeOrg);
+      return fromWorkerAnswer(answer, number.digits, modeOrg);
     default:
       return unhandled(answer);
   }
@@ -600,7 +609,7 @@ export function resolveModeSharePanelState(
 /** The worker answered: render its verdict, building a link only if it resolves. */
 function fromWorkerAnswer(
   answer: Extract<ModeShareCode, { capability: "present" }>,
-  number: string | null,
+  digits: string,
   modeOrg: string | null | undefined
 ): ModeSharePanelState {
   const { code } = answer;
@@ -610,7 +619,7 @@ function fromWorkerAnswer(
     partnerOrg: code.includes("/") ? (modeOrg?.trim() ?? null) : null,
   };
   if (answer.resolves) {
-    return withNumber(buildShareLinkFromCode(number, code), shown);
+    return linkState(buildShareLinkFromCode(digits, code), shown);
   }
   const resolvedOrg = answer.resolved_org ?? null;
   const uncertain = answer.resolved_org_uncertain === true;
@@ -674,19 +683,12 @@ function withoutCode(reason: string | undefined): ModeSharePanelState {
   }
 }
 
-/** The number half: a ready link, or why the link can't be built. */
-function withNumber(
+/** A ready link, or the code the worker returned can't go in a URL. */
+function linkState(
   link: ModeShareLinkResult,
   shown: Shown
 ): ModeSharePanelState {
-  if (link.ok) return { kind: "ready", url: link.url, ...shown };
-  switch (link.reason) {
-    // Checked before the worker is asked; kept for completeness.
-    case "number-missing":
-      return { kind: "unconfigured" };
-    case "number-invalid":
-      return { kind: "number-invalid" };
-    case "code-unencodable":
-      return { kind: "code-unencodable" };
-  }
+  return link.ok
+    ? { kind: "ready", url: link.url, ...shown }
+    : { kind: "code-unencodable" };
 }

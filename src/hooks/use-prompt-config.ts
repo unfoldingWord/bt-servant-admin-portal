@@ -12,6 +12,7 @@ import {
   type ModeShareCode,
 } from "@/lib/mode-share-code-api";
 import * as configApi from "@/lib/config-api";
+import type { ModeFlags } from "@/lib/mode-flags";
 import type {
   OrgModes,
   PromptMode,
@@ -122,6 +123,13 @@ export interface ModeSaveTarget {
    */
   org: string | null;
   /**
+   * The mode's flags as the page last synced them, before this save
+   * (`lastSyncedFlags`), so the settle can tell whether the share code may
+   * have changed (#345). Absent for a mode the page hasn't synced (create,
+   * import): read as "may have changed".
+   */
+  flagsBefore?: ModeFlags;
+  /**
    * Opt-in cache seed for a PUT that targets a mode the editor is NOT
    * (necessarily) showing — import (#198) and create (#308). When set, the
    * PUT response is written into the TARGET mode's per-mode cache AND
@@ -151,13 +159,13 @@ export interface ModeSaveTarget {
 // Exported so the cache effects can be tested against a real QueryClient
 // without React (same shape as `languageSaveMutationOptions`).
 /**
- * What a mode save snapshots before its PUT (#345): the mode as cached and
- * the worker's last share-code answer, so `onSuccess` can tell whether the
- * share code may have changed. Taken in `onMutate`, before any refetch or
- * seed can overwrite either.
+ * What a mode save snapshots before its PUT (#345): the page's synced
+ * flags (from the variables) and the worker's last share-code answer, so
+ * `onSuccess` can tell whether the share code may have changed. Taken in
+ * `onMutate`, before any refetch or seed can overwrite the answer.
  */
 export interface ModeSaveContext {
-  before: PromptMode | undefined;
+  before: ModeFlags | undefined;
   lastAnswer: ModeShareCode | undefined;
 }
 
@@ -165,10 +173,10 @@ export function saveModeMutationOptions(qc: QueryClient) {
   return {
     mutationFn: ({ name, body, org }: ModeSaveTarget) =>
       configApi.putMode(name, body, undefined, org),
-    onMutate: ({ name, org }: ModeSaveTarget): ModeSaveContext => {
+    onMutate: ({ name, org, flagsBefore }: ModeSaveTarget): ModeSaveContext => {
       const key = normalize(org);
       return {
-        before: qc.getQueryData<PromptMode>(keys.mode(name, key)),
+        before: flagsBefore,
         lastAnswer: qc.getQueryData<ModeShareCode>(
           modeShareCodeKeys.mode(key, name)
         ),

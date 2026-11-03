@@ -228,6 +228,28 @@ describe("getModeShareCode", () => {
     }
   });
 
+  it("decides 401 / 403 / 503 by status before reading the body", async () => {
+    const cut = (status: number) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError("connection reset"));
+          },
+        }),
+        { status }
+      );
+    for (const [status, kind] of [
+      [401, "signed-out"],
+      [403, "forbidden"],
+      [503, "unavailable"],
+    ] as const) {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(cut(status));
+      await expect(getModeShareCode("x", null)).rejects.toMatchObject({
+        kind,
+      });
+    }
+  });
+
   it("throws network when the body read fails, and keeps a cancelled read a cancellation", async () => {
     const cutBody = () =>
       new Response(

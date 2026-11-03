@@ -133,12 +133,14 @@ export async function getModeShareCode(
     if (signal?.aborted) throw error;
     throw new ShareCodeRequestError("network");
   }
-  const data = await readJsonBody(res, signal);
-  // The BFF's machine-readable code; the human `error` text is never read.
-  const code = typeof data?.code === "string" ? data.code : null;
+  // Decided by status alone, before the body is read: a body cut off on a
+  // 401 still says "signed out".
   if (res.status === 503) throw new ShareCodeRequestError("unavailable");
   if (res.status === 401) throw new ShareCodeRequestError("signed-out");
   if (res.status === 403) throw new ShareCodeRequestError("forbidden");
+  const data = await readJsonBody(res, signal);
+  // The BFF's machine-readable code; the human `error` text is never read.
+  const code = typeof data?.code === "string" ? data.code : null;
   if (res.status === 404) return notFoundAnswer(code);
   if (!res.ok) {
     const failure = definiteFailure(res.status, code);

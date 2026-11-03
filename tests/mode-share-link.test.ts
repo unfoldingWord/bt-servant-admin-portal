@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildModeShareFilename,
+  MODE_NAME_PATTERN,
+  RESERVED_TRIGGERS,
+  validateModeShareSlug,
+  whatsAppNumber,
   isModeShareOpen,
   isUrlSafeShareCode,
   buildShareLinkFromCode,
@@ -81,11 +85,10 @@ describe("normalizeWhatsAppNumber", () => {
 describe("buildShareLinkFromCode — bare codes", () => {
   it("builds the wa.me link with the #slug trigger percent-encoded", () => {
     expect(
-      buildShareLinkFromCode("+57 300 123 4567", "sbc-translation-coach")
+      buildShareLinkFromCode("573001234567", "sbc-translation-coach")
     ).toEqual({
       ok: true,
       url: "https://wa.me/573001234567?text=%23sbc-translation-coach",
-      digits: "573001234567",
       trigger: "#sbc-translation-coach",
     });
   });
@@ -99,16 +102,20 @@ describe("buildShareLinkFromCode — bare codes", () => {
     expect(single.ok && single.url).toBe("https://wa.me/15550100100?text=%23x");
   });
 
-  it("distinguishes a missing number from an invalid one", () => {
+  it("normalises the share-config number first: missing vs invalid", () => {
     for (const missing of [null, "", "   "]) {
-      expect(buildShareLinkFromCode(missing, "fia-mode")).toEqual({
+      expect(whatsAppNumber(missing)).toEqual({
         ok: false,
-        reason: "number-missing",
+        kind: "unconfigured",
       });
     }
-    expect(buildShareLinkFromCode("not a number", "fia-mode")).toEqual({
+    expect(whatsAppNumber("not a number")).toEqual({
       ok: false,
-      reason: "number-invalid",
+      kind: "number-invalid",
+    });
+    expect(whatsAppNumber("+57 300 123 4567")).toEqual({
+      ok: true,
+      digits: "573001234567",
     });
   });
 
@@ -117,6 +124,27 @@ describe("buildShareLinkFromCode — bare codes", () => {
       ok: false,
       reason: "code-unencodable",
     });
+  });
+});
+
+// The local name check mirrors the worker (cd20c99). Pinned so a change
+// is deliberate and made together with the worker's.
+describe("MODE_NAME_PATTERN / RESERVED_TRIGGERS — worker parity", () => {
+  it("pins the worker's name pattern and clear tokens", () => {
+    expect(MODE_NAME_PATTERN.source).toBe(
+      "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
+    );
+    expect(MODE_NAME_PATTERN.flags).toBe("");
+    expect([...RESERVED_TRIGGERS].sort()).toEqual(["clear", "default", "none"]);
+  });
+
+  it("decides names with them", () => {
+    expect(validateModeShareSlug("fia-mode")).toBe("ok");
+    expect(validateModeShareSlug("kids_mode")).toBe("slug-invalid");
+    expect(validateModeShareSlug("a".repeat(65))).toBe("slug-invalid");
+    for (const r of RESERVED_TRIGGERS) {
+      expect(validateModeShareSlug(r)).toBe("slug-reserved");
+    }
   });
 });
 
@@ -159,7 +187,6 @@ describe("buildShareLinkFromCode", () => {
     expect(buildShareLinkFromCode("15558196461", "pbt/obt-coach")).toEqual({
       ok: true,
       url: "https://wa.me/15558196461?text=%23pbt%2Fobt-coach",
-      digits: "15558196461",
       trigger: "#pbt/obt-coach",
     });
   });
@@ -192,17 +219,6 @@ describe("buildShareLinkFromCode", () => {
       });
     }
     expect(isUrlSafeShareCode("a".repeat(200))).toBe(true);
-  });
-
-  it("checks the number first, like the bare builder", () => {
-    expect(buildShareLinkFromCode(null, "pbt/x")).toEqual({
-      ok: false,
-      reason: "number-missing",
-    });
-    expect(buildShareLinkFromCode("nope", "pbt/x")).toEqual({
-      ok: false,
-      reason: "number-invalid",
-    });
   });
 });
 
@@ -808,6 +824,13 @@ describe("refreshFailed and retryControl", () => {
         failedRefresh({ capability: "not-found" })
       )
     ).toBe(false);
+  });
+
+  it("offers Try again on upgrade-needed: a plain 404 may be an edge hiccup", () => {
+    expect(retryControl({ kind: "upgrade-needed" }, snap(), idle)).toEqual({
+      target: "share-code",
+      busy: false,
+    });
   });
 
   it("re-asks only the query that failed", () => {
