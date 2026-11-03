@@ -14,6 +14,7 @@ import {
   buildModeShareFilename,
   resolveModeSharePanelState,
   answerUncertain,
+  hasUsableWhatsAppNumber,
   homeOrgWithoutModes,
   modeShareState,
   validateModeShareSlug,
@@ -189,11 +190,16 @@ function ModeShareContent({
   // (it would only 400), a draft, or a group-only mode. A partner mode
   // the worker would call damaged (`invalid_mode`, which it checks before
   // draft) is skipped here too; that only matters once the mode is
-  // published, and the worker reports it then.
+  // published, and the worker reports it then. Nor before share-config
+  // shows a usable WhatsApp number: without one no link can be built.
+  const configNumber = shareConfig.data?.supported
+    ? shareConfig.data.config.whatsappNumber
+    : null;
   const shareCode = useModeShareCode(
     open &&
       validateModeShareSlug(modeName) === "ok" &&
-      modeShareState(flags) === "ready",
+      modeShareState(flags) === "ready" &&
+      hasUsableWhatsAppNumber(configNumber),
     modeName,
     requestOrg
   );

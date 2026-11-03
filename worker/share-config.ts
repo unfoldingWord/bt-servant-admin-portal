@@ -97,22 +97,34 @@ export interface ShareCodeCaller {
   isSuperAdmin: boolean;
 }
 
-/** The worker's body: parsed JSON, not JSON (or empty), or cut off by an abort. */
+/**
+ * The worker's body: parsed JSON; fully received but not JSON (or empty);
+ * cut off by an abort (timeout or client gone); or a read that failed
+ * otherwise (a dropped connection).
+ */
 type BodyRead =
   | { kind: "json"; body: unknown }
   | { kind: "not-json" }
-  | { kind: "aborted" };
+  | { kind: "aborted" }
+  | { kind: "failed" };
 
 async function readBody(res: Response, signal: AbortSignal): Promise<BodyRead> {
+  let text: string;
   try {
-    return { kind: "json", body: await res.json() };
+    text = await res.text();
   } catch (error) {
-    // The timeout covers the body too: a stalled body is a 504, not a
-    // "not JSON" body (which, on a 404, would read as an older worker).
+    // The timeout covers the body too: a stalled body is a 504. Any other
+    // failed read is a transient 502, never a "not JSON" body (which, on a
+    // 404, would read as an older worker).
     const name = error instanceof Error ? error.name : "";
     if (signal.aborted || name === "AbortError" || name === "TimeoutError") {
       return { kind: "aborted" };
     }
+    return { kind: "failed" };
+  }
+  try {
+    return { kind: "json", body: JSON.parse(text) as unknown };
+  } catch {
     return { kind: "not-json" };
   }
 }
@@ -158,9 +170,8 @@ export async function handleModeShareCode(
   const signal = opts.signal
     ? AbortSignal.any([opts.signal, timeout])
     : timeout;
-  // The browser went away: nobody reads this answer.
-  const clientGone = () =>
-    shareCodeError("Client closed request", SHARE_CODE_ERRORS.engineError, 499);
+  // The browser went away: nobody reads this answer, so no body.
+  const clientGone = () => new Response(null, { status: 499 });
   const timedOut = () =>
     shareCodeError("Engine timeout", SHARE_CODE_ERRORS.engineTimeout, 504);
   const engineError = () =>
@@ -186,6 +197,7 @@ export async function handleModeShareCode(
   if (read.kind === "aborted") {
     return !timeout.aborted && opts.signal?.aborted ? clientGone() : timedOut();
   }
+  if (read.kind === "failed") return engineError();
   const body =
     read.kind === "json" && read.body !== null && typeof read.body === "object"
       ? (read.body as Record<string, unknown>)

@@ -8,6 +8,7 @@ import {
   invalidateShareCodes,
   modeQueryKeys,
   saveModeMutationOptions,
+  type ModeSaveTarget,
 } from "../src/hooks/use-prompt-config";
 import {
   modeShareCodeKeys,
@@ -225,6 +226,17 @@ describe("applyRetireToModeList", () => {
 // and before any mutate-level callback; these tests pin what that onSuccess
 // does to a real QueryClient so the page's create/import paths can rely on
 // the row being in the live list the moment the mutation settles.
+// Run a save's settle as TanStack does: onMutate's snapshot, then
+// onSuccess with it as the context.
+async function settleSave(
+  qc: QueryClient,
+  saved: PromptMode,
+  vars: ModeSaveTarget
+): Promise<void> {
+  const options = saveModeMutationOptions(qc);
+  await options.onSuccess(saved, vars, options.onMutate(vars));
+}
+
 describe("saveModeMutationOptions — opt-in seed", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -250,7 +262,7 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     const setSpy = vi.spyOn(qc, "setQueryData");
     const cancelSpy = vi.spyOn(qc, "cancelQueries");
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
-    await saveModeMutationOptions(qc).onSuccess(saved, {
+    await settleSave(qc, saved, {
       name: "spoken",
       body: { document: "fresh" },
       org: null,
@@ -272,7 +284,7 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     qc.setQueryData<OrgModes>(modeQueryKeys.modes(null), {
       modes: [{ name: "written", document: "w" }],
     });
-    await saveModeMutationOptions(qc).onSuccess(saved, {
+    await settleSave(qc, saved, {
       name: "spoken",
       body: { document: "fresh" },
       org: null,
@@ -300,7 +312,7 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     vi.spyOn(qc, "invalidateQueries").mockImplementation(async (f) => {
       order.push(`invalidate:${JSON.stringify(f?.queryKey)}`);
     });
-    await saveModeMutationOptions(qc).onSuccess(saved, {
+    await settleSave(qc, saved, {
       name: "spoken",
       body: { document: "fresh" },
       org: null,
@@ -348,7 +360,7 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     qc.setQueryData<OrgModes>(modeQueryKeys.modes("beta"), { modes: [] });
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
     const cancelSpy = vi.spyOn(qc, "cancelQueries");
-    await saveModeMutationOptions(qc).onSuccess(saved, {
+    await settleSave(qc, saved, {
       name: "spoken",
       body: { document: "fresh" },
       org: "alpha",
@@ -391,7 +403,7 @@ describe("saveModeMutationOptions — opt-in seed", () => {
         }),
       staleTime: 0,
     });
-    await saveModeMutationOptions(qc).onSuccess(saved, {
+    await settleSave(qc, saved, {
       name: "spoken",
       body: { document: "fresh" },
       org: null,
@@ -407,7 +419,7 @@ describe("saveModeMutationOptions — opt-in seed", () => {
 
   it("does not fabricate a list when nothing is cached for the seed org", async () => {
     const qc = makeClient();
-    await saveModeMutationOptions(qc).onSuccess(saved, {
+    await settleSave(qc, saved, {
       name: "spoken",
       body: { document: "fresh" },
       org: null,
@@ -450,6 +462,31 @@ describe("share-code invalidation", () => {
         reason: "invalid_mode",
       })
     ).toBe(true);
+  });
+
+  it("decides from the onMutate snapshot, not the cache at onSuccess", async () => {
+    const qc = new QueryClient();
+    const draft: PromptMode = {
+      name: "spoken",
+      document: "x",
+      published: false,
+    };
+    qc.setQueryData(modeQueryKeys.mode("spoken", null), draft);
+    const options = saveModeMutationOptions(qc);
+    const vars: ModeSaveTarget = {
+      name: "spoken",
+      body: { document: "x", published: true },
+      org: null,
+    };
+    const context = options.onMutate(vars);
+    // A refetch lands the published row before the save settles.
+    const published = { ...draft, published: true };
+    qc.setQueryData(modeQueryKeys.mode("spoken", null), published);
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    await options.onSuccess(published, vars, context);
+    expect(invalidateSpy.mock.calls.map((c) => c[0]?.queryKey)).toContainEqual(
+      modeShareCodeKeys.org(null)
+    );
   });
 
   it("invalidates only the written org's share codes", async () => {

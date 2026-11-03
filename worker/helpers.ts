@@ -1,3 +1,5 @@
+import { SHARE_CODE_ERRORS } from "@/types/mode-share-code";
+
 export interface Env {
   ENGINE_BASE_URL: string;
   ENGINE_API_KEY: string;
@@ -24,41 +26,25 @@ export function errorResponse(message: string, status: number): Response {
 }
 
 /**
- * Machine-readable codes every /api/config 401 and 403 carries next to its
- * `error` (an extra field; readers of `error` are unaffected). The
- * share-code client switches on them (#345).
+ * A 401 / 403 the BFF itself generates (the session, same-origin and org
+ * checks), with its machine-readable `code` next to `error` (#345; an
+ * extra field, so readers of `error` are unaffected). Engine bodies the
+ * BFF passes through are never rewritten.
  */
-export const AUTH_ERROR_CODES = {
-  unauthorized: "unauthorized",
-  forbidden: "forbidden",
-} as const;
-
-/**
- * Add the auth `code` to a 401 / 403 JSON error body that has none. Any
- * other response, or a body that isn't a JSON object, passes unchanged.
- */
-export async function withAuthErrorCode(res: Response): Promise<Response> {
-  if (res.status !== 401 && res.status !== 403) return res;
-  const body: unknown = await res
-    .clone()
-    .json()
-    .catch(() => null);
-  if (
-    body === null ||
-    typeof body !== "object" ||
-    Array.isArray(body) ||
-    "code" in body
-  ) {
-    return res;
-  }
-  const code =
-    res.status === 401
-      ? AUTH_ERROR_CODES.unauthorized
-      : AUTH_ERROR_CODES.forbidden;
-  return new Response(JSON.stringify({ ...body, code }), {
-    status: res.status,
-    headers: res.headers,
-  });
+export function authErrorResponse(
+  message: string,
+  status: 401 | 403
+): Response {
+  return jsonResponse(
+    {
+      error: message,
+      code:
+        status === 401
+          ? SHARE_CODE_ERRORS.unauthorized
+          : SHARE_CODE_ERRORS.forbidden,
+    },
+    status
+  );
 }
 
 /**
@@ -75,9 +61,15 @@ export function safeDecode(segment: string): string | null {
   }
 }
 
-/** The 400 for a mode-name path segment `safeDecode` couldn't read. */
-export function invalidModeNameResponse(): Response {
-  return errorResponse("Invalid mode name", 400);
+/**
+ * The 400 for a mode-name path segment `safeDecode` couldn't read. The
+ * share-code route passes its machine-readable `code` (#345).
+ */
+export function invalidModeNameResponse(code?: string): Response {
+  return jsonResponse(
+    { error: "Invalid mode name", ...(code !== undefined ? { code } : {}) },
+    400
+  );
 }
 
 /**

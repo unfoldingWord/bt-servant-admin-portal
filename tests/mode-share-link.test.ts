@@ -10,6 +10,7 @@ import {
   normalizeWhatsAppNumber,
   resolveModeSharePanelState,
   answerUncertain,
+  hasUsableWhatsAppNumber,
   homeOrgWithoutModes,
   nextRetryClick,
   refreshFailed,
@@ -683,24 +684,28 @@ describe("resolveModeSharePanelState", () => {
     });
   });
 
-  it("puts the worker's verdict ahead of the number", () => {
-    const noNumber = { ...config, whatsappNumber: null };
-    expect(run(miss("capped"), { config: noNumber })).toEqual({
-      kind: "capped",
-      ...partnerShown,
-    });
-    expect(run(partner, { config: noNumber })).toEqual({
-      kind: "unconfigured",
-      ...partnerShown,
-    });
+  it("checks the number before the worker, which isn't asked without a usable one", () => {
+    const unasked: ShareCodeSnapshot = { ...settled, checking: true };
+    for (const [over, kind] of [
+      [{ whatsappNumber: null }, "unconfigured"],
+      [{ whatsappNumber: "  " }, "unconfigured"],
+      [{ supported: false, whatsappNumber: null }, "unconfigured"],
+      [{ whatsappNumber: "nope" }, "number-invalid"],
+    ] as const) {
+      const state = run(unasked, { config: { ...config, ...over } });
+      expect(state, JSON.stringify(over)).toEqual({ kind });
+      expect(shownTrigger(state)).toBeNull();
+    }
+    // Name and flags still come first.
     expect(
-      run(partner, { config: { ...config, whatsappNumber: "nope" } })
-    ).toEqual({ kind: "number-invalid", ...partnerShown });
-    expect(
-      run(partner, {
-        config: { ...config, supported: false, whatsappNumber: null },
+      run(unasked, {
+        config: { ...config, whatsappNumber: null },
+        flags: { published: false },
       })
-    ).toEqual({ kind: "unconfigured", ...partnerShown });
+    ).toEqual({ kind: "draft" });
+    expect(hasUsableWhatsAppNumber("+57 300 123 4567")).toBe(true);
+    expect(hasUsableWhatsAppNumber("nope")).toBe(false);
+    expect(hasUsableWhatsAppNumber(null)).toBe(false);
   });
 });
 

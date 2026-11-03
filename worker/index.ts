@@ -20,7 +20,7 @@ import {
 } from "./chat";
 import { handleConfig } from "./config";
 import type { Env } from "./helpers";
-import { errorResponse, requireSameOrigin, withAuthErrorCode } from "./helpers";
+import { authErrorResponse, errorResponse, requireSameOrigin } from "./helpers";
 import { handleShareConfig } from "./share-config";
 
 export default {
@@ -85,18 +85,16 @@ export default {
 
     // Config endpoints — session required
     if (url.pathname.startsWith("/api/config/")) {
-      // Every 401 and 403 here carries a machine-readable `code` (#345).
-      const blocked = requireSameOrigin(request);
-      if (blocked) return withAuthErrorCode(blocked);
-
-      const session = await validateSession(request, env);
-      if (!session) {
-        return withAuthErrorCode(errorResponse("Unauthorized", 401));
+      // The BFF's own 401 / 403 here carry a machine-readable `code`
+      // (#345). Engine responses passed through are left as they are.
+      if (requireSameOrigin(request)) {
+        return authErrorResponse("Forbidden", 403);
       }
 
-      return withAuthErrorCode(
-        await handleConfig(request, env, session, url.pathname)
-      );
+      const session = await validateSession(request, env);
+      if (!session) return authErrorResponse("Unauthorized", 401);
+
+      return handleConfig(request, env, session, url.pathname);
     }
 
     // Baruch chat endpoints — session required

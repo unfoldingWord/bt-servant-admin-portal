@@ -1,5 +1,6 @@
 import type { Env } from "./helpers";
 import {
+  authErrorResponse,
   errorResponse,
   invalidModeNameResponse,
   isPathShapedOrg,
@@ -532,7 +533,7 @@ function orgErrorResponse(error: OrgResolutionError): Response {
     case "invalid-org-param":
       return errorResponse("Invalid org parameter", 400);
     case "cross-org-forbidden":
-      return errorResponse(
+      return authErrorResponse(
         "Cross-org config access requires isSuperAdmin",
         403
       );
@@ -548,9 +549,8 @@ function shareCodeOrgError(error: OrgResolutionError): Response {
     case "invalid-org":
       return shareCodeError("Invalid org", SHARE_CODE_ERRORS.invalidOrg, 400);
     case "cross-org-forbidden":
-      return shareCodeError(
+      return authErrorResponse(
         "Cross-org config access requires isSuperAdmin",
-        SHARE_CODE_ERRORS.forbidden,
         403
       );
   }
@@ -673,11 +673,7 @@ export async function handleConfig(
     }
     const modeName = safeDecode(modeShareCodeMatch[1]);
     if (modeName === null) {
-      return shareCodeError(
-        "Invalid mode name",
-        SHARE_CODE_ERRORS.invalidModeName,
-        400
-      );
+      return invalidModeNameResponse(SHARE_CODE_ERRORS.invalidModeName);
     }
     return handleModeShareCode(env, resolved.org, modeName, {
       caller: { isSuperAdmin: session.isSuperAdmin === true },

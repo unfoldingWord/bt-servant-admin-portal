@@ -43,10 +43,11 @@ export function useModeShareCode(
     // Focus: off. Switching to a phone to scan the code and back must not
     // re-ask, and nothing a focus change implies makes the answer stale.
     refetchOnWindowFocus: false,
-    // Reconnect: on. After being offline the answer may be out of date; the
-    // refresh runs in the background over the answer on the card, and a
-    // failed one keeps it (TanStack keeps `data` on a refetch error).
-    refetchOnReconnect: true,
+    // Reconnect: always, fresh or not. After being offline the answer may
+    // be out of date; the refresh runs in the background over the answer on
+    // the card, and a failed one keeps it (TanStack keeps `data` on a
+    // refetch error).
+    refetchOnReconnect: "always",
     // Transient outcomes throw and get the panel's Try again; automatic
     // retries would only delay showing them.
     retry: false,

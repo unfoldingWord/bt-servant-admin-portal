@@ -53,7 +53,7 @@ function call(
   );
 }
 
-const CALLER = { caller: { org: "PBT", isSuperAdmin: false } };
+const CALLER = { caller: { isSuperAdmin: false } };
 
 function workerReplies(body: unknown, status = 200) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(() =>
@@ -120,16 +120,54 @@ describe("share-code route — scoping", () => {
       error: "Unauthorized",
       code: "unauthorized",
     });
-    // Other config routes keep their plain bodies.
+    // The BFF's own guard 403 carries the same code on every config route.
     const other = await worker.fetch(
       new Request("https://portal.example.test/api/config/modes"),
       testEnv
     );
-    // Every /api/config 401 and 403 carries the same code.
     expect(await other.json()).toEqual({
       error: "Forbidden",
       code: "forbidden",
     });
+  });
+
+  it("never rewrites an engine 401 / 403 body the BFF passes through", async () => {
+    // A real session, so the request reaches the proxy.
+    const session = makeSession({
+      isAdmin: true,
+      email: `passthrough-${crypto.randomUUID()}@acme.com`,
+    });
+    await env.AUTH_KV.put(
+      `user:${session.email}`,
+      JSON.stringify({
+        id: session.userId,
+        email: session.email,
+        name: session.name,
+        org: session.org,
+        passwordHash: "unused",
+        salt: "unused",
+        isAdmin: true,
+        isSuperAdmin: false,
+      })
+    );
+    const sessionId = crypto.randomUUID();
+    await env.AUTH_KV.put(`session:${sessionId}`, JSON.stringify(session));
+    for (const status of [401, 403]) {
+      const engineBody = { error: "engine says no", detail: "x" };
+      workerReplies(engineBody, status);
+      const res = await worker.fetch(
+        new Request("https://portal.example.test/api/config/modes", {
+          headers: {
+            "X-Requested-With": "XMLHttpRequest",
+            Cookie: `session=${sessionId}`,
+          },
+        }),
+        testEnv
+      );
+      expect(res.status, String(status)).toBe(status);
+      expect(await res.json()).toEqual(engineBody);
+      vi.restoreAllMocks();
+    }
   });
 
   it("lets a super-admin ask about another org's mode", async () => {
@@ -529,6 +567,53 @@ describe("share-code route — mapping the worker's answer", () => {
       expect(res.status, `${status} ${name}`).toBe(504);
       vi.restoreAllMocks();
     }
+  });
+
+  it("answers a body read that fails (not an abort) as a transient 502, never not-JSON", async () => {
+    // On a 404 a "not JSON" body would read as a worker without the route.
+    for (const status of [404, 200]) {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new TypeError("connection reset"));
+            },
+          }),
+          { status }
+        )
+      );
+      const res = await handleModeShareCode(
+        testEnv,
+        "PBT",
+        "obt-coach",
+        CALLER
+      );
+      expect(res.status, String(status)).toBe(502);
+      expect(await res.json()).toEqual({
+        error: "Engine error",
+        code: "engine_error",
+      });
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("answers a client that went away with a bare 499", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_input, init) =>
+        new Promise((_, reject) => {
+          const signal = (init as RequestInit).signal!;
+          signal.addEventListener("abort", () => reject(signal.reason));
+        })
+    );
+    const client = new AbortController();
+    const pending = handleModeShareCode(testEnv, "PBT", "obt-coach", {
+      ...CALLER,
+      signal: client.signal,
+    });
+    client.abort();
+    const res = await pending;
+    expect(res.status).toBe(499);
+    expect(await res.text()).toBe("");
   });
 
   it("cancels the upstream call when the browser's request aborts", async () => {

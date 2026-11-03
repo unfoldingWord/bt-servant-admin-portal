@@ -150,21 +150,36 @@ export interface ModeSaveTarget {
 
 // Exported so the cache effects can be tested against a real QueryClient
 // without React (same shape as `languageSaveMutationOptions`).
+/**
+ * What a mode save snapshots before its PUT (#345): the mode as cached and
+ * the worker's last share-code answer, so `onSuccess` can tell whether the
+ * share code may have changed. Taken in `onMutate`, before any refetch or
+ * seed can overwrite either.
+ */
+export interface ModeSaveContext {
+  before: PromptMode | undefined;
+  lastAnswer: ModeShareCode | undefined;
+}
+
 export function saveModeMutationOptions(qc: QueryClient) {
   return {
     mutationFn: ({ name, body, org }: ModeSaveTarget) =>
       configApi.putMode(name, body, undefined, org),
+    onMutate: ({ name, org }: ModeSaveTarget): ModeSaveContext => {
+      const key = normalize(org);
+      return {
+        before: qc.getQueryData<PromptMode>(keys.mode(name, key)),
+        lastAnswer: qc.getQueryData<ModeShareCode>(
+          modeShareCodeKeys.mode(key, name)
+        ),
+      };
+    },
     onSuccess: async (
       saved: PromptMode,
-      { name, org, seed }: ModeSaveTarget
+      { name, org, seed }: ModeSaveTarget,
+      context: ModeSaveContext | undefined
     ) => {
       const key = normalize(org);
-      // Taken before any seed overwrites it: what the share code depended
-      // on before this save.
-      const before = qc.getQueryData<PromptMode>(keys.mode(name, key));
-      const lastAnswer = qc.getQueryData<ModeShareCode>(
-        modeShareCodeKeys.mode(key, name)
-      );
       if (seed) {
         // AWAIT the cancel before seeding (TanStack's optimistic-update
         // order): an in-flight GET that settles AFTER setQueryData would
@@ -190,7 +205,8 @@ export function saveModeMutationOptions(qc: QueryClient) {
       // reconciles the optimistic rows with server truth (e.g. fresh
       // `aliases`).
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
-      if (saveMayChangeShareCode(before, saved, lastAnswer)) {
+      // No snapshot (never expected) reads as "may have changed".
+      if (saveMayChangeShareCode(context?.before, saved, context?.lastAnswer)) {
         invalidateShareCodes(qc, key);
       }
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });

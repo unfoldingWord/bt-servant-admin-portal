@@ -58,6 +58,24 @@ export function normalizeWhatsAppNumber(
   return E164_DIGITS.test(digits) ? digits : null;
 }
 
+/** Whether the share-config number can go in a link: set, and E.164. */
+export function whatsAppNumberState(
+  raw: string | null | undefined
+): "ok" | "unconfigured" | "number-invalid" {
+  if (!raw || raw.trim() === "") return "unconfigured";
+  return normalizeWhatsAppNumber(raw) === null ? "number-invalid" : "ok";
+}
+
+/**
+ * The panel asks the worker only when the share-config number is usable:
+ * without one, no link can be built whatever the worker says.
+ */
+export function hasUsableWhatsAppNumber(
+  raw: string | null | undefined
+): boolean {
+  return whatsAppNumberState(raw) === "ok";
+}
+
 /**
  * The message the QR pre-fills: the worker's mode trigger for `name`, which
  * is either a bare slug or an org-qualified `<orgslug>/<slug>`.
@@ -365,8 +383,10 @@ export type ModeSharePanelState =
   | ({ kind: "unresolved"; uncertain: boolean } & Shown)
   | { kind: "group-only" }
   | { kind: "draft" }
-  | ({ kind: "unconfigured" } & Shown)
-  | ({ kind: "number-invalid" } & Shown)
+  /** WHATSAPP_NUMBER is unset (or the share-config route is absent). */
+  | { kind: "unconfigured" }
+  /** WHATSAPP_NUMBER isn't a plausible E.164 number. */
+  | { kind: "number-invalid" }
   | ({ kind: "ready"; url: string } & Shown);
 
 /** States that render a code on the card. */
@@ -377,10 +397,10 @@ export function shownTrigger(state: ModeSharePanelState): Shown | null {
 }
 
 /**
- * The worker still says draft or group-only for a mode the page has saved
- * as published and private-chat OK (the panel only asks for those): its
- * KV read predates the save. Shown as one plain "not seen the latest
- * change yet" state with a manual Try again, and never cached.
+ * The worker says draft or group-only for a mode the page has saved as
+ * published and private-chat OK (the panel only asks for those). Either
+ * side may be stale, so the answer is never reused (stale time 0) and the
+ * panel offers Try again ("worker-sees").
  */
 export function workerSaysUnshareable(
   data: ModeShareCode | undefined
@@ -522,16 +542,17 @@ function unhandled(value: never): never {
  *    off group-only is the author's to do first. (The worker's
  *    `invalid_mode`, which it checks first for a partner org's mode, is
  *    reported once the mode is published and asked about);
- * 3. query lifecycle: share-config loading (or offline) or failed, then
- *    the share code checking (see ShareCodeSnapshot) or failed with
+ * 3. share-config loading (or offline) or failed;
+ * 4. the WhatsApp number: missing or invalid (the worker isn't asked
+ *    without a usable one);
+ * 5. the share code checking (see ShareCodeSnapshot) or failed with
  *    nothing to show;
- * 4. the worker's answer, as is: configuration (WHATSAPP_ORG unset or
+ * 6. the worker's answer, as is: configuration (WHATSAPP_ORG unset or
  *    unusable, a worker without the share-code route), a definite
  *    failure (a name the worker rejects included), no code at all, a link
  *    if the code resolves, else why not (a reserved name included). A
  *    draft / group-only answer here means the worker and the page
- *    disagree ("worker-sees");
- * 5. the number: missing or invalid.
+ *    disagree ("worker-sees").
  */
 export function resolveModeSharePanelState(
   config: ShareConfigSnapshot,
@@ -549,12 +570,16 @@ export function resolveModeSharePanelState(
   if (config.pending && config.paused) return { kind: "error" };
   if (config.pending) return { kind: "loading-config" };
   if (config.error) return { kind: "error" };
+  // The number before the worker: without a usable one no link can be
+  // built, so the worker isn't asked (see `hasUsableWhatsAppNumber`).
+  const number = config.supported ? config.whatsappNumber : null;
+  const numberState = whatsAppNumberState(number);
+  if (numberState !== "ok") return { kind: numberState };
   if (shareCode.checking) return { kind: "checking-code" };
   const { answer } = shareCode;
   if (answer === undefined) {
     return { kind: "retry", cause: shareCode.failure ?? "server" };
   }
-  const number = config.supported ? config.whatsappNumber : null;
 
   switch (answer.capability) {
     case "failed":
@@ -656,10 +681,11 @@ function withNumber(
 ): ModeSharePanelState {
   if (link.ok) return { kind: "ready", url: link.url, ...shown };
   switch (link.reason) {
+    // Checked before the worker is asked; kept for completeness.
     case "number-missing":
-      return { kind: "unconfigured", ...shown };
+      return { kind: "unconfigured" };
     case "number-invalid":
-      return { kind: "number-invalid", ...shown };
+      return { kind: "number-invalid" };
     case "code-unencodable":
       return { kind: "code-unencodable" };
   }
