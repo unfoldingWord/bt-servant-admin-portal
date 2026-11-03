@@ -63,7 +63,7 @@ describe("#286 languages-default — GET is open to any session", () => {
     const fetchSpy = spyFetch();
     await handleConfig(get(), env, makeSession(), PATH);
     const init = fetchSpy.mock.calls[0]![1] as RequestInit;
-    expect((init.headers as Record<string, string>).Authorization).toBe(
+    expect(new Headers(init.headers).get("Authorization")).toBe(
       "Bearer test-engine-key"
     );
   });
