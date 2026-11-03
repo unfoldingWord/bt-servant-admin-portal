@@ -114,7 +114,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ## Session Log
 
-### 2026-11-02 to 2026-11-03 — #341 and #342 closed (fixes live in prod worker v2.58.0); #336 waiting on Elsy's prod check; #354 partner keys built as worker PR #475; #345 share links as portal #355 + worker #477; dedicated admin key PRs open in three repos
+### 2026-11-02 to 2026-11-03 — #341 and #342 closed (fixes live in prod worker v2.58.0); #336 waiting on Elsy's prod check; #354 partner keys built as worker PR #475; #345 share links as portal #355 + worker #477; dedicated admin key: portal #356 merged, worker #479 and baruch #24 open
 
 **Lane:** Ian leads the BT Servant repos. This session ran from 2026-11-02 into 2026-11-03 local. No merges by us apart from this tracker PR. The one environment change was `PARTNER_KEY_TAG_SECRET` on the staging worker (11-03, approved by Seth). Ian deployed prod; we did not.
 
@@ -131,10 +131,11 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
   - Per-key rate limits are deferred to worker #476.
 - **#345 (share links).** Portal PR #355 (v1.17.0, in review) with worker PR #477 (share-code endpoint).
 
-**Dedicated admin key for admin routes — PRs open, none merged.**
+**Dedicated admin key for admin routes — portal #356 merged; worker #479 and baruch #24 open.**
 
 - Worker #479 (v2.59.0): `ADMIN_API_KEY` plus an `ADMIN_KEY_REQUIRED` switch.
-- Portal #356 (v1.16.5) and baruch #24 (v1.3.3) send the admin key on admin calls.
+- Portal #356 (v1.16.5): merged 2026-11-03 (`d86b797`). It sends the admin key on admin calls. It was merged first because it bumps zod to 4.6.7, which unblocked `main`'s dependency audit: the Code Quality `npm audit` step was failing on zod <4.6.6 (GHSA-mrhx-c7xc-m3w5) for every PR, this one included.
+- Baruch #24 (v1.3.3) sends the admin key on admin calls.
 - Rollout steps were sent to Ian on 2026-11-03.
 
 **Blocker: shared staging and #475's migration.** Shared staging now rejects worker deploys that lack #475's v4 Durable Object migration (Cloudflare error 10074). abelpz's worker #480 was affected; he was told on the PR. **Decision:** merge #475 sooner rather than stub the migration in other branches.
@@ -148,7 +149,7 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 1. Finish #475: partner audio, review, and Seth's Codex review.
 2. Merge worker #479, then rebase #475 onto it. Rebase #477.
-3. Merge order for portal #355 and #356: whichever merges second must rebase so the share-code call uses `engineFetch` and its version is bumped again.
+3. Portal #355 merges after #356, so it must rebase onto `main` so the share-code call uses `engineFetch` and its version is bumped again (above v1.16.5).
 4. Elsy: confirm #336 on prod; answer the #310 questions.
 
 ### 2026-10-16 — #292 option 1 shipped (PR #351, v1.16.4); worker #443 cut to items 1 + 3 per Ian and bench-approved; #437 bench-approved; written standup posted
