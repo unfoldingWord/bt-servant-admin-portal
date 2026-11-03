@@ -55,29 +55,60 @@ export function createEngineKeyResolver() {
 
 const resolveEngineKey = createEngineKeyResolver();
 
-/** The bearer key the BFF sends on every engine call. */
-export function engineAdminKey(
-  env: Pick<Env, "ADMIN_API_KEY" | "ENGINE_API_KEY">
-): string {
-  return resolveEngineKey(env).key;
+// Structured codes the engine may return on a key rejection, with the
+// current error texts as a fallback for engines that predate the codes.
+const KEY_REJECTION_TEXTS: [code: string, text: string][] = [
+  ["admin_key_required", "requires the admin API key"],
+  ["invalid_api_key", "Invalid API key"],
+];
+
+/** The engine's key-rejection code from a 401/403 body, if any. */
+function keyRejectionCode(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as { code?: unknown };
+    if (typeof parsed.code === "string") return parsed.code;
+  } catch {
+    // Not JSON: fall through to the text match.
+  }
+  return KEY_REJECTION_TEXTS.find(([, text]) => body.includes(text))?.[0];
 }
 
-/** Marker in the engine's 403 body when a route needs the admin key. */
-const ADMIN_KEY_REQUIRED_MARKER = "requires the admin API key";
-
-export const ENGINE_KEY_REJECTED_MESSAGE =
-  "Portal configuration problem: BT Servant rejected the portal's key. This is not about your account's permissions; please contact unfoldingWord.";
+/**
+ * Diagnostic only: on an engine 401/403 that names the key (a structured
+ * code or a known error text), or on any 401/403 while on the
+ * ENGINE_API_KEY fallback, log engine_admin_key_rejected with the key
+ * source, status, method, path and code. Never the key.
+ */
+async function logKeyRejection(
+  res: Response,
+  source: EngineKeySource,
+  method: string,
+  path: string
+): Promise<void> {
+  if (res.status !== 401 && res.status !== 403) return;
+  const body = await res
+    .clone()
+    .text()
+    .catch(() => "");
+  const code = keyRejectionCode(body);
+  if (source === "ADMIN_API_KEY" && code === undefined) return;
+  console.error(
+    JSON.stringify({
+      event: "engine_admin_key_rejected",
+      key_source: source,
+      status: res.status,
+      method,
+      path: path.split("?")[0],
+      ...(code !== undefined && { code }),
+    })
+  );
+}
 
 /**
  * Every BFF call to the engine goes through here. `path` starts with `/`
  * and may carry a query string. Any Authorization header in `init` is
- * replaced with engineAdminKey().
- *
- * A 403 that says the admin key is required, or any 403 while on the
- * ENGINE_API_KEY fallback, means the portal's key setup is wrong rather
- * than the user lacking rights: it is logged as engine_admin_key_rejected
- * (key source only) and turned into a 502 with a message saying so, so
- * the UI does not show it as "you lack permission".
+ * replaced with the resolved engine key. The engine's response is returned
+ * unchanged, so callers' own error handling applies as before.
  */
 export async function engineFetch(
   env: Pick<Env, "ENGINE_BASE_URL" | "ADMIN_API_KEY" | "ENGINE_API_KEY">,
@@ -91,23 +122,8 @@ export async function engineFetch(
     ...init,
     headers: { ...init.headers, Authorization: `Bearer ${key}` },
   });
-  if (res.status !== 403) return res;
-  const body = await res
-    .clone()
-    .text()
-    .catch(() => "");
-  if (source === "ADMIN_API_KEY" && !body.includes(ADMIN_KEY_REQUIRED_MARKER)) {
-    return res;
-  }
-  console.error(
-    JSON.stringify({
-      event: "engine_admin_key_rejected",
-      key_source: source,
-      method: init.method ?? "GET",
-      path: path.split("?")[0],
-    })
-  );
-  return errorResponse(ENGINE_KEY_REJECTED_MESSAGE, 502);
+  await logKeyRejection(res, source, init.method ?? "GET", path);
+  return res;
 }
 
 export function jsonResponse(data: unknown, status = 200): Response {
