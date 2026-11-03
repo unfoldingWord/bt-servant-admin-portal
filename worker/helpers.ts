@@ -1,9 +1,9 @@
 export interface Env {
   ENGINE_BASE_URL: string;
   ENGINE_API_KEY: string;
-  // Engine admin bearer for /api/v1/admin/*. Optional: when unset or
-  // blank, admin calls fall back to ENGINE_API_KEY. Unrelated to
-  // ADMIN_SECRET below. Read it only through engineFetch()/engineAdminKey().
+  // The engine admin key, sent on every engine call. Optional in code: when
+  // unset or blank the BFF falls back to ENGINE_API_KEY (see
+  // createEngineKeyResolver). Unrelated to ADMIN_SECRET below.
   ADMIN_API_KEY?: string;
   BARUCH_BASE_URL: string;
   BARUCH_API_KEY: string;
@@ -18,63 +18,96 @@ export interface Env {
   WHATSAPP_ORG?: string;
 }
 
-/** Engine paths under this prefix are admin routes and get the admin key. */
-export const ENGINE_ADMIN_PATH_PREFIX = "/api/v1/admin/";
-
-// One fallback warning per isolate: enough to show a missing secret in the
-// logs without repeating it on every request.
-let adminKeyFallbackLogged = false;
-
-/** Test hook: re-arm the once-per-isolate fallback warning. */
-export function resetEngineAdminKeyLogForTests(): void {
-  adminKeyFallbackLogged = false;
-}
+export type EngineKeySource = "ADMIN_API_KEY" | "ENGINE_API_KEY";
 
 /**
- * The bearer key for calls to the engine's admin API (`/api/v1/admin/*`):
- * the trimmed ADMIN_API_KEY when it is set and non-blank, otherwise
- * ENGINE_API_KEY, so a deploy without the new secret keeps working. The
- * fallback logs one structured warning per isolate naming the key source,
- * never the key value.
+ * Builds a resolver for the key the BFF sends to the engine. Every BFF
+ * call comes from the admin portal (the chat relay included: it sends the
+ * admin `client_id`), so every call uses the same key: the trimmed
+ * ADMIN_API_KEY when it is set and non-blank, otherwise ENGINE_API_KEY so
+ * a deploy without the new secret keeps working. The fallback logs one
+ * structured warning per resolver (one per isolate for the module-level
+ * instance below) naming the key source, never the key value.
+ *
+ * A factory rather than module state so tests get a fresh warning flag.
  */
+export function createEngineKeyResolver() {
+  let fallbackLogged = false;
+  return (
+    env: Pick<Env, "ADMIN_API_KEY" | "ENGINE_API_KEY">
+  ): { key: string; source: EngineKeySource } => {
+    const adminKey = env.ADMIN_API_KEY?.trim();
+    if (adminKey) return { key: adminKey, source: "ADMIN_API_KEY" };
+    if (!fallbackLogged) {
+      fallbackLogged = true;
+      console.warn(
+        JSON.stringify({
+          event: "engine_admin_key_fallback",
+          key_source: "ENGINE_API_KEY",
+          reason: env.ADMIN_API_KEY === undefined ? "unset" : "blank",
+        })
+      );
+    }
+    // Sent exactly as today (untrimmed) so the fallback changes nothing.
+    return { key: env.ENGINE_API_KEY, source: "ENGINE_API_KEY" };
+  };
+}
+
+const resolveEngineKey = createEngineKeyResolver();
+
+/** The bearer key the BFF sends on every engine call. */
 export function engineAdminKey(
   env: Pick<Env, "ADMIN_API_KEY" | "ENGINE_API_KEY">
 ): string {
-  const adminKey = env.ADMIN_API_KEY?.trim();
-  if (adminKey) return adminKey;
-  if (!adminKeyFallbackLogged) {
-    adminKeyFallbackLogged = true;
-    console.warn(
-      JSON.stringify({
-        event: "engine_admin_key_fallback",
-        key_source: "ENGINE_API_KEY",
-        reason: env.ADMIN_API_KEY === undefined ? "unset" : "blank",
-      })
-    );
-  }
-  return env.ENGINE_API_KEY;
+  return resolveEngineKey(env).key;
 }
+
+/** Marker in the engine's 403 body when a route needs the admin key. */
+const ADMIN_KEY_REQUIRED_MARKER = "requires the admin API key";
+
+export const ENGINE_KEY_REJECTED_MESSAGE =
+  "Portal configuration problem: BT Servant rejected the portal's key. This is not about your account's permissions; please contact unfoldingWord.";
 
 /**
  * Every BFF call to the engine goes through here. `path` starts with `/`
- * and may carry a query string. Admin paths (`/api/v1/admin/*`) get
- * engineAdminKey(); everything else (chat stream, user history read) gets
- * ENGINE_API_KEY. Any Authorization header in `init` is replaced.
+ * and may carry a query string. Any Authorization header in `init` is
+ * replaced with engineAdminKey().
+ *
+ * A 403 that says the admin key is required, or any 403 while on the
+ * ENGINE_API_KEY fallback, means the portal's key setup is wrong rather
+ * than the user lacking rights: it is logged as engine_admin_key_rejected
+ * (key source only) and turned into a 502 with a message saying so, so
+ * the UI does not show it as "you lack permission".
  */
-export function engineFetch(
+export async function engineFetch(
   env: Pick<Env, "ENGINE_BASE_URL" | "ADMIN_API_KEY" | "ENGINE_API_KEY">,
   path: string,
   init: Omit<RequestInit, "headers"> & {
     headers?: Record<string, string>;
   } = {}
 ): Promise<Response> {
-  const key = path.startsWith(ENGINE_ADMIN_PATH_PREFIX)
-    ? engineAdminKey(env)
-    : env.ENGINE_API_KEY;
-  return fetch(`${env.ENGINE_BASE_URL}${path}`, {
+  const { key, source } = resolveEngineKey(env);
+  const res = await fetch(`${env.ENGINE_BASE_URL}${path}`, {
     ...init,
     headers: { ...init.headers, Authorization: `Bearer ${key}` },
   });
+  if (res.status !== 403) return res;
+  const body = await res
+    .clone()
+    .text()
+    .catch(() => "");
+  if (source === "ADMIN_API_KEY" && !body.includes(ADMIN_KEY_REQUIRED_MARKER)) {
+    return res;
+  }
+  console.error(
+    JSON.stringify({
+      event: "engine_admin_key_rejected",
+      key_source: source,
+      method: init.method ?? "GET",
+      path: path.split("?")[0],
+    })
+  );
+  return errorResponse(ENGINE_KEY_REJECTED_MESSAGE, 502);
 }
 
 export function jsonResponse(data: unknown, status = 200): Response {

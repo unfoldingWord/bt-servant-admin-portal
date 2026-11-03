@@ -1,5 +1,13 @@
 import { env } from "cloudflare:test";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type MockInstance,
+  vi,
+} from "vitest";
 
 import {
   handleDeleteHistory,
@@ -9,18 +17,22 @@ import {
 } from "../worker/chat";
 import { __testInternals, handleConfig } from "../worker/config";
 import {
+  createEngineKeyResolver,
   engineAdminKey,
   engineFetch,
-  resetEngineAdminKeyLogForTests,
+  ENGINE_KEY_REJECTED_MESSAGE,
 } from "../worker/helpers";
 import type { SessionData } from "../worker/types";
 
-// Admin calls to the engine (/api/v1/admin/*) use ADMIN_API_KEY when it is
-// set and fall back to ENGINE_API_KEY when it is not. Non-admin calls (chat
-// stream, history read) keep ENGINE_API_KEY either way.
+// Every BFF call to the engine uses ADMIN_API_KEY when it is set and falls
+// back to ENGINE_API_KEY when it is not.
+
+let warnSpy: MockInstance<typeof console.warn>;
 
 beforeEach(() => {
-  resetEngineAdminKeyLogForTests();
+  // The module-level resolver warns once per isolate; silence it here and
+  // assert on the warning through a fresh createEngineKeyResolver().
+  warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -85,10 +97,13 @@ describe("engineAdminKey", () => {
     ).toBe("engine");
   });
 
-  it("warns once per isolate on fallback, naming the source but not the key", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    engineAdminKey({ ENGINE_API_KEY: "engine-secret-value" });
-    engineAdminKey({ ENGINE_API_KEY: "engine-secret-value" });
+  it("warns once per resolver on fallback, naming the source but not the key", () => {
+    const warn = warnSpy;
+    const resolve = createEngineKeyResolver();
+    expect(resolve({ ENGINE_API_KEY: "engine-secret-value" }).source).toBe(
+      "ENGINE_API_KEY"
+    );
+    resolve({ ENGINE_API_KEY: "engine-secret-value" });
     expect(warn).toHaveBeenCalledTimes(1);
     const logged = String(warn.mock.calls[0]![0]);
     expect(JSON.parse(logged)).toEqual({
@@ -100,8 +115,11 @@ describe("engineAdminKey", () => {
   });
 
   it("does not warn when ADMIN_API_KEY is set", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    engineAdminKey({ ADMIN_API_KEY: "admin", ENGINE_API_KEY: "engine" });
+    const warn = warnSpy;
+    const resolve = createEngineKeyResolver();
+    expect(
+      resolve({ ADMIN_API_KEY: "admin", ENGINE_API_KEY: "engine" })
+    ).toEqual({ key: "admin", source: "ADMIN_API_KEY" });
     expect(warn).not.toHaveBeenCalled();
   });
 });
@@ -124,10 +142,57 @@ describe("engineFetch", () => {
     );
   });
 
-  it("sends ENGINE_API_KEY on non-admin paths even when ADMIN_API_KEY is set", async () => {
+  it("sends the admin key on non-admin paths too", async () => {
     const spy = mockFetch();
     await engineFetch(withAdminKey(), "/api/v1/chat/stream");
-    expect(authOf(spy)).toBe(`Bearer ${env.ENGINE_API_KEY}`);
+    expect(authOf(spy)).toBe(`Bearer ${ADMIN_KEY}`);
+  });
+
+  it("turns a 403 that requires the admin key into a 502 config error", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: "This route requires the admin API key" }),
+        { status: 403 }
+      )
+    );
+    const res = await engineFetch(
+      withAdminKey(),
+      "/api/v1/admin/orgs/acme/modes?x=1"
+    );
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: ENGINE_KEY_REJECTED_MESSAGE });
+    const logged = String(error.mock.calls[0]![0]);
+    expect(JSON.parse(logged)).toEqual({
+      event: "engine_admin_key_rejected",
+      key_source: "ADMIN_API_KEY",
+      method: "GET",
+      path: "/api/v1/admin/orgs/acme/modes",
+    });
+    expect(logged).not.toContain(ADMIN_KEY);
+  });
+
+  it("turns any 403 into a 502 config error while on the fallback", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 })
+    );
+    const res = await engineFetch(env, "/api/v1/chat/stream", {
+      method: "POST",
+    });
+    expect(res.status).toBe(502);
+    expect(JSON.parse(String(error.mock.calls[0]![0])).key_source).toBe(
+      "ENGINE_API_KEY"
+    );
+  });
+
+  it("passes through an unrelated 403 when the admin key is in use", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "Not your org" }), { status: 403 })
+    );
+    const res = await engineFetch(withAdminKey(), "/api/v1/admin/orgs/acme");
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Not your org" });
   });
 });
 
@@ -135,7 +200,6 @@ describe("BFF → engine admin calls", () => {
   const MCP = "/api/config/mcp-servers";
 
   it("config proxy sends ENGINE_API_KEY when ADMIN_API_KEY is unset", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
     const spy = mockFetch();
     const res = await handleConfig(
       new Request(`https://portal.example.test${MCP}`),
@@ -216,8 +280,8 @@ describe("BFF → engine admin calls", () => {
   });
 });
 
-describe("BFF → engine user (non-admin) calls", () => {
-  it("history read keeps ENGINE_API_KEY even when ADMIN_API_KEY is set", async () => {
+describe("BFF → engine chat relay calls (admin client_id)", () => {
+  it("history read uses ADMIN_API_KEY when it is set", async () => {
     const spy = mockFetch({ entries: [] });
     const res = await handleHistory(
       new Request("https://portal.example.test/api/chat/history"),
@@ -226,10 +290,10 @@ describe("BFF → engine user (non-admin) calls", () => {
     );
     expect(res.status).toBe(200);
     expect(urlOf(spy)).not.toContain("/api/v1/admin/");
-    expect(authOf(spy)).toBe(`Bearer ${env.ENGINE_API_KEY}`);
+    expect(authOf(spy)).toBe(`Bearer ${ADMIN_KEY}`);
   });
 
-  it("chat stream keeps ENGINE_API_KEY even when ADMIN_API_KEY is set", async () => {
+  it("chat stream uses ADMIN_API_KEY when it is set", async () => {
     const spy = mockFetch({});
     const res = await handleStream(
       new Request("https://portal.example.test/api/chat/stream", {
@@ -242,6 +306,6 @@ describe("BFF → engine user (non-admin) calls", () => {
     );
     expect(res.status).toBe(200);
     expect(urlOf(spy)).toBe(`${env.ENGINE_BASE_URL}/api/v1/chat/stream`);
-    expect(authOf(spy)).toBe(`Bearer ${env.ENGINE_API_KEY}`);
+    expect(authOf(spy)).toBe(`Bearer ${ADMIN_KEY}`);
   });
 });
