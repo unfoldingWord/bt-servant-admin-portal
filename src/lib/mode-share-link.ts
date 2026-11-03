@@ -525,7 +525,10 @@ function unhandled(value: never): never {
 }
 
 /**
- * Resolve what the panel shows. Order of precedence:
+ * What the panel shows, in one call: a test-only convenience. The panel
+ * itself composes `resolvePreWorkerStage` (steps 1–4, which also gates
+ * the share-code query) and `resolveWithShareCode` (steps 5–6). Order of
+ * precedence:
  *
  * 1. the mode's name, from its stored slug alone: a slug no trigger can
  *    carry, then a reserved clear-word (a draft named `default` hears
@@ -560,9 +563,9 @@ export function resolveModeSharePanelState(
 }
 
 /**
- * Steps 1–4 of `resolveModeSharePanelState`, which don't depend on the
- * worker: either the state to show, or "needs share code" with the
- * number to build the link from. The panel asks the worker exactly when
+ * Steps 1–4 of the order (listed on `resolveModeSharePanelState`),
+ * which don't depend on the worker: either the state to show, or "needs
+ * share code" with the number to build the link from. The panel asks the worker exactly when
  * this says it needs the share code, so the query's gate and the
  * resolver can't drift apart.
  */

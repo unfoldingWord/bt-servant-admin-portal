@@ -25,7 +25,8 @@ export const SHARE_CODE_ERRORS = {
    * 400 `invalid_org` (the mode's org: the BFF's own org resolution, or the
    * worker's `invalid_org` with `field: "org"`; the worker's `field:
    * "home_org"` answers become `unconfigured`), 401 and 403: the BFF's
-   * generic codes, shared with every /api/config route.
+   * generic codes (see `src/lib/bff-errors.ts` for which other responses
+   * carry them).
    */
   ...BFF_ERRORS,
   /** 405: the route is GET only. */

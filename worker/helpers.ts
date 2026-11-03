@@ -224,9 +224,10 @@ export function crossOrgForbidden(): Response {
 }
 
 /**
- * 400 code `invalid_org`, on every config route and the share-code route
- * alike: the org param, the resolved org, or the worker's `invalid_org`
- * for the mode's org.
+ * 400 code `invalid_org`: the org-resolution error on /api/config routes
+ * (the org param or the resolved org, via `orgErrorResponse`) and the
+ * share-code route's mapping of the worker's `invalid_org` for the
+ * mode's org.
  */
 export function invalidOrg(message = "Invalid org"): Response {
   return jsonResponse({ error: message, code: BFF_ERRORS.invalidOrg }, 400);

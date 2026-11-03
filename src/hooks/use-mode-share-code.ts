@@ -19,7 +19,7 @@ import {
 const SHARE_CODE_STALE_MS = 20_000;
 
 // #345 — the worker's answer for which `#<code>` opens this mode on
-// WhatsApp, as a ShareCodeSnapshot for `resolveModeSharePanelState`.
+// WhatsApp, as a ShareCodeSnapshot for `resolveWithShareCode`.
 //
 // The panel mounts this once per open (a child keyed per open), so
 // TanStack's per-observer state is per open: `isFetchedAfterMount` means

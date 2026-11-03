@@ -55,7 +55,9 @@ import { Input } from "@/components/ui/input";
 // for a partner org's mode, #345). Everything around the
 // card exists to get the card into the world (copy the link, download it)
 // or to say plainly why it would not work yet. Which of those it is comes
-// from `resolveModeSharePanelState` (pure, unit-tested); this file renders.
+// from `resolvePreWorkerStage` (whose "needs share code" result also gates
+// the share-code query) and then `resolveWithShareCode`, both pure and
+// unit-tested; this file composes them and renders.
 
 /** Content id, so the page's opener can point `aria-controls` at it. */
 export const MODE_SHARE_DIALOG_ID = "mode-share-dialog";
