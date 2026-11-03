@@ -11,6 +11,7 @@ import {
   type ModeSaveTarget,
 } from "../src/hooks/use-prompt-config";
 import {
+  MODE_SHARE_CODE_KEY,
   modeShareCodeKeys,
   saveMayChangeShareCode,
 } from "../src/lib/mode-share-code-api";
@@ -325,7 +326,7 @@ describe("saveModeMutationOptions — opt-in seed", () => {
       `set:${JSON.stringify(modeQueryKeys.modes(null))}`,
       `invalidate:${JSON.stringify(modeQueryKeys.modes(null))}`,
       // A new mode (nothing cached before): its org's share codes.
-      `invalidate:${JSON.stringify(modeShareCodeKeys.org(null))}`,
+      `invalidate:${JSON.stringify(MODE_SHARE_CODE_KEY)}`,
       `invalidate:${JSON.stringify(modeQueryKeys.mode("spoken", null))}`,
     ]);
   });
@@ -380,7 +381,7 @@ describe("saveModeMutationOptions — opt-in seed", () => {
     ).toBeUndefined();
     expect(invalidateSpy.mock.calls.map((c) => c[0]?.queryKey)).toEqual([
       modeQueryKeys.modes("alpha"),
-      modeShareCodeKeys.org("alpha"),
+      MODE_SHARE_CODE_KEY,
       modeQueryKeys.mode("spoken", "alpha"),
     ]);
     for (const call of cancelSpy.mock.calls) {
@@ -487,26 +488,25 @@ describe("share-code invalidation", () => {
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
     await options.onSuccess(published, vars, context);
     expect(invalidateSpy.mock.calls.map((c) => c[0]?.queryKey)).toContainEqual(
-      modeShareCodeKeys.org(null)
+      MODE_SHARE_CODE_KEY
     );
   });
 
-  it("invalidates only the written org's share codes", async () => {
+  it("invalidates every org's share codes after a structural write", async () => {
+    // Cross-org collisions and the gateway org's home pool make one org's
+    // codes depend on other orgs' modes.
     const qc = new QueryClient();
-    qc.setQueryData(modeShareCodeKeys.mode("alpha", "a"), {
-      capability: "not-found",
-    });
-    qc.setQueryData(modeShareCodeKeys.mode("beta", "a"), {
-      capability: "not-found",
-    });
-    qc.setQueryData(modeShareCodeKeys.mode(null, "a"), {
-      capability: "not-found",
-    });
-    invalidateShareCodes(qc, "alpha");
-    const invalidated = (org: string | null) =>
-      qc.getQueryState(modeShareCodeKeys.mode(org, "a"))?.isInvalidated;
-    expect(invalidated("alpha")).toBe(true);
-    expect(invalidated("beta")).toBe(false);
-    expect(invalidated(null)).toBe(false);
+    for (const org of ["alpha", "beta", null]) {
+      qc.setQueryData(modeShareCodeKeys.mode(org, "a"), {
+        capability: "not-found",
+      });
+    }
+    invalidateShareCodes(qc);
+    for (const org of ["alpha", "beta", null]) {
+      expect(
+        qc.getQueryState(modeShareCodeKeys.mode(org, "a"))?.isInvalidated,
+        String(org)
+      ).toBe(true);
+    }
   });
 });

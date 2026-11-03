@@ -17,8 +17,6 @@ import {
   hasUsableWhatsAppNumber,
   homeOrgWithoutModes,
   answerNeverReused,
-  frozenWhileClosed,
-  nextRetryClick,
   refreshFailed,
   retryControl,
   workerSaysUnshareable,
@@ -251,34 +249,6 @@ describe("buildModeShareFilename", () => {
 // (bt-servant-worker#477). These pin that every answer maps to one state,
 // that a link is built only from a code that resolves, and that no state
 // shows a trigger the worker didn't hand back.
-describe("nextRetryClick", () => {
-  const idle = { config: "idle", "share-code": "idle" } as const;
-  const busy = { config: "idle", "share-code": "fetching" } as const;
-  const offline = { config: "idle", "share-code": "paused" } as const;
-  const click = { target: "share-code", started: false } as const;
-
-  it("stays busy from the click until the retried query has fetched and stopped", () => {
-    // Click render: not fetching yet, still busy.
-    expect(nextRetryClick(click, idle)).toBe(click);
-    const started = nextRetryClick(click, busy);
-    expect(started).toEqual({ ...click, started: true });
-    // A cancel-and-restart (mode write) keeps it fetching: still busy.
-    expect(nextRetryClick(started, busy)).toBe(started);
-    expect(nextRetryClick(started, idle)).toBeNull();
-  });
-
-  it("ends when the retried query is paused offline, so Try again stays usable", () => {
-    expect(nextRetryClick(click, offline)).toBeNull();
-    expect(nextRetryClick({ ...click, started: true }, offline)).toBeNull();
-  });
-
-  it("follows the target's own query, not the other one", () => {
-    const config = { target: "config", started: true } as const;
-    expect(nextRetryClick(config, busy)).toBeNull();
-    expect(nextRetryClick(null, busy)).toBeNull();
-  });
-});
-
 describe("resolveModeSharePanelState", () => {
   const config: ShareConfigSnapshot = {
     pending: false,
@@ -901,39 +871,52 @@ describe("answerNeverReused", () => {
   });
 });
 
-describe("frozenWhileClosed", () => {
-  it("keeps the last open state while closing, so the exit doesn't flicker", () => {
-    const ready: ModeSharePanelState = {
-      kind: "ready",
-      url: "https://wa.me/1?text=%23x",
-      trigger: "#x",
-      partnerOrg: null,
+// Round 14: no flicker on close. The closing render's query is disabled
+// but keeps its data, and the hook keeps the start it recorded while
+// open, so the closing render resolves to the same state as the last
+// open one; it reads as checking only without that start.
+describe("closing render keeps the answer", () => {
+  const answer = {
+    capability: "present" as const,
+    home_org: "uW",
+    queried_org: "PBT",
+    code: "x",
+    resolves: true,
+  };
+  const config: ShareConfigSnapshot = {
+    pending: false,
+    paused: false,
+    error: false,
+    supported: true,
+    whatsappNumber: "15550100100",
+  };
+  const resolve = (snap: ShareCodeSnapshot) =>
+    resolveModeSharePanelState(config, snap, { published: true }, "PBT", "x");
+
+  it("shows the same ready state on the closing render as on the last open one", () => {
+    // Open: a reopen past the stale time fetched a fresh answer.
+    const start = shareCodeStart({
+      data: answer,
+      dataUpdatedAt: 100,
+      fetchStatus: "fetching",
+      error: null,
+      isFetchedAfterMount: false,
+    });
+    const openView = {
+      data: answer,
+      dataUpdatedAt: 150,
+      fetchStatus: "idle" as const,
+      error: null,
+      isFetchedAfterMount: true,
     };
-    const checking: ModeSharePanelState = { kind: "checking-code" };
-    // Open: always the live state.
-    expect(frozenWhileClosed<ModeSharePanelState>(true, checking, ready)).toBe(
-      checking
-    );
-    // Closing: the disabled query reads as checking; the last state wins.
-    expect(frozenWhileClosed<ModeSharePanelState>(false, checking, ready)).toBe(
-      ready
-    );
-    // Nothing shown yet: the live state.
-    expect(
-      frozenWhileClosed<ModeSharePanelState>(false, checking, undefined)
-    ).toBe(checking);
+    const lastOpen = resolve(shareCodeSnapshot(openView, start));
+    expect(lastOpen.kind).toBe("ready");
+    // Closing: disabled, same data, the kept start.
+    const closing = resolve(shareCodeSnapshot(openView, start));
+    expect(closing).toEqual(lastOpen);
   });
 
-  it("covers the closing render the panel actually computes", () => {
-    // What the panel resolves from a disabled query on close (no start
-    // taken for this key) is checking, not the answer it showed.
-    const answer = {
-      capability: "present" as const,
-      home_org: "uW",
-      queried_org: "PBT",
-      code: "x",
-      resolves: true,
-    };
+  it("would read as checking without the kept start (the flicker)", () => {
     const closingSnap = shareCodeSnapshot(
       {
         data: answer,
@@ -944,31 +927,7 @@ describe("frozenWhileClosed", () => {
       },
       { fresh: false, dataUpdatedAt: 100 }
     );
-    expect(closingSnap.checking).toBe(true);
-    const config: ShareConfigSnapshot = {
-      pending: false,
-      paused: false,
-      error: false,
-      supported: true,
-      whatsappNumber: "15550100100",
-    };
-    const closing = resolveModeSharePanelState(
-      config,
-      closingSnap,
-      { published: true },
-      "PBT",
-      "x"
-    );
-    expect(closing).toEqual({ kind: "checking-code" });
-    const lastOpen = resolveModeSharePanelState(
-      config,
-      { answer, checking: false, failure: null },
-      { published: true },
-      "PBT",
-      "x"
-    );
-    expect(lastOpen.kind).toBe("ready");
-    expect(frozenWhileClosed(false, closing, lastOpen)).toBe(lastOpen);
+    expect(resolve(closingSnap)).toEqual({ kind: "checking-code" });
   });
 });
 

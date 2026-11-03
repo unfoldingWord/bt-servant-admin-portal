@@ -17,7 +17,6 @@ import {
 import type { LanguageRights, SessionData } from "./types";
 import {
   handleModeShareCode,
-  invalidOrg,
   SHARE_CODE_PATH,
   shareCodeError,
   shareCodeInvalidModeName,
@@ -519,42 +518,32 @@ function isAdminMutation(method: string, session: SessionData): boolean {
 // a restricted-shepherd super admin could bypass their own org's
 // language_rights by adding a self-referential `?org=` (Frank, PR #185
 // review).
-/**
- * Why `resolveOrg` refused. Each route maps it to its own response:
- * `orgErrorResponse` for the generic config routes, `shareCodeOrgError`
- * for the share-code route (#345), whose errors carry a `code`.
- */
+/** Why `resolveOrg` refused; `orgErrorResponse` maps it. */
 export type OrgResolutionError =
   | "invalid-org-param"
   | "cross-org-forbidden"
   | "invalid-org";
 
-/** The generic config routes' response for a refused org. */
+/**
+ * The response for a refused org, on every config route: the same
+ * statuses and messages as before #345, each with its machine-readable
+ * `code` (an additive field).
+ */
 function orgErrorResponse(error: OrgResolutionError): Response {
   switch (error) {
     case "invalid-org-param":
-      return errorResponse("Invalid org parameter", 400);
+      return shareCodeError(
+        "Invalid org parameter",
+        SHARE_CODE_ERRORS.invalidOrg,
+        400
+      );
     case "cross-org-forbidden":
       return authErrorResponse(
         "Cross-org config access requires isSuperAdmin",
         403
       );
     case "invalid-org":
-      return errorResponse("Invalid org", 400);
-  }
-}
-
-/** The share-code route's response for a refused org: same statuses, with a `code`. */
-function shareCodeOrgError(error: OrgResolutionError): Response {
-  switch (error) {
-    case "invalid-org-param":
-    case "invalid-org":
-      return invalidOrg();
-    case "cross-org-forbidden":
-      return authErrorResponse(
-        "Cross-org config access requires isSuperAdmin",
-        403
-      );
+      return shareCodeError("Invalid org", SHARE_CODE_ERRORS.invalidOrg, 400);
   }
 }
 
@@ -656,16 +645,15 @@ export async function handleConfig(
   pathname: string
 ): Promise<Response> {
   const resolved = resolveOrg(request, session);
+  if ("error" in resolved) return orgErrorResponse(resolved.error);
 
-  // /api/config/modes/{name}/share-code → GET (#345). Dispatched first:
-  // the generic mode route's `(.+)` would capture `{name}/share-code` as a
-  // mode name, and this route maps its own errors (each with a `code`). A
-  // read, scoped exactly like the mode GET: any session for its own org,
-  // super-admins cross-org (`resolveOrg`). The RAW resolved org goes to
-  // the worker, so it reads the same key the mode GET does.
+  // /api/config/modes/{name}/share-code → GET (#345). Matched before the
+  // generic mode route, whose `(.+)` would capture `{name}/share-code` as
+  // a mode name. A read, scoped exactly like the mode GET: any session for
+  // its own org, super-admins cross-org (`resolveOrg`). The RAW resolved
+  // org goes to the worker, so it reads the same key the mode GET does.
   const modeShareCodeMatch = pathname.match(SHARE_CODE_PATH);
   if (modeShareCodeMatch?.[1]) {
-    if ("error" in resolved) return shareCodeOrgError(resolved.error);
     if (request.method !== "GET") {
       return shareCodeError(
         "Method not allowed",
@@ -683,7 +671,6 @@ export async function handleConfig(
     });
   }
 
-  if ("error" in resolved) return orgErrorResponse(resolved.error);
   // Named so the raw-vs-encoded distinction travels with the variable:
   // the round-3 double-encoding bug happened because a pre-encoded local
   // called `org` was passed where raw resolved.org was expected. Helpers

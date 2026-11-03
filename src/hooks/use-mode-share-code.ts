@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { getModeShareCode, modeShareCodeKeys } from "@/lib/mode-share-code-api";
@@ -65,22 +65,27 @@ export function useModeShareCode(
   } = query;
 
   // What the cache held the first time this mount asked for this key (see
-  // ShareCodeStart). Taken during render, once per key, so the very render
-  // that starts asking already knows; a key change (org or mode) takes a
-  // new one.
-  const startRef = useRef<{ key: string; start: ShareCodeStart } | null>(null);
+  // ShareCodeStart). Recorded in an effect, once per key (a key change, org
+  // or mode, takes a new one). Until it lands, the render derives the same
+  // value from its own view, so the very render that starts asking
+  // already knows. Kept while disabled (the dialog closing), so the last
+  // answer stays shown through the exit animation.
   const view = useMemo<ShareCodeQueryView>(
     () => ({ data, dataUpdatedAt, fetchStatus, error, isFetchedAfterMount }),
     [data, dataUpdatedAt, error, fetchStatus, isFetchedAfterMount]
   );
   const keyString = JSON.stringify(queryKey);
-  if (isEnabled && startRef.current?.key !== keyString) {
-    startRef.current = { key: keyString, start: shareCodeStart(view) };
-  }
-  // Kept while disabled (the dialog closing) so the last answer stays
-  // shown through the exit animation.
-  const liveStart =
-    startRef.current?.key === keyString ? startRef.current.start : null;
+  const [stored, setStored] = useState<{
+    key: string;
+    start: ShareCodeStart;
+  } | null>(null);
+  const storedStart = stored?.key === keyString ? stored.start : null;
+  useEffect(() => {
+    if (isEnabled && storedStart === null) {
+      setStored({ key: keyString, start: shareCodeStart(view) });
+    }
+  }, [isEnabled, keyString, storedStart, view]);
+  const liveStart = storedStart ?? (isEnabled ? shareCodeStart(view) : null);
 
   const snapshot = useMemo(
     () =>

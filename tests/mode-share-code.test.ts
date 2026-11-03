@@ -504,21 +504,17 @@ describe("share-code route — mapping the worker's answer", () => {
     });
   });
 
-  it("gives the BFF's own org-resolution 400 the invalid_org code on this route only", async () => {
+  it("answers the BFF's own org-resolution errors from one mapper, coded on every route", async () => {
     const spy = workerReplies({});
-    const res = await call({ query: "?org=%20" });
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
-      error: "Invalid org",
-      code: "invalid_org",
-    });
+    for (const path of [PATH, "/api/config/modes/obt-coach"]) {
+      const res = await call({ query: "?org=%20", path });
+      expect(res.status, path).toBe(400);
+      expect(await res.json()).toEqual({
+        error: "Invalid org parameter",
+        code: "invalid_org",
+      });
+    }
     expect(spy).not.toHaveBeenCalled();
-    // Another route keeps resolveOrg's own message, without a code.
-    const other = await call({
-      query: "?org=%20",
-      path: "/api/config/modes/obt-coach",
-    });
-    expect(await other.json()).toEqual({ error: "Invalid org parameter" });
   });
 
   it("answers 504 when the worker doesn't answer in time", async () => {

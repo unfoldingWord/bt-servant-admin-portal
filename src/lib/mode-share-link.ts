@@ -446,19 +446,6 @@ export function answerNeverReused(data: ModeShareCode | undefined): boolean {
 }
 
 /**
- * Keep showing what the panel showed last while it is closed: the dialog
- * stays mounted for its exit animation after `open` turns false, when its
- * queries are disabled and would otherwise read as checking.
- */
-export function frozenWhileClosed<T>(
-  open: boolean,
-  live: T,
-  lastOpen: T | undefined
-): T {
-  return open || lastOpen === undefined ? live : lastOpen;
-}
-
-/**
  * A background refresh failed while the panel shows the worker's last
  * answer, any answer (a code, or a definite state such as not-found or
  * upgrade-needed): the panel keeps it and adds a note with Try again.
@@ -495,9 +482,9 @@ export type RetryTarget = "config" | "share-code";
  * The Try again control: shown for a retryable state (the settings error
  * re-asks share-config; everything else the share code), and for a
  * background refresh that failed under an answer on the card. While the
- * re-ask it started runs (`busy`, see `nextRetryClick`) it stays on
- * screen, disabled ("Checking…"), even if the state behind it turns to
- * checking, so it can't queue repeated calls.
+ * re-ask it started runs (`busy`, from the click until its refetch
+ * promise settles) it stays on screen, disabled ("Checking…"), even if
+ * the state behind it turns to checking, so it can't queue repeated calls.
  */
 export function retryControl(
   state: ModeSharePanelState,
@@ -519,36 +506,6 @@ export function retryControl(
     return { target: "share-code", busy: false };
   }
   return null;
-}
-
-/** A Try again click in this open of the panel. */
-export interface RetryClick {
-  target: RetryTarget;
-  /** The retried query has been seen fetching (or its refetch settled). */
-  started: boolean;
-}
-
-/** A TanStack query's `fetchStatus`. */
-export type FetchStatus = "fetching" | "paused" | "idle";
-
-/**
- * The click still in force for this render, or null. Busy is the retried
- * query's own fetching: it lasts from the click until that query has
- * fetched and stopped, so a refetch cancelled and restarted under it (a
- * mode write) stays busy. Paused (offline) ends it, so Try again stays
- * available while the panel says to check the connection. Returns `prev`
- * itself when nothing changed. The panel's per-open mount drops a click
- * on close.
- */
-export function nextRetryClick(
-  prev: RetryClick | null,
-  status: Record<RetryTarget, FetchStatus>
-): RetryClick | null {
-  if (prev === null) return null;
-  const s = status[prev.target];
-  if (s === "paused") return null;
-  if (s === "fetching") return prev.started ? prev : { ...prev, started: true };
-  return prev.started ? null : prev;
 }
 
 /**

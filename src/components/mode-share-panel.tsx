@@ -3,7 +3,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
 } from "react";
@@ -22,11 +21,7 @@ import {
   refreshFailed,
   retryControl,
   shownTrigger,
-  frozenWhileClosed,
-  nextRetryClick,
   type ModeSharePanelState,
-  type ShareCodeSnapshot,
-  type RetryClick,
   type RetryTarget,
 } from "@/lib/mode-share-link";
 import {
@@ -102,36 +97,28 @@ export function ModeSharePanel({
   flags: liveFlags,
   returnFocusTo,
 }: ModeSharePanelProps) {
-  // While closing, Radix keeps the content mounted for its exit animation
-  // but the page has already dropped the latch (`modeName` is "" and the
-  // label/flags may belong to the next selection). Freeze what was shown
-  // at the last open render so the status region and card do not flicker
-  // on the way out.
-  const frozenRef = useRef({
-    modeName: liveModeName,
-    modeLabel: liveModeLabel,
-    org: liveOrg,
-    requestOrg: liveRequestOrg,
-    flags: liveFlags,
-  });
-  if (open) {
-    frozenRef.current = {
+  // The one freeze for the close animation. While closing, Radix keeps
+  // the content mounted for its exit animation but the page has already
+  // dropped the latch (`modeName` is "" and the label/flags may belong to
+  // the next selection). The content keeps the props of the last open
+  // render, recorded in an effect; with the same props its queries keep
+  // their answer (`useModeShareCode` keeps its start while disabled), so
+  // the status region and card don't flicker on the way out.
+  const live = useMemo(
+    () => ({
       modeName: liveModeName,
       modeLabel: liveModeLabel,
       org: liveOrg,
       requestOrg: liveRequestOrg,
       flags: liveFlags,
-    };
-  }
-  const shown = open
-    ? {
-        modeName: liveModeName,
-        modeLabel: liveModeLabel,
-        org: liveOrg,
-        requestOrg: liveRequestOrg,
-        flags: liveFlags,
-      }
-    : frozenRef.current;
+    }),
+    [liveFlags, liveModeLabel, liveModeName, liveOrg, liveRequestOrg]
+  );
+  const [lastOpen, setLastOpen] = useState(live);
+  useEffect(() => {
+    if (open) setLastOpen(live);
+  }, [live, open]);
+  const shown = open ? live : lastOpen;
 
   // Each open is its own mount of the content (#345): a reopen during the
   // exit animation still gets a fresh one. The share-code query lives in
@@ -211,9 +198,9 @@ function ModeShareContent({
     modeName,
     requestOrg
   );
-  const liveSnapshot = shareCode.snapshot;
+  const shareCodeSnapshot = shareCode.snapshot;
 
-  const liveState = useMemo<ModeSharePanelState>(() => {
+  const state = useMemo<ModeSharePanelState>(() => {
     const data = shareConfig.data;
     return resolveModeSharePanelState(
       {
@@ -224,7 +211,7 @@ function ModeShareContent({
         supported: data?.supported === true,
         whatsappNumber: data?.supported ? data.config.whatsappNumber : null,
       },
-      liveSnapshot,
+      shareCodeSnapshot,
       flags,
       org,
       modeName
@@ -233,26 +220,12 @@ function ModeShareContent({
     flags,
     modeName,
     org,
-    liveSnapshot,
+    shareCodeSnapshot,
     shareConfig.data,
     shareConfig.fetchStatus,
     shareConfig.isError,
     shareConfig.isPending,
   ]);
-
-  // While closing, the queries are disabled and would read as checking:
-  // keep what the panel showed last while open (`frozenWhileClosed`), so
-  // the exit animation doesn't flicker through "Checking…".
-  const lastOpenRef = useRef<
-    { state: ModeSharePanelState; snapshot: ShareCodeSnapshot } | undefined
-  >(undefined);
-  const live = { state: liveState, snapshot: liveSnapshot };
-  const { state, snapshot: shareCodeSnapshot } = frozenWhileClosed(
-    open,
-    live,
-    lastOpenRef.current
-  );
-  if (open) lastOpenRef.current = live;
 
   // Secondary note for a mode the author can still fix (publish it, or
   // turn off group-only) while the number is ALSO missing, so they are not
@@ -272,38 +245,27 @@ function ModeShareContent({
     : null;
   const showRefreshFailed = refreshFailed(state, shareCodeSnapshot);
 
-  // Try again (see `retryControl`, `nextRetryClick`). Busy follows the
-  // retried query's own fetch status: on from the click, off once that
-  // query has fetched and stopped, or is paused offline. A refetch that a
-  // mode write cancels and restarts stays busy. Closing drops it with
-  // this mount. The click lives in a ref, advanced each render; `rerender`
-  // only asks for a render when the ref changes outside one.
-  const retryClickRef = useRef<RetryClick | null>(null);
-  const [, rerender] = useReducer((n: number) => n + 1, 0);
-  retryClickRef.current = nextRetryClick(retryClickRef.current, {
-    config: shareConfig.fetchStatus,
-    "share-code": shareCode.fetchStatus,
-  });
+  // Try again (see `retryControl`): busy from the click until that
+  // refetch's promise settles. A query paused offline isn't busy (its
+  // promise waits for the network), so Try again stays usable while the
+  // panel says to check the connection. Closing drops it with this mount.
+  const [retryBusy, setRetryBusy] = useState<RetryTarget | null>(null);
+  const busyStatus =
+    retryBusy === "config"
+      ? shareConfig.fetchStatus
+      : retryBusy === "share-code"
+        ? shareCode.fetchStatus
+        : null;
   const retry = retryControl(
     state,
     shareCodeSnapshot,
-    retryClickRef.current?.target ?? null
+    busyStatus === "paused" ? null : retryBusy
   );
   const runRetry = (target: RetryTarget) => {
-    retryClickRef.current = { target, started: false };
-    rerender();
+    setRetryBusy(target);
     const refetch =
       target === "config" ? shareConfig.refetch() : shareCode.refetch();
-    // Fallback for a refetch that never showed as fetching: once it has
-    // settled, the next render clears busy unless the query is (still or
-    // again) fetching.
-    void refetch.finally(() => {
-      const click = retryClickRef.current;
-      if (click !== null && click.target === target && !click.started) {
-        retryClickRef.current = { ...click, started: true };
-        rerender();
-      }
-    });
+    void refetch.finally(() => setRetryBusy(null));
   };
 
   const title = modeLabel?.trim() || humanizeModeSlug(modeName);

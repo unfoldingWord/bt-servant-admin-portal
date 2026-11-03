@@ -7,6 +7,7 @@ import {
 import { useCallback } from "react";
 
 import {
+  MODE_SHARE_CODE_KEY,
   modeShareCodeKeys,
   saveMayChangeShareCode,
   type ModeShareCode,
@@ -38,15 +39,15 @@ const keys = {
 export const modeQueryKeys = keys;
 
 /**
- * Re-ask the worker for this org's share codes (#345) after a write that
- * can change one: publish or group-only, rename, delete, retire (aliases).
- * Every mode of the org, since one mode's name or aliases can clash with
- * another's. Other orgs' answers are left to their 20s stale time: a
- * cross-org clash is rare, and re-asking every org on each write is not
- * worth it.
+ * Re-ask the worker for share codes (#345) after a structural write: a
+ * create, publish or unpublish, group-only flip, rename, retire (aliases)
+ * or delete. Every org's answers, not only the written org's: cross-org
+ * slug collisions and the gateway org's home pool make one org's codes
+ * depend on other orgs' modes. A document autosave changes none of that
+ * and invalidates nothing (`saveMayChangeShareCode`).
  */
-export function invalidateShareCodes(qc: QueryClient, org: string | null) {
-  void qc.invalidateQueries({ queryKey: modeShareCodeKeys.org(org) });
+export function invalidateShareCodes(qc: QueryClient) {
+  void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
 }
 
 function normalize(org?: string | null): string | null {
@@ -212,7 +213,7 @@ export function saveModeMutationOptions(qc: QueryClient) {
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
       // No `flagsBefore` (a create or import) reads as "may have changed".
       if (saveMayChangeShareCode(flagsBefore, saved, context?.lastAnswer)) {
-        invalidateShareCodes(qc, key);
+        invalidateShareCodes(qc);
       }
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
     },
@@ -255,7 +256,7 @@ export function useDeleteMode(org?: string | null) {
     mutationFn: (name: string) => configApi.deleteMode(name, undefined, key),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
-      invalidateShareCodes(qc, key);
+      invalidateShareCodes(qc);
     },
   });
 }
@@ -323,7 +324,7 @@ export function useRenameMode(org?: string | null) {
         applyRenameToModeList(prev, name, data)
       );
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
-      invalidateShareCodes(qc, key);
+      invalidateShareCodes(qc);
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
       void qc.invalidateQueries({ queryKey: keys.mode(newName, key) });
     },
@@ -433,7 +434,7 @@ export function useRetireMode(org?: string | null) {
       qc.setQueryData(keys.mode(data.name, key), data);
       qc.removeQueries({ queryKey: keys.mode(name, key) });
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
-      invalidateShareCodes(qc, key);
+      invalidateShareCodes(qc);
       void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
     },
   });
