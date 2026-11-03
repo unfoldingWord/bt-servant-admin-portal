@@ -62,13 +62,26 @@ export function resolveEngineKey(
 export const ENGINE_KEY_MISSING_MESSAGE =
   "Portal configuration error: no engine key is configured.";
 
-// Responses engineFetch built itself for a missing key, so callers can pass
-// them through instead of remapping them to a generic engine failure.
-const engineKeyMissingResponses = new WeakSet<Response>();
+// Log the missing-key config error once per isolate.
+let keyMissingLogged = false;
 
-/** True for the 500 config-error response engineFetch returns when no key is set. */
-export function isEngineKeyMissing(res: Response): boolean {
-  return engineKeyMissingResponses.has(res);
+/**
+ * Request-level guard for routes that call the engine (/api/config/*,
+ * /api/chat/*): when neither ADMIN_API_KEY nor ENGINE_API_KEY is set,
+ * returns the 500 config-error response (logging engine_key_missing once
+ * per isolate) so no handler runs and nothing is sent upstream. Returns
+ * null when a key exists.
+ */
+export function engineKeyMissingResponse(
+  env: Pick<Env, "ADMIN_API_KEY" | "ENGINE_API_KEY">,
+  route: string
+): Response | null {
+  if (!("missing" in resolveEngineKey(env))) return null;
+  if (!keyMissingLogged) {
+    keyMissingLogged = true;
+    console.error(JSON.stringify({ event: "engine_key_missing", route }));
+  }
+  return errorResponse(ENGINE_KEY_MISSING_MESSAGE, 500);
 }
 
 /**
@@ -126,8 +139,8 @@ export function engineRoute(path: string): string {
  * returned unchanged and its body is never read here, so callers' own
  * error handling applies as before. An engine 401/403 is logged as a
  * neutral engine_auth_error (key source, status, method, route template;
- * never the key). If neither ADMIN_API_KEY nor ENGINE_API_KEY is set, it
- * logs engine_key_missing and returns a 500 without calling the engine.
+ * never the key). With no key at all it throws instead of calling the
+ * engine; worker/index.ts screens that case first (engineKeyMissingResponse).
  */
 export async function engineFetch(
   env: Pick<Env, "ENGINE_BASE_URL" | "ADMIN_API_KEY" | "ENGINE_API_KEY">,
@@ -135,19 +148,12 @@ export async function engineFetch(
   init: RequestInit = {}
 ): Promise<Response> {
   const resolved = resolveEngineKey(env);
-  // Never send "Bearer undefined": with no key at all, fail without
-  // calling the engine.
+  // Never send "Bearer undefined". Unreachable in practice: worker/index.ts
+  // returns the config error before any engine-calling route runs.
   if ("missing" in resolved) {
-    console.error(
-      JSON.stringify({
-        event: "engine_key_missing",
-        method: init.method ?? "GET",
-        route: engineRoute(path),
-      })
+    throw new Error(
+      `engineFetch called with no engine key configured (${engineRoute(path)})`
     );
-    const missing = errorResponse(ENGINE_KEY_MISSING_MESSAGE, 500);
-    engineKeyMissingResponses.add(missing);
-    return missing;
   }
   const { key, source } = resolved;
   const headers = new Headers(init.headers);

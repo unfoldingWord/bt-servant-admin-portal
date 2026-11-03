@@ -22,7 +22,8 @@ import {
   engineRoute,
   resolveEngineKey,
 } from "../worker/helpers";
-import type { SessionData } from "../worker/types";
+import worker from "../worker/index";
+import type { SessionData, StoredUser } from "../worker/types";
 
 // Every BFF call to the engine uses ADMIN_API_KEY when it is set and falls
 // back to ENGINE_API_KEY when it is not.
@@ -276,26 +277,17 @@ describe("engineFetch", () => {
     ["blank", "  "],
     ["unset", undefined],
   ])(
-    "returns a 500 config error without calling the engine when no key is set (%s)",
+    "throws without calling the engine when no key is set (%s; defensive, index.ts screens this first)",
     async (_label, engineKey) => {
-      const error = vi.spyOn(console, "error").mockImplementation(() => {});
       const spy = mockFetch();
-      const res = await engineFetch(
-        { ...env, ENGINE_API_KEY: engineKey },
-        "/api/v1/admin/orgs/acme/modes",
-        { method: "PUT" }
-      );
-      expect(res.status).toBe(500);
-      expect(await res.json()).toEqual({ error: ENGINE_KEY_MISSING_MESSAGE });
+      await expect(
+        engineFetch(
+          { ...env, ENGINE_API_KEY: engineKey },
+          "/api/v1/admin/orgs/acme/modes",
+          { method: "PUT" }
+        )
+      ).rejects.toThrow(/no engine key configured/);
       expect(spy).not.toHaveBeenCalled();
-      const logs = error.mock.calls.map(
-        (c) => JSON.parse(String(c[0])) as Record<string, unknown>
-      );
-      expect(logs).toContainEqual({
-        event: "engine_key_missing",
-        method: "PUT",
-        route: "/api/v1/admin/orgs/:org/modes",
-      });
     }
   );
 
@@ -451,34 +443,127 @@ describe("BFF → engine chat relay calls (admin client_id)", () => {
   });
 });
 
-describe("chat handlers with no engine key", () => {
+describe("worker routes with no engine key", () => {
   const noKeys = () => ({
     ...env,
     ENGINE_API_KEY: undefined,
     ADMIN_API_KEY: undefined,
   });
-  const cases: [string, () => Promise<Response>][] = [
+
+  async function seedAdminSession(): Promise<string> {
+    const email = `nokey-${crypto.randomUUID()}@acme.com`;
+    const user: StoredUser = {
+      id: crypto.randomUUID(),
+      email,
+      name: "No Key",
+      org: "acme",
+      passwordHash: "unused",
+      salt: "unused",
+      isAdmin: true,
+      isSuperAdmin: false,
+    };
+    await env.AUTH_KV.put(`user:${email}`, JSON.stringify(user));
+    const sessionId = crypto.randomUUID();
+    const session: SessionData = {
+      userId: user.id,
+      email,
+      name: user.name,
+      org: user.org,
+      isAdmin: true,
+      isSuperAdmin: false,
+      createdAt: new Date().toISOString(),
+    };
+    await env.AUTH_KV.put(`session:${sessionId}`, JSON.stringify(session));
+    return sessionId;
+  }
+
+  function apiRequest(
+    path: string,
+    sessionId: string,
+    init: RequestInit = {}
+  ): Request {
+    const headers = new Headers(init.headers);
+    headers.set("X-Requested-With", "XMLHttpRequest");
+    headers.set("Cookie", `session=${sessionId}`);
+    headers.set("Content-Type", "application/json");
+    return new Request(`https://portal.example.test${path}`, {
+      ...init,
+      headers,
+    });
+  }
+
+  it.each([
     [
-      "stream",
-      () =>
-        handleStream(
-          new Request("https://portal.example.test/api/chat/stream", {
-            method: "POST",
-            body: JSON.stringify({ message: "hi" }),
-            headers: { "Content-Type": "application/json" },
-          }),
-          noKeys(),
-          makeSession()
-        ),
+      "config rename",
+      "/api/config/modes/spoken/_rename",
+      { method: "POST", body: JSON.stringify({ newName: "conversation" }) },
     ],
+    [
+      "config PUT",
+      "/api/config/modes/spoken",
+      { method: "PUT", body: JSON.stringify({ document: "x" }) },
+    ],
+    [
+      "chat stream",
+      "/api/chat/stream",
+      { method: "POST", body: JSON.stringify({ message: "hi" }) },
+    ],
+    ["chat history", "/api/chat/history", { method: "GET" }],
+    ["chat delete memory", "/api/chat/memory", { method: "DELETE" }],
+  ] as [string, string, RequestInit][])(
+    "%s gets the 500 config error before any handler or engine call",
+    async (_name, path, init) => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const spy = mockFetch();
+      const sessionId = await seedAdminSession();
+      const res = await worker.fetch(
+        apiRequest(path, sessionId, init),
+        noKeys()
+      );
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: ENGINE_KEY_MISSING_MESSAGE });
+      expect(spy).not.toHaveBeenCalled();
+    }
+  );
+
+  it("still requires a session first (401, not the config error)", async () => {
+    const res = await worker.fetch(
+      new Request("https://portal.example.test/api/chat/history", {
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+      }),
+      noKeys()
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("logs engine_key_missing once per isolate, with a route label and no ids", async () => {
+    vi.resetModules();
+    const fresh = await import("../worker/helpers");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(
+      fresh.engineKeyMissingResponse(noKeys(), "/api/config/*")?.status
+    ).toBe(500);
+    fresh.engineKeyMissingResponse(noKeys(), "/api/chat/stream");
+    expect(error.mock.calls.map((c) => JSON.parse(String(c[0])))).toEqual([
+      { event: "engine_key_missing", route: "/api/config/*" },
+    ]);
+    expect(
+      fresh.engineKeyMissingResponse(withAdminKey(), "/api/chat/stream")
+    ).toBeNull();
+  });
+});
+
+describe("chat failure logs", () => {
+  it.each([
     [
       "history",
       () =>
         handleHistory(
           new Request("https://portal.example.test/api/chat/history"),
-          noKeys(),
+          withAdminKey(),
           makeSession()
         ),
+      "Engine history failed (500): ",
     ],
     [
       "delete history",
@@ -487,9 +572,10 @@ describe("chat handlers with no engine key", () => {
           new Request("https://portal.example.test/api/chat/history", {
             method: "DELETE",
           }),
-          noKeys(),
+          withAdminKey(),
           makeSession()
         ),
+      "Engine delete history failed (500): ",
     ],
     [
       "delete memory",
@@ -498,21 +584,24 @@ describe("chat handlers with no engine key", () => {
           new Request("https://portal.example.test/api/chat/memory", {
             method: "DELETE",
           }),
-          noKeys(),
+          withAdminKey(),
           makeSession()
         ),
+      "Engine delete memory failed (500): ",
     ],
-  ];
-
-  it.each(cases)(
-    "%s passes the engine_key_missing 500 through, not a generic 502",
-    async (_name, call) => {
-      vi.spyOn(console, "error").mockImplementation(() => {});
-      const spy = mockFetch();
+  ] as [string, () => Promise<Response>, string][])(
+    "%s caps the logged engine body at 500 characters",
+    async (_name, call, prefix) => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response("z".repeat(2000), { status: 500 })
+      );
       const res = await call();
-      expect(res.status).toBe(500);
-      expect(await res.json()).toEqual({ error: ENGINE_KEY_MISSING_MESSAGE });
-      expect(spy).not.toHaveBeenCalled();
+      expect(res.status).toBe(502);
+      const line = error.mock.calls
+        .map((c) => String(c[0]))
+        .find((l) => l.startsWith(prefix))!;
+      expect(line).toBe(`${prefix}${"z".repeat(500)}`);
     }
   );
 });

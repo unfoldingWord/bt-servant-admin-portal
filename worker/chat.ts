@@ -2,7 +2,6 @@ import type { Env } from "./helpers";
 import {
   engineFetch,
   engineRoute,
-  isEngineKeyMissing,
   errorResponse,
   jsonResponse,
   listKvKeys,
@@ -128,7 +127,6 @@ export async function handleStream(
   });
 
   if (!engineRes.ok) {
-    if (isEngineKeyMissing(engineRes)) return engineRes;
     const text = await engineRes.text().catch(() => "");
     console.error(
       `Engine stream failed (${engineRes.status}) ${env.ENGINE_BASE_URL}${engineRoute(enginePath)}: ${text.slice(0, LOGGED_BODY_MAX_CHARS)}`
@@ -178,9 +176,10 @@ export async function handleHistory(
   );
 
   if (!engineRes.ok) {
-    if (isEngineKeyMissing(engineRes)) return engineRes;
     const text = await engineRes.text().catch(() => "");
-    console.error(`Engine history failed (${engineRes.status}): ${text}`);
+    console.error(
+      `Engine history failed (${engineRes.status}): ${text.slice(0, LOGGED_BODY_MAX_CHARS)}`
+    );
     return errorResponse("Failed to fetch history", 502);
   }
 
@@ -222,10 +221,9 @@ export async function handleDeleteHistory(
   );
 
   if (!engineRes.ok) {
-    if (isEngineKeyMissing(engineRes)) return engineRes;
     const text = await engineRes.text().catch(() => "");
     console.error(
-      `Engine delete history failed (${engineRes.status}): ${text}`
+      `Engine delete history failed (${engineRes.status}): ${text.slice(0, LOGGED_BODY_MAX_CHARS)}`
     );
     return errorResponse("Failed to delete history", 502);
   }
@@ -257,9 +255,10 @@ export async function handleDeleteMemory(
   );
 
   if (!engineRes.ok) {
-    if (isEngineKeyMissing(engineRes)) return engineRes;
     const text = await engineRes.text().catch(() => "");
-    console.error(`Engine delete memory failed (${engineRes.status}): ${text}`);
+    console.error(
+      `Engine delete memory failed (${engineRes.status}): ${text.slice(0, LOGGED_BODY_MAX_CHARS)}`
+    );
     return errorResponse("Failed to delete memory", 502);
   }
 
