@@ -25,11 +25,11 @@ const SHARE_CODE_STALE_MS = 20_000;
 // TanStack's per-observer state is per open: `isFetchedAfterMount` means
 // "fetched in this open", and the unmount after close cancels a request
 // still in flight (the query function reads `signal`). A mode write that
-// can change a share code invalidates its org's (`invalidateShareCodes` in
-// use-prompt-config.ts), so a publish or group-chat toggle re-asks.
+// can change a share code invalidates every org's (`invalidateShareCodes`
+// in use-prompt-config.ts), so a publish or group-chat toggle re-asks.
 //
 // `org` is the page's org param (null = the caller's own org), the value
-// its mode queries and writes use, so that invalidation finds this key.
+// its mode queries and writes use, so a save finds this key's last answer.
 export function useModeShareCode(
   enabled: boolean,
   modeName: string,

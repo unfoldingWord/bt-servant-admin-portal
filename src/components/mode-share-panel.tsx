@@ -12,12 +12,10 @@ import { downloadBlob } from "@/lib/download-blob";
 import type { ModeFlags } from "@/lib/mode-flags";
 import {
   buildModeShareFilename,
-  resolveModeSharePanelState,
+  resolvePreWorkerStage,
+  resolveWithShareCode,
   answerUncertain,
-  hasUsableWhatsAppNumber,
   homeOrgWithoutModes,
-  modeShareState,
-  validateModeShareSlug,
   refreshFailed,
   retryControl,
   shownTrigger,
@@ -180,29 +178,17 @@ function ModeShareContent({
 }: ModeShareContentProps) {
   // Session-cached operator config; asked while open.
   const shareConfig = useShareConfig(open);
-  // The worker's answer for which code opens this mode (#345). Not asked
-  // for a mode the panel refuses on its own: a slug no trigger can carry
-  // (it would only 400), a draft, or a group-only mode. A partner mode
-  // the worker would call damaged (`invalid_mode`, which it checks before
-  // draft) is skipped here too; that only matters once the mode is
-  // published, and the worker reports it then. Nor before share-config
-  // shows a usable WhatsApp number: without one no link can be built.
-  const configNumber = shareConfig.data?.supported
-    ? shareConfig.data.config.whatsappNumber
-    : null;
-  const shareCode = useModeShareCode(
-    open &&
-      validateModeShareSlug(modeName) === "ok" &&
-      modeShareState(flags) === "ready" &&
-      hasUsableWhatsAppNumber(configNumber),
-    modeName,
-    requestOrg
-  );
-  const shareCodeSnapshot = shareCode.snapshot;
-
-  const state = useMemo<ModeSharePanelState>(() => {
+  // Everything the panel decides before the worker: the name, the page's
+  // flags, share-config and the WhatsApp number. Its "needs share code"
+  // result is the only gate on asking the worker (#345), so a mode the
+  // panel refuses on its own (a slug no trigger can carry, a draft, a
+  // group-only mode, no usable number) is never asked about. A partner
+  // mode the worker would call damaged (`invalid_mode`, which it checks
+  // before draft) only matters once it is published, and the worker
+  // reports it then.
+  const preWorker = useMemo(() => {
     const data = shareConfig.data;
-    return resolveModeSharePanelState(
+    return resolvePreWorkerStage(
       {
         pending: shareConfig.isPending,
         paused: shareConfig.fetchStatus === "paused",
@@ -211,21 +197,28 @@ function ModeShareContent({
         supported: data?.supported === true,
         whatsappNumber: data?.supported ? data.config.whatsappNumber : null,
       },
-      shareCodeSnapshot,
       flags,
-      org,
       modeName
     );
   }, [
     flags,
     modeName,
-    org,
-    shareCodeSnapshot,
     shareConfig.data,
     shareConfig.fetchStatus,
     shareConfig.isError,
     shareConfig.isPending,
   ]);
+  const shareCode = useModeShareCode(
+    open && preWorker.needsShareCode,
+    modeName,
+    requestOrg
+  );
+  const shareCodeSnapshot = shareCode.snapshot;
+
+  const state = useMemo<ModeSharePanelState>(
+    () => resolveWithShareCode(preWorker, shareCodeSnapshot, org),
+    [org, preWorker, shareCodeSnapshot]
+  );
 
   // Secondary note for a mode the author can still fix (publish it, or
   // turn off group-only) while the number is ALSO missing, so they are not
@@ -694,7 +687,9 @@ function describe(state: ModeSharePanelState, modeName: string): string {
     case "capped":
       return "WhatsApp can't reach this org's modes yet. For now BT Servant reads a limited number of orgs, and this one isn't included. unfoldingWord can tell you more.";
     case "unresolved":
-      return `BT Servant on WhatsApp doesn't open this mode with ${state.trigger}. Ask unfoldingWord to check the mode.`;
+      return "trigger" in state
+        ? `BT Servant on WhatsApp doesn't open this mode with ${state.trigger}. Ask unfoldingWord to check the mode.`
+        : "BT Servant on WhatsApp doesn't open this mode. Ask unfoldingWord to check the mode.";
     case "group-only":
       return "Group chat only. This mode is hidden from WhatsApp direct messages. Turn off “Requires group chat” to get a WhatsApp code.";
     case "draft":

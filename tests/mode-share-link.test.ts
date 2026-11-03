@@ -14,7 +14,7 @@ import {
   normalizeWhatsAppNumber,
   resolveModeSharePanelState,
   answerUncertain,
-  hasUsableWhatsAppNumber,
+  resolvePreWorkerStage,
   homeOrgWithoutModes,
   answerNeverReused,
   refreshFailed,
@@ -211,14 +211,15 @@ describe("buildShareLinkFromCode", () => {
       "pbt/",
       "fia&text=x",
       "#fia",
-      "a".repeat(201),
+      "a".repeat(1001),
     ]) {
       expect(buildShareLinkFromCode("15550100100", bad), bad).toEqual({
         ok: false,
         reason: "code-unencodable",
       });
     }
-    expect(isUrlSafeShareCode("a".repeat(200))).toBe(true);
+    expect(isUrlSafeShareCode("a".repeat(1000))).toBe(true);
+    expect(isUrlSafeShareCode("a".repeat(1001))).toBe(false);
   });
 });
 
@@ -537,12 +538,34 @@ describe("resolveModeSharePanelState", () => {
     });
     expect(run(noCode("invalid_mode"))).toEqual({ kind: "invalid-mode" });
     expect(run(noCode("reserved"))).toEqual({ kind: "slug-reserved" });
-    // Reasons that need a code to point at read as an unusable org name.
-    for (const reason of ["org_skipped", "collision", "capped", undefined]) {
-      expect(run(noCode(reason)), String(reason)).toEqual({
-        kind: "org-unencodable",
+    // Only org_skipped means the org name has no usable slug.
+    expect(run(noCode("org_skipped"))).toEqual({ kind: "org-unencodable" });
+    // Any other reason, listed, missing or made up, reads as "does not
+    // open this mode", with no trigger.
+    for (const reason of [
+      "collision",
+      "capped",
+      "not_found",
+      undefined,
+      "zz_made_up_reason",
+    ]) {
+      const state = run(noCode(reason));
+      expect(state, String(reason)).toEqual({
+        kind: "unresolved",
+        uncertain: false,
       });
+      expect(shownTrigger(state)).toBeNull();
     }
+    expect(
+      run(
+        present({
+          code: null,
+          resolves: false,
+          reason: "zz_made_up_reason",
+          resolved_org_uncertain: true,
+        })
+      )
+    ).toEqual({ kind: "unresolved", uncertain: true });
   });
 
   it("says what BT Servant sees when it says draft / group-only for a page-published mode", () => {
@@ -692,9 +715,41 @@ describe("resolveModeSharePanelState", () => {
         flags: { published: false },
       })
     ).toEqual({ kind: "draft" });
-    expect(hasUsableWhatsAppNumber("+57 300 123 4567")).toBe(true);
-    expect(hasUsableWhatsAppNumber("nope")).toBe(false);
-    expect(hasUsableWhatsAppNumber(null)).toBe(false);
+  });
+
+  it("asks the worker exactly when the pre-worker stage needs the share code", () => {
+    // The panel's query gate is this result, so it can't drift from the
+    // resolver's own order.
+    expect(resolvePreWorkerStage(config, ready, "obt-coach")).toEqual({
+      needsShareCode: true,
+      digits: "573001234567",
+    });
+    for (const [cfg, flags, name, kind] of [
+      [config, ready, "Bad Name", "slug-invalid"],
+      [config, ready, "default", "slug-reserved"],
+      [config, { published: false }, "obt-coach", "draft"],
+      [
+        config,
+        { published: true, requires_group: true },
+        "obt-coach",
+        "group-only",
+      ],
+      [{ ...config, pending: true }, ready, "obt-coach", "loading-config"],
+      [{ ...config, pending: true, paused: true }, ready, "obt-coach", "error"],
+      [{ ...config, error: true }, ready, "obt-coach", "error"],
+      [{ ...config, whatsappNumber: null }, ready, "obt-coach", "unconfigured"],
+      [
+        { ...config, whatsappNumber: "nope" },
+        ready,
+        "obt-coach",
+        "number-invalid",
+      ],
+    ] as const) {
+      const stage = resolvePreWorkerStage(cfg, flags, name);
+      expect(stage, kind).toEqual({ needsShareCode: false, state: { kind } });
+      // Whatever the share code would say, the stage's state wins.
+      expect(run(home, { config: cfg, flags, name }), kind).toEqual({ kind });
+    }
   });
 });
 
@@ -778,6 +833,10 @@ describe("refreshFailed and retryControl", () => {
       ],
       [
         { kind: "org-unencodable" },
+        { ...lastAnswer, code: null, resolves: false, reason: "org_skipped" },
+      ],
+      [
+        { kind: "unresolved", uncertain: false },
         { ...lastAnswer, code: null, resolves: false },
       ],
     ];

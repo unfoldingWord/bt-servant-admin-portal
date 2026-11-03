@@ -75,16 +75,6 @@ export function whatsAppNumber(
 }
 
 /**
- * The panel asks the worker only when the share-config number is usable:
- * without one, no link can be built whatever the worker says.
- */
-export function hasUsableWhatsAppNumber(
-  raw: string | null | undefined
-): boolean {
-  return whatsAppNumber(raw).ok;
-}
-
-/**
  * The message the QR pre-fills: the worker's mode trigger for `name`, which
  * is either a bare slug or an org-qualified `<orgslug>/<slug>`.
  */
@@ -133,10 +123,10 @@ export function validateModeShareSlug(slug: string): ModeShareSlugVerdict {
   return "ok";
 }
 
-// Upper bound on a worker code put in a link. Two 64-char halves and the
-// `/` are 129; the worker does not cap the org half, so this is a sanity
-// bound that keeps the URL and its QR scannable, not a contract.
-const MAX_SHARE_CODE_LENGTH = 200;
+// The worker is the authority on which codes exist and how long they are
+// (it does not cap the org half). This bound only refuses an absurd URL;
+// it is not a contract and is well above any real code.
+const MAX_SHARE_CODE_LENGTH = 1000;
 const SHARE_CODE_SHAPE = /^[a-z0-9-]+(?:\/[a-z0-9-]+)?$/;
 
 /**
@@ -387,6 +377,8 @@ export type ModeSharePanelState =
     } & Shown)
   | ({ kind: "capped" } & Shown)
   | ({ kind: "unresolved"; uncertain: boolean } & Shown)
+  /** The worker gave no code and no reason this portal reads otherwise. */
+  | { kind: "unresolved"; uncertain: boolean }
   | { kind: "group-only" }
   | { kind: "draft" }
   /** WHATSAPP_NUMBER is unset (or the share-config route is absent). */
@@ -557,21 +549,58 @@ export function resolveModeSharePanelState(
   modeOrg: string | null | undefined,
   modeName: string
 ): ModeSharePanelState {
+  return resolveWithShareCode(
+    resolvePreWorkerStage(config, flags, modeName),
+    shareCode,
+    modeOrg
+  );
+}
+
+/**
+ * Steps 1–4 of `resolveModeSharePanelState`, which don't depend on the
+ * worker: either the state to show, or "needs share code" with the
+ * number to build the link from. The panel asks the worker exactly when
+ * this says it needs the share code, so the query's gate and the
+ * resolver can't drift apart.
+ */
+export type PreWorkerStage =
+  | { needsShareCode: false; state: ModeSharePanelState }
+  | { needsShareCode: true; digits: string };
+
+export function resolvePreWorkerStage(
+  config: ShareConfigSnapshot,
+  flags: { published?: boolean; requires_group?: boolean },
+  modeName: string
+): PreWorkerStage {
+  const stop = (state: ModeSharePanelState): PreWorkerStage => ({
+    needsShareCode: false,
+    state,
+  });
   const slugVerdict = validateModeShareSlug(modeName);
-  if (slugVerdict !== "ok") return { kind: slugVerdict };
+  if (slugVerdict !== "ok") return stop({ kind: slugVerdict });
   const eligibility = modeShareState(flags);
-  if (eligibility !== "ready") return { kind: eligibility };
+  if (eligibility !== "ready") return stop({ kind: eligibility });
   // Only a first load blocks: a background refetch keeps a ready QR.
   // Offline before it ever loaded: the settings error, with Try again.
-  if (config.pending && config.paused) return { kind: "error" };
-  if (config.pending) return { kind: "loading-config" };
-  if (config.error) return { kind: "error" };
+  if (config.pending && config.paused) return stop({ kind: "error" });
+  if (config.pending) return stop({ kind: "loading-config" });
+  if (config.error) return stop({ kind: "error" });
   // The number before the worker: without a usable one no link can be
-  // built, so the worker isn't asked (see `hasUsableWhatsAppNumber`).
+  // built, so the worker isn't asked.
   const number = whatsAppNumber(
     config.supported ? config.whatsappNumber : null
   );
-  if (!number.ok) return { kind: number.kind };
+  if (!number.ok) return stop({ kind: number.kind });
+  return { needsShareCode: true, digits: number.digits };
+}
+
+/** Steps 5–6: the pre-worker stage, then the share code and its answer. */
+export function resolveWithShareCode(
+  stage: PreWorkerStage,
+  shareCode: ShareCodeSnapshot,
+  modeOrg: string | null | undefined
+): ModeSharePanelState {
+  if (!stage.needsShareCode) return stage.state;
   if (shareCode.checking) return { kind: "checking-code" };
   const { answer } = shareCode;
   if (answer === undefined) {
@@ -588,7 +617,7 @@ export function resolveModeSharePanelState(
     case "upgrade-needed":
       return { kind: "upgrade-needed" };
     case "present":
-      return fromWorkerAnswer(answer, number.digits, modeOrg);
+      return fromWorkerAnswer(answer, stage.digits, modeOrg);
     default:
       return unhandled(answer);
   }
@@ -601,7 +630,9 @@ function fromWorkerAnswer(
   modeOrg: string | null | undefined
 ): ModeSharePanelState {
   const { code } = answer;
-  if (code === null) return withoutCode(answer.reason);
+  if (code === null) {
+    return withoutCode(answer.reason, answer.resolved_org_uncertain === true);
+  }
   const shown: Shown = {
     trigger: modeShareTrigger(code),
     partnerOrg: code.includes("/") ? (modeOrg?.trim() ?? null) : null,
@@ -652,11 +683,15 @@ function fromWorkerAnswer(
 
 /**
  * No code at all (`code: null`; never with `resolves: true`, which the
- * parser rejects). The reason comes first, when it names a state that
- * needs no code; every other reason (`org_skipped` included) needs a code
- * to point at, so it reads as the org name having no usable slug.
+ * parser rejects). Read by the reason: `org_skipped` alone means the org
+ * name has no usable slug; any other reason (a missing, unknown or
+ * code-bound one included) reads as "does not open this mode", with no
+ * trigger to show.
  */
-function withoutCode(reason: string | undefined): ModeSharePanelState {
+function withoutCode(
+  reason: string | undefined,
+  uncertain: boolean
+): ModeSharePanelState {
   switch (reason) {
     case "draft":
       return { kind: "worker-sees", sees: "draft" };
@@ -666,8 +701,10 @@ function withoutCode(reason: string | undefined): ModeSharePanelState {
       return { kind: "invalid-mode" };
     case "reserved":
       return { kind: "slug-reserved" };
-    default:
+    case "org_skipped":
       return { kind: "org-unencodable" };
+    default:
+      return { kind: "unresolved", uncertain };
   }
 }
 

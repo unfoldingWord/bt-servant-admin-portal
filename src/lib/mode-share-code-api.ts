@@ -20,10 +20,11 @@ export const MODE_SHARE_CODE_KEY = ["mode-share-code"] as const;
 /**
  * Share-code query keys. `org` is the page's org param (null = the
  * caller's own org), the same value its mode queries and writes use, so a
- * mode write can invalidate exactly its org's share codes.
+ * save can read its mode's last answer. A write that may change a code
+ * invalidates every org's codes at once (`MODE_SHARE_CODE_KEY`, via
+ * `invalidateShareCodes`).
  */
 export const modeShareCodeKeys = {
-  org: (org: string | null) => [...MODE_SHARE_CODE_KEY, org] as const,
   mode: (org: string | null, modeName: string) =>
     [...MODE_SHARE_CODE_KEY, org, modeName] as const,
 };
