@@ -8,6 +8,11 @@
 
 import { buildConfigUrl } from "@/lib/config-url";
 import {
+  readModeFlags,
+  reconcileModeFlags,
+  type ModeFlags,
+} from "@/lib/mode-flags";
+import {
   parseShareCodeAnswer,
   SHARE_CODE_ERRORS,
 } from "@/lib/mode-share-code-wire";
@@ -29,23 +34,42 @@ export const modeShareCodeKeys = {
     [...MODE_SHARE_CODE_KEY, org, modeName] as const,
 };
 
+type FlagSource = { published?: boolean; requires_group?: boolean };
+
+function sameFlags(a: ModeFlags, b: ModeFlags): boolean {
+  return a.published === b.published && a.requires_group === b.requires_group;
+}
+
 /**
- * Whether a saved mode's share code may have changed, so its org's share
- * codes are re-asked. Only what the worker's answer depends on counts: a
- * new mode, a publish or group-only flip, or a save over a mode the worker
- * last called damaged (`invalid_mode`; a successful PUT stores a
- * well-shaped mode). A document autosave changes none of them.
+ * Whether a saved mode's share code may have changed, so share codes are
+ * re-asked. Only what the worker's answer depends on counts: a new mode,
+ * a publish or group-only flip, or a save over a mode the worker last
+ * called damaged (`invalid_mode`; a successful PUT stores a well-shaped
+ * mode). A document autosave changes none of them.
+ *
+ * "After" is the page's own reconciliation of what it sent with what the
+ * worker echoed (`reconcileModeFlags`), so the cache and the page's
+ * trackers agree. A response that disagrees with the flags sent always
+ * counts: the page's `before` may be stale (another admin's unpublish),
+ * and that must not hide a change.
  */
 export function saveMayChangeShareCode(
-  before: { published?: boolean; requires_group?: boolean } | undefined,
-  after: { published?: boolean; requires_group?: boolean },
+  before: FlagSource | undefined,
+  sent: FlagSource,
+  saved: FlagSource | undefined,
   lastAnswer: ModeShareCode | undefined
 ): boolean {
   if (before === undefined) return true;
-  if ((before.published === true) !== (after.published === true)) return true;
-  if ((before.requires_group === true) !== (after.requires_group === true)) {
-    return true;
-  }
+  const beforeFlags = readModeFlags(before);
+  // A flag the body omits keeps its stored value (the worker's merge),
+  // which the page believes is `before`.
+  const sentFlags: ModeFlags = {
+    published: sent.published ?? beforeFlags.published,
+    requires_group: sent.requires_group ?? beforeFlags.requires_group,
+  };
+  const after = reconcileModeFlags(sentFlags, saved);
+  if (!sameFlags(sentFlags, after)) return true;
+  if (!sameFlags(beforeFlags, after)) return true;
   return (
     lastAnswer?.capability === "present" &&
     !lastAnswer.resolves &&

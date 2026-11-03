@@ -131,7 +131,8 @@ export default {
       if (blocked) return blocked;
       const session = await validateSession(request, env);
       if (!session) {
-        return errorResponse("Unauthorized", 401);
+        // The BFF's own 401, coded like every other route's.
+        return authErrorResponse("Unauthorized", 401);
       }
       if (request.method !== "GET") {
         return errorResponse("Method not allowed", 405);

@@ -45,11 +45,6 @@ export function authErrorResponse(
 }
 
 /**
- * 400 code `invalid_org`, on every config route and the share-code route
- * alike: the org param, the resolved org, or the worker's `invalid_org`
- * for the mode's org.
- */
-/**
  * 403 code `cross_org_forbidden`: another org's config without
  * super-admin. Deterministic, so a client can show it as a definite
  * answer rather than a retryable one.
@@ -64,6 +59,11 @@ export function crossOrgForbidden(): Response {
   );
 }
 
+/**
+ * 400 code `invalid_org`, on every config route and the share-code route
+ * alike: the org param, the resolved org, or the worker's `invalid_org`
+ * for the mode's org.
+ */
 export function invalidOrg(message = "Invalid org"): Response {
   return jsonResponse({ error: message, code: BFF_ERRORS.invalidOrg }, 400);
 }

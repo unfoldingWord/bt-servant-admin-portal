@@ -182,7 +182,7 @@ export function saveModeMutationOptions(qc: QueryClient) {
     },
     onSuccess: async (
       saved: PromptMode,
-      { name, org, seed, flagsBefore }: ModeSaveTarget,
+      { name, org, seed, flagsBefore, body }: ModeSaveTarget,
       context: ModeSaveContext | undefined
     ) => {
       const key = normalize(org);
@@ -212,7 +212,10 @@ export function saveModeMutationOptions(qc: QueryClient) {
       // `aliases`).
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
       // No `flagsBefore` (a create or import) reads as "may have changed".
-      if (saveMayChangeShareCode(flagsBefore, saved, context?.lastAnswer)) {
+      // "After" is reconciled from what was sent and what was echoed.
+      if (
+        saveMayChangeShareCode(flagsBefore, body, saved, context?.lastAnswer)
+      ) {
         invalidateShareCodes(qc);
       }
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });

@@ -50,9 +50,13 @@ describe("GET /api/share-config — gates", () => {
     expect(res.status).toBe(403);
   });
 
-  it("401 without a session", async () => {
+  it("401 without a session, coded like the BFF's other 401s", async () => {
     const res = await worker.fetch(request(), env);
     expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({
+      error: "Unauthorized",
+      code: "unauthorized",
+    });
   });
 
   it("401 with a junk session cookie", async () => {

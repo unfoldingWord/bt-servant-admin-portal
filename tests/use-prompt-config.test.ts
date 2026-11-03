@@ -436,25 +436,52 @@ describe("saveModeMutationOptions — opt-in seed", () => {
 describe("share-code invalidation", () => {
   it("re-asks after a save only when the share code may change", () => {
     const flags = { published: true, requires_group: false };
-    expect(saveMayChangeShareCode(undefined, flags, undefined)).toBe(true);
-    expect(saveMayChangeShareCode(flags, flags, undefined)).toBe(false);
+    const unpublished = { ...flags, published: false };
+    // (before, sent, saved echo, last answer)
+    expect(saveMayChangeShareCode(undefined, flags, flags, undefined)).toBe(
+      true
+    );
+    expect(saveMayChangeShareCode(flags, flags, flags, undefined)).toBe(false);
     expect(
-      saveMayChangeShareCode(flags, { ...flags, published: false }, undefined)
+      saveMayChangeShareCode(flags, unpublished, unpublished, undefined)
     ).toBe(true);
     expect(
       saveMayChangeShareCode(
         flags,
         { ...flags, requires_group: true },
+        { ...flags, requires_group: true },
         undefined
       )
     ).toBe(true);
     // Absent and false are the same flag.
-    expect(saveMayChangeShareCode({}, { published: false }, undefined)).toBe(
-      false
+    expect(
+      saveMayChangeShareCode({}, { published: false }, {}, undefined)
+    ).toBe(false);
+    // A body that omits the flags keeps the stored ones: no change.
+    expect(saveMayChangeShareCode(flags, {}, flags, undefined)).toBe(false);
+    // A key the worker didn't echo falls back to what was sent
+    // (reconcileModeFlags), so a sent publish still counts.
+    expect(saveMayChangeShareCode(unpublished, flags, {}, undefined)).toBe(
+      true
     );
+    // A stale page: it thinks the mode is published and re-sends that,
+    // but the worker echoes it unpublished (another admin's change, or a
+    // merge the page didn't expect). The response disagrees with what was
+    // sent, so it counts even though before and sent agree.
+    expect(saveMayChangeShareCode(flags, flags, unpublished, undefined)).toBe(
+      true
+    );
+    expect(
+      saveMayChangeShareCode(
+        flags,
+        flags,
+        { ...flags, requires_group: true },
+        undefined
+      )
+    ).toBe(true);
     // A save over a mode the worker called damaged may have repaired it.
     expect(
-      saveMayChangeShareCode(flags, flags, {
+      saveMayChangeShareCode(flags, flags, flags, {
         capability: "present",
         home_org: "uW",
         queried_org: "PBT",
