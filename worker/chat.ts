@@ -1,7 +1,6 @@
 import type { Env } from "./helpers";
 import {
   engineFetch,
-  engineRoute,
   errorResponse,
   jsonResponse,
   listKvKeys,
@@ -126,7 +125,7 @@ export async function handleStream(
   if (!engineRes.ok) {
     const text = await engineRes.text().catch(() => "");
     console.error(
-      `Engine stream failed (${engineRes.status}) ${env.ENGINE_BASE_URL}${engineRoute(enginePath)}: ${text}`
+      `Engine stream failed (${engineRes.status}) ${env.ENGINE_BASE_URL}${enginePath}: ${text}`
     );
     return errorResponse("Failed to stream chat response", 502);
   }

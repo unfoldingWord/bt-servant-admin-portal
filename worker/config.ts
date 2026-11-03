@@ -190,7 +190,8 @@ async function fetchResourceState(
   const res = await engineFetch(env, enginePath);
   if (!res.ok) {
     // Release the unread error body before the early return.
-    await res.body?.cancel();
+    // .catch: a failed cancel must never turn the status into a throw.
+    await res.body?.cancel().catch(() => {});
     return res.status === 404 ? { status: "missing" } : { status: "error" };
   }
   const data = (await res.json()) as Record<string, unknown>;
@@ -580,7 +581,8 @@ async function fetchMcpServerOwners(
   );
   if (!res.ok) {
     // Release the unread error body before the early return.
-    await res.body?.cancel();
+    // .catch: a failed cancel must never turn the status into a throw.
+    await res.body?.cancel().catch(() => {});
     throw new Error(`MCP pool read failed (${res.status})`);
   }
   const body = (await res.json()) as {
@@ -1445,9 +1447,10 @@ export async function handleConfig(
   return errorResponse("Not found", 404);
 }
 
-// Exported for unit tests in tests/config-verb-perms.test.ts. Internal use
-// of these helpers stays inside this module; no other production caller
-// should reach into them.
+// Exported for unit tests in tests/config-authz.test.ts (verb-perms
+// helpers) and tests/admin-api-key.test.ts (fetchResourceState,
+// fetchMcpServerOwners). Internal use of these helpers stays inside this
+// module; no other production caller should reach into them.
 export const __testInternals = {
   computeRequiredVerbsForPut,
   fetchMcpServerOwners,

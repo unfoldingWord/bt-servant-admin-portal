@@ -52,6 +52,9 @@ export function resolveEngineKey(
   return { key: env.ENGINE_API_KEY, source: "ENGINE_API_KEY" };
 }
 
+export const ENGINE_KEY_MISSING_MESSAGE =
+  "Portal configuration error: no engine key is configured.";
+
 // Collection segment → placeholder for the segment that follows it.
 const ROUTE_PARAMS = new Map<string, string>([
   ["orgs", ":org"],
@@ -59,6 +62,9 @@ const ROUTE_PARAMS = new Map<string, string>([
   ["modes", ":mode"],
   ["languages", ":language"],
   ["mcp-servers", ":serverId"],
+  ["groups", ":chatId"],
+  ["threads", ":threadId"],
+  ["do", ":hexId"],
 ]);
 
 /**
@@ -96,7 +102,8 @@ export function engineRoute(path: string): string {
  * returned unchanged and its body is never read here, so callers' own
  * error handling applies as before. An engine 401/403 is logged as a
  * neutral engine_auth_error (key source, status, method, route template;
- * never the key).
+ * never the key). If neither ADMIN_API_KEY nor ENGINE_API_KEY is set, it
+ * logs engine_key_missing and returns a 500 without calling the engine.
  */
 export async function engineFetch(
   env: Pick<Env, "ENGINE_BASE_URL" | "ADMIN_API_KEY" | "ENGINE_API_KEY">,
@@ -104,6 +111,18 @@ export async function engineFetch(
   init: RequestInit = {}
 ): Promise<Response> {
   const { key, source } = resolveEngineKey(env);
+  // Never send "Bearer undefined": with no key at all, fail without
+  // calling the engine.
+  if (!key?.trim()) {
+    console.error(
+      JSON.stringify({
+        event: "engine_key_missing",
+        method: init.method ?? "GET",
+        route: engineRoute(path),
+      })
+    );
+    return errorResponse(ENGINE_KEY_MISSING_MESSAGE, 500);
+  }
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${key}`);
   const res = await fetch(`${env.ENGINE_BASE_URL}${path}`, {

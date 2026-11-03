@@ -16,7 +16,12 @@ import {
   handleStream,
 } from "../worker/chat";
 import { __testInternals, handleConfig } from "../worker/config";
-import { engineFetch, engineRoute, resolveEngineKey } from "../worker/helpers";
+import {
+  ENGINE_KEY_MISSING_MESSAGE,
+  engineFetch,
+  engineRoute,
+  resolveEngineKey,
+} from "../worker/helpers";
 import type { SessionData } from "../worker/types";
 
 // Every BFF call to the engine uses ADMIN_API_KEY when it is set and falls
@@ -136,6 +141,15 @@ describe("engineRoute", () => {
     expect(engineRoute("/api/v1/chat/stream")).toBe("/api/v1/chat/stream");
   });
 
+  it("templates group, thread and DO ids", () => {
+    expect(
+      engineRoute("/api/v1/admin/orgs/acme/groups/c-1/threads/t-2/history")
+    ).toBe("/api/v1/admin/orgs/:org/groups/:chatId/threads/:threadId/history");
+    expect(engineRoute("/api/v1/admin/do/abc123/snapshot")).toBe(
+      "/api/v1/admin/do/:hexId/snapshot"
+    );
+  });
+
   it("is not shifted by a mode named like a collection", () => {
     expect(engineRoute("/api/v1/admin/orgs/acme/modes/languages/_rename")).toBe(
       "/api/v1/admin/orgs/:org/modes/:mode/_rename"
@@ -242,6 +256,34 @@ describe("engineFetch", () => {
     await reader.cancel();
   });
 
+  it.each([
+    ["empty", ""],
+    ["blank", "  "],
+    ["unset", undefined],
+  ])(
+    "returns a 500 config error without calling the engine when no key is set (%s)",
+    async (_label, engineKey) => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const spy = mockFetch();
+      const res = await engineFetch(
+        { ...env, ENGINE_API_KEY: engineKey as unknown as string },
+        "/api/v1/admin/orgs/acme/modes",
+        { method: "PUT" }
+      );
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: ENGINE_KEY_MISSING_MESSAGE });
+      expect(spy).not.toHaveBeenCalled();
+      const logs = error.mock.calls.map(
+        (c) => JSON.parse(String(c[0])) as Record<string, unknown>
+      );
+      expect(logs).toContainEqual({
+        event: "engine_key_missing",
+        method: "PUT",
+        route: "/api/v1/admin/orgs/:org/modes",
+      });
+    }
+  );
+
   it("does not log other statuses", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -290,6 +332,34 @@ describe("BFF → engine admin calls", () => {
     );
     expect(urlOf(spy)).toContain("/api/v1/admin/orgs/acme/modes/m1");
     expect(authOf(spy)).toBe(`Bearer ${ADMIN_KEY}`);
+  });
+
+  function erroredBody(status: number) {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error("stream broke"));
+      },
+    });
+    return new Response(body, { status });
+  }
+
+  it("fetchResourceState keeps its status mapping when the error body is an errored stream", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(erroredBody(404))
+      .mockResolvedValueOnce(erroredBody(500));
+    await expect(
+      __testInternals.fetchResourceState(withAdminKey(), "mode", "acme", "m1")
+    ).resolves.toEqual({ status: "missing" });
+    await expect(
+      __testInternals.fetchResourceState(withAdminKey(), "mode", "acme", "m1")
+    ).resolves.toEqual({ status: "error" });
+  });
+
+  it("fetchMcpServerOwners throws its own error when the error body is an errored stream", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(erroredBody(500));
+    await expect(
+      __testInternals.fetchMcpServerOwners(withAdminKey(), "acme")
+    ).rejects.toThrow("MCP pool read failed (500)");
   });
 
   it("fetchMcpServerOwners sends ADMIN_API_KEY when it is set", async () => {
