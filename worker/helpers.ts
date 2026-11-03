@@ -52,31 +52,43 @@ export function resolveEngineKey(
   return { key: env.ENGINE_API_KEY, source: "ENGINE_API_KEY" };
 }
 
-// Path segment → placeholder for the segment that follows it.
-const ROUTE_PARAMS: Record<string, string> = {
-  orgs: ":org",
-  users: ":userId",
-  modes: ":mode",
-  languages: ":language",
-  "mcp-servers": ":serverId",
-  groups: ":chatId",
-  threads: ":threadId",
-};
+// Collection segment → placeholder for the segment that follows it.
+const ROUTE_PARAMS = new Map<string, string>([
+  ["orgs", ":org"],
+  ["users", ":userId"],
+  ["modes", ":mode"],
+  ["languages", ":language"],
+  ["mcp-servers", ":serverId"],
+  ["groups", ":chatId"],
+  ["threads", ":threadId"],
+]);
 
 /**
  * The route template of an engine path, for logs: query dropped and ids,
  * org names and slugs replaced by placeholders, e.g.
- * `/api/v1/admin/orgs/:org/users/:userId/memory`.
+ * `/api/v1/admin/orgs/:org/users/:userId/memory`. Walks the segments by
+ * index: a collection segment is emitted with the placeholder for the
+ * NEXT segment and that segment is skipped, so a param value that happens
+ * to equal a collection name (an org called `users`, a mode called
+ * `languages`) never shifts the templating.
  */
 export function engineRoute(path: string): string {
   const segments = (path.split("?")[0] ?? "").split("/");
-  return segments
-    .map((seg, i) => {
-      const prev = i > 0 ? segments[i - 1] : undefined;
-      const param = prev !== undefined ? ROUTE_PARAMS[prev] : undefined;
-      return param !== undefined && seg !== "" ? param : seg;
-    })
-    .join("/");
+  const out: string[] = [];
+  let i = 0;
+  while (i < segments.length) {
+    const seg = segments[i] ?? "";
+    const param = ROUTE_PARAMS.get(seg);
+    const next = segments[i + 1];
+    if (param !== undefined && next !== undefined && next !== "") {
+      out.push(seg, param);
+      i += 2;
+    } else {
+      out.push(seg);
+      i += 1;
+    }
+  }
+  return out.join("/");
 }
 
 /** Engine host plus route template: what the BFF logs for an engine call. */
@@ -87,92 +99,14 @@ export function engineCallLabel(
   return `${env.ENGINE_BASE_URL}${engineRoute(path)}`;
 }
 
-// Known key-rejection codes. Pre-#479 engines send no code; their only
-// key-rejection text is "Invalid API key".
-const KEY_REJECTION_CODES = new Set(["invalid_api_key", "admin_key_required"]);
-const LEGACY_INVALID_KEY_TEXT = "Invalid API key";
-
-/** The engine's key-rejection code from a 401/403 body, if it is a known one. */
-function keyRejectionCode(body: string): string | undefined {
-  try {
-    const parsed = JSON.parse(body) as { code?: unknown };
-    if (typeof parsed.code === "string") {
-      return KEY_REJECTION_CODES.has(parsed.code) ? parsed.code : undefined;
-    }
-  } catch {
-    // Not JSON: fall through to the text match.
-  }
-  return body.includes(LEGACY_INVALID_KEY_TEXT) ? "invalid_api_key" : undefined;
-}
-
-const REJECTION_BODY_MAX_BYTES = 4096;
-const REJECTION_BODY_MAX_MS = 250;
-
-/**
- * Up to REJECTION_BODY_MAX_BYTES of a clone of the body, giving up after
- * REJECTION_BODY_MAX_MS. Only used for 401/403 (small JSON error bodies);
- * the original response stream is untouched.
- */
-async function readCappedClone(res: Response): Promise<string> {
-  const reader = res.clone().body?.getReader();
-  if (!reader) return "";
-  const decoder = new TextDecoder();
-  let text = "";
-  const deadline = Date.now() + REJECTION_BODY_MAX_MS;
-  try {
-    while (text.length < REJECTION_BODY_MAX_BYTES) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
-      const chunk = await Promise.race([
-        reader.read(),
-        new Promise<null>((resolve) =>
-          setTimeout(() => resolve(null), remaining)
-        ),
-      ]);
-      if (chunk === null || chunk.done) break;
-      text += decoder.decode(chunk.value, { stream: true });
-    }
-  } catch {
-    // Diagnostic only: an unreadable body just means no code.
-  } finally {
-    reader.cancel().catch(() => {});
-  }
-  return text.slice(0, REJECTION_BODY_MAX_BYTES);
-}
-
-/**
- * Diagnostic only: on an engine 401/403 with a known key-rejection code,
- * or on any 401/403 while on the ENGINE_API_KEY fallback, log
- * engine_admin_key_rejected with key source, status, method, route
- * template and code. Never the key.
- */
-async function logKeyRejection(
-  res: Response,
-  source: EngineKeySource,
-  method: string,
-  path: string
-): Promise<void> {
-  if (res.status !== 401 && res.status !== 403) return;
-  const code = keyRejectionCode(await readCappedClone(res));
-  if (source === "ADMIN_API_KEY" && code === undefined) return;
-  console.error(
-    JSON.stringify({
-      event: "engine_admin_key_rejected",
-      key_source: source,
-      status: res.status,
-      method,
-      route: engineRoute(path),
-      ...(code !== undefined && { code }),
-    })
-  );
-}
-
 /**
  * Every BFF call to the engine goes through here. `path` starts with `/`
  * and may carry a query string. The Authorization header is set to the
  * resolved engine key, replacing any in `init`. The engine's response is
- * returned unchanged, so callers' own error handling applies as before;
- * only a 401/403 waits on a capped read for the diagnostic log.
+ * returned unchanged and its body is never read here, so callers' own
+ * error handling applies as before. An engine 401/403 is logged as a
+ * neutral engine_auth_error (key source, status, method, route template;
+ * never the key).
  */
 export async function engineFetch(
   env: Pick<Env, "ENGINE_BASE_URL" | "ADMIN_API_KEY" | "ENGINE_API_KEY">,
@@ -186,7 +120,17 @@ export async function engineFetch(
     ...init,
     headers,
   });
-  await logKeyRejection(res, source, init.method ?? "GET", path);
+  if (res.status === 401 || res.status === 403) {
+    console.error(
+      JSON.stringify({
+        event: "engine_auth_error",
+        key_source: source,
+        status: res.status,
+        method: init.method ?? "GET",
+        route: engineRoute(path),
+      })
+    );
+  }
   return res;
 }
 

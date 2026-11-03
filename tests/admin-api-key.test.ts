@@ -127,13 +127,28 @@ describe("engineRoute", () => {
     expect(
       engineRoute("/api/v1/admin/orgs/acme/users/1234-abcd/memory?x=1")
     ).toBe("/api/v1/admin/orgs/:org/users/:userId/memory");
-    expect(engineRoute("/api/v1/admin/orgs/acme/modes/m1/_rename")).toBe(
-      "/api/v1/admin/orgs/:org/modes/:mode/_rename"
-    );
     expect(engineRoute("/api/v1/admin/orgs/acme/mcp-servers")).toBe(
       "/api/v1/admin/orgs/:org/mcp-servers"
     );
+    expect(engineRoute("/api/v1/admin/orgs/acme/languages")).toBe(
+      "/api/v1/admin/orgs/:org/languages"
+    );
     expect(engineRoute("/api/v1/chat/stream")).toBe("/api/v1/chat/stream");
+  });
+
+  it("is not shifted by a mode named like a collection", () => {
+    expect(engineRoute("/api/v1/admin/orgs/acme/modes/languages/_rename")).toBe(
+      "/api/v1/admin/orgs/:org/modes/:mode/_rename"
+    );
+  });
+
+  it("is not shifted by an org named like a collection", () => {
+    expect(engineRoute("/api/v1/admin/orgs/users/users/u-1/history")).toBe(
+      "/api/v1/admin/orgs/:org/users/:userId/history"
+    );
+    expect(engineRoute("/api/v1/orgs/users/modes")).toBe(
+      "/api/v1/orgs/:org/modes"
+    );
   });
 });
 
@@ -161,103 +176,79 @@ describe("engineFetch", () => {
     expect(authOf(spy)).toBe(`Bearer ${ADMIN_KEY}`);
   });
 
-  function engineReplies(status: number, body: unknown) {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify(body), { status })
-    );
-  }
-
-  function rejectionLogs(error: MockInstance<typeof console.error>) {
+  function authErrorLogs(error: MockInstance<typeof console.error>) {
     return error.mock.calls
       .map((c) => JSON.parse(String(c[0])) as Record<string, unknown>)
-      .filter((e) => e.event === "engine_admin_key_rejected");
+      .filter((e) => e.event === "engine_auth_error");
   }
 
-  it("returns a 403 unchanged and logs a structured code", async () => {
+  it.each([401, 403])(
+    "logs a neutral engine_auth_error on %i and returns the same response",
+    async (status) => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const engineRes = new Response('{"error":"nope"}', { status });
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(engineRes);
+      const res = await engineFetch(
+        withAdminKey(),
+        "/api/v1/admin/orgs/acme/users/u-123/memory?x=1",
+        { method: "DELETE" }
+      );
+      expect(res).toBe(engineRes);
+      expect(authErrorLogs(error)).toEqual([
+        {
+          event: "engine_auth_error",
+          key_source: "ADMIN_API_KEY",
+          status,
+          method: "DELETE",
+          route: "/api/v1/admin/orgs/:org/users/:userId/memory",
+        },
+      ]);
+      expect(JSON.stringify(error.mock.calls)).not.toContain(ADMIN_KEY);
+      expect(JSON.stringify(error.mock.calls)).not.toContain("u-123");
+    }
+  );
+
+  it("names the fallback key source", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    engineReplies(403, { error: "Nope", code: "admin_key_required" });
-    const res = await engineFetch(
-      withAdminKey(),
-      "/api/v1/admin/orgs/acme/modes?x=1",
-      { method: "PUT" }
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("", { status: 401 })
     );
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({
-      error: "Nope",
-      code: "admin_key_required",
+    await engineFetch(env, "/api/v1/chat/stream", { method: "POST" });
+    expect(authErrorLogs(error)[0]).toMatchObject({
+      key_source: "ENGINE_API_KEY",
+      status: 401,
+      route: "/api/v1/chat/stream",
     });
-    expect(rejectionLogs(error)).toEqual([
-      {
-        event: "engine_admin_key_rejected",
-        key_source: "ADMIN_API_KEY",
-        status: 403,
-        method: "PUT",
-        route: "/api/v1/admin/orgs/:org/modes",
-        code: "admin_key_required",
-      },
-    ]);
-    expect(JSON.stringify(error.mock.calls)).not.toContain(ADMIN_KEY);
-  });
-
-  it("matches the legacy 'Invalid API key' text when there is no code", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    engineReplies(403, { error: "Invalid API key" });
-    await engineFetch(withAdminKey(), "/api/v1/chat/stream");
-    engineReplies(403, { error: "This route requires the admin API key" });
-    await engineFetch(withAdminKey(), "/api/v1/admin/orgs/acme");
-    expect(rejectionLogs(error).map((e) => e.code)).toEqual([
-      "invalid_api_key",
-    ]);
-  });
-
-  it("ignores unknown codes when the admin key is in use", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    engineReplies(403, { error: "Nope", code: "not_your_org" });
-    await engineFetch(withAdminKey(), "/api/v1/admin/orgs/acme");
-    expect(rejectionLogs(error)).toEqual([]);
-  });
-
-  it("returns a large 403 body intact while the diagnostic reads a capped clone", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const big = "x".repeat(20000) + "Invalid API key";
-    engineReplies(403, { error: big });
-    const res = await engineFetch(env, "/api/v1/chat/stream");
-    expect(((await res.json()) as { error: string }).error).toBe(big);
-  });
-
-  it("logs every 401/403 while on the fallback, without a code when none is given", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    engineReplies(401, { error: "Authorization header required" });
-    const res = await engineFetch(env, "/api/v1/chat/stream", {
-      method: "POST",
-    });
-    expect(res.status).toBe(401);
-    expect(rejectionLogs(error)).toEqual([
-      {
-        event: "engine_admin_key_rejected",
-        key_source: "ENGINE_API_KEY",
-        status: 401,
-        method: "POST",
-        route: "/api/v1/chat/stream",
-      },
-    ]);
     expect(JSON.stringify(error.mock.calls)).not.toContain(env.ENGINE_API_KEY);
   });
 
-  it("does not log an unrelated 403 when the admin key is in use", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    engineReplies(403, { error: "Not your org" });
+  it("returns a 403 at once, untouched, even when its body never closes", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // One chunk, then the stream stays open forever.
+        controller.enqueue(encoder.encode('{"error":'));
+      },
+    });
+    const engineRes = new Response(body, { status: 403 });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(engineRes);
     const res = await engineFetch(withAdminKey(), "/api/v1/admin/orgs/acme");
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "Not your org" });
-    expect(rejectionLogs(error)).toEqual([]);
+    expect(res).toBe(engineRes);
+    expect(res.bodyUsed).toBe(false);
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toBe('{"error":');
+    await reader.cancel();
   });
 
   it("does not log other statuses", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    engineReplies(500, { error: "Invalid API key" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 500 })
+    );
     await engineFetch(env, "/api/v1/admin/orgs/acme");
-    expect(rejectionLogs(error)).toEqual([]);
+    expect(authErrorLogs(error)).toEqual([]);
   });
 });
 
