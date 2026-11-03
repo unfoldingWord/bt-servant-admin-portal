@@ -15,8 +15,10 @@
   //   ENGINE_API_KEY  — bearer key for engine chat and history calls.
   //   ADMIN_API_KEY   — optional; bearer key for the engine's admin API
   //                     (/api/v1/admin/*). Falls back to ENGINE_API_KEY when
-  //                     unset. See engineAdminKey() in worker/helpers.ts.
-  //   BARUCH_API_KEY, ADMIN_SECRET.
+  //                     unset. See engineFetch() in worker/helpers.ts.
+  //   ADMIN_SECRET    — the portal's own bootstrap auth (X-Admin-Secret on
+  //                     /api/admin/users). Unrelated to ADMIN_API_KEY.
+  //   BARUCH_API_KEY  — bearer key for Baruch.
   "vars": {
     "ENGINE_BASE_URL": "https://api.btservant.ai",
     "BARUCH_BASE_URL": "https://baruch.btservant.ai",

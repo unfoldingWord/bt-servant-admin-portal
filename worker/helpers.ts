@@ -1,14 +1,16 @@
 export interface Env {
   ENGINE_BASE_URL: string;
   ENGINE_API_KEY: string;
-  // Dedicated key for the worker's admin API (/api/v1/admin/*). Optional:
-  // when unset or blank, admin calls fall back to ENGINE_API_KEY. Always
-  // read it through engineAdminKey() below, never directly.
+  // Engine admin bearer for /api/v1/admin/*. Optional: when unset or
+  // blank, admin calls fall back to ENGINE_API_KEY. Unrelated to
+  // ADMIN_SECRET below. Read it only through engineFetch()/engineAdminKey().
   ADMIN_API_KEY?: string;
   BARUCH_BASE_URL: string;
   BARUCH_API_KEY: string;
   BARUCH?: Fetcher;
   AUTH_KV: KVNamespace;
+  // The portal's own bootstrap auth (X-Admin-Secret on /api/admin/users).
+  // Unrelated to ADMIN_API_KEY above.
   ADMIN_SECRET: string;
   // #311 — optional so a deploy without the vars degrades to "not
   // configured" instead of a type error; see worker/share-config.ts.
@@ -16,20 +18,63 @@ export interface Env {
   WHATSAPP_ORG?: string;
 }
 
+/** Engine paths under this prefix are admin routes and get the admin key. */
+export const ENGINE_ADMIN_PATH_PREFIX = "/api/v1/admin/";
+
+// One fallback warning per isolate: enough to show a missing secret in the
+// logs without repeating it on every request.
+let adminKeyFallbackLogged = false;
+
+/** Test hook: re-arm the once-per-isolate fallback warning. */
+export function resetEngineAdminKeyLogForTests(): void {
+  adminKeyFallbackLogged = false;
+}
+
 /**
- * The bearer key for calls to the worker's admin API (`/api/v1/admin/*`).
- * Uses ADMIN_API_KEY when it is set to a non-blank value, otherwise
- * ENGINE_API_KEY, so a deploy without the new secret keeps working.
- * Non-admin engine calls (chat stream, user history reads) keep using
- * ENGINE_API_KEY directly.
+ * The bearer key for calls to the engine's admin API (`/api/v1/admin/*`):
+ * the trimmed ADMIN_API_KEY when it is set and non-blank, otherwise
+ * ENGINE_API_KEY, so a deploy without the new secret keeps working. The
+ * fallback logs one structured warning per isolate naming the key source,
+ * never the key value.
  */
 export function engineAdminKey(
   env: Pick<Env, "ADMIN_API_KEY" | "ENGINE_API_KEY">
 ): string {
-  const adminKey = env.ADMIN_API_KEY;
-  return adminKey !== undefined && adminKey.trim() !== ""
-    ? adminKey
+  const adminKey = env.ADMIN_API_KEY?.trim();
+  if (adminKey) return adminKey;
+  if (!adminKeyFallbackLogged) {
+    adminKeyFallbackLogged = true;
+    console.warn(
+      JSON.stringify({
+        event: "engine_admin_key_fallback",
+        key_source: "ENGINE_API_KEY",
+        reason: env.ADMIN_API_KEY === undefined ? "unset" : "blank",
+      })
+    );
+  }
+  return env.ENGINE_API_KEY;
+}
+
+/**
+ * Every BFF call to the engine goes through here. `path` starts with `/`
+ * and may carry a query string. Admin paths (`/api/v1/admin/*`) get
+ * engineAdminKey(); everything else (chat stream, user history read) gets
+ * ENGINE_API_KEY. Any Authorization header in `init` is replaced.
+ */
+export function engineFetch(
+  env: Pick<Env, "ENGINE_BASE_URL" | "ADMIN_API_KEY" | "ENGINE_API_KEY">,
+  path: string,
+  init: Omit<RequestInit, "headers"> & {
+    headers?: Record<string, string>;
+  } = {}
+): Promise<Response> {
+  const key = path.startsWith(ENGINE_ADMIN_PATH_PREFIX)
+    ? engineAdminKey(env)
     : env.ENGINE_API_KEY;
+  return fetch(`${env.ENGINE_BASE_URL}${path}`, {
+    ...init,
+    headers: { ...init.headers, Authorization: `Bearer ${key}` },
+  });
 }
 
 export function jsonResponse(data: unknown, status = 200): Response {

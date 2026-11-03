@@ -1,5 +1,5 @@
 import type { Env } from "./helpers";
-import { engineAdminKey, errorResponse, isPathShapedOrg } from "./helpers";
+import { engineFetch, errorResponse, isPathShapedOrg } from "./helpers";
 import {
   contractOrgModeRights,
   expandOrgModeRights,
@@ -81,9 +81,7 @@ async function proxyToEngine(
     return errorResponse("Method not allowed", 405);
   }
 
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${engineAdminKey(env)}`,
-  };
+  const headers: Record<string, string> = {};
 
   let body: string | undefined;
   if (request.method === "PUT" || request.method === "POST") {
@@ -99,7 +97,7 @@ async function proxyToEngine(
     }
   }
 
-  const engineRes = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
+  const engineRes = await engineFetch(env, enginePath, {
     method: request.method,
     headers,
     body,
@@ -189,9 +187,7 @@ async function fetchResourceState(
     kind === "language"
       ? `/api/v1/admin/orgs/${encodeURIComponent(org)}/languages/${encodeURIComponent(name)}`
       : `/api/v1/admin/orgs/${encodeURIComponent(org)}/modes/${encodeURIComponent(name)}`;
-  const res = await fetch(`${env.ENGINE_BASE_URL}${enginePath}`, {
-    headers: { Authorization: `Bearer ${engineAdminKey(env)}` },
-  });
+  const res = await engineFetch(env, enginePath);
   if (res.status === 404) return { status: "missing" };
   if (!res.ok) return { status: "error" };
   const data = (await res.json()) as Record<string, unknown>;
@@ -575,9 +571,9 @@ async function fetchMcpServerOwners(
   env: Env,
   org: string
 ): Promise<Map<string, string | undefined>> {
-  const res = await fetch(
-    `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(org)}/mcp-servers`,
-    { headers: { Authorization: `Bearer ${engineAdminKey(env)}` } }
+  const res = await engineFetch(
+    env,
+    `/api/v1/admin/orgs/${encodeURIComponent(org)}/mcp-servers`
   );
   if (!res.ok) {
     throw new Error(`MCP pool read failed (${res.status})`);
@@ -1449,6 +1445,8 @@ export async function handleConfig(
 // should reach into them.
 export const __testInternals = {
   computeRequiredVerbsForPut,
+  fetchMcpServerOwners,
+  fetchResourceState,
   hasRights,
   rightsFor,
 };

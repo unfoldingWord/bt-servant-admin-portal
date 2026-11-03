@@ -1,6 +1,6 @@
 import type { Env } from "./helpers";
 import {
-  engineAdminKey,
+  engineFetch,
   errorResponse,
   jsonResponse,
   listKvKeys,
@@ -107,7 +107,7 @@ export async function handleStream(
   const resolvedUser = await resolveUserId(env, body.user_id, session);
   if ("error" in resolvedUser) return resolvedUser.error;
 
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/chat/stream`;
+  const enginePath = "/api/v1/chat/stream";
   const engineBody = {
     message: body.message,
     message_type: body.message_type || "text",
@@ -116,19 +116,16 @@ export async function handleStream(
     client_id: CLIENT_ID,
   };
 
-  const engineRes = await fetch(engineUrl, {
+  const engineRes = await engineFetch(env, enginePath, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.ENGINE_API_KEY}`,
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(engineBody),
   });
 
   if (!engineRes.ok) {
     const text = await engineRes.text().catch(() => "");
     console.error(
-      `Engine stream failed (${engineRes.status}) ${engineUrl}: ${text}`
+      `Engine stream failed (${engineRes.status}) ${enginePath}: ${text}`
     );
     return errorResponse("Failed to stream chat response", 502);
   }
@@ -169,13 +166,10 @@ export async function handleHistory(
   if ("error" in resolvedUser) return resolvedUser.error;
   const userId = resolvedUser.userId;
   const params = new URLSearchParams({ limit, offset });
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/orgs/${encodeURIComponent(session.org)}/users/${userId}/history?${params.toString()}`;
-
-  const engineRes = await fetch(engineUrl, {
-    headers: {
-      Authorization: `Bearer ${env.ENGINE_API_KEY}`,
-    },
-  });
+  const engineRes = await engineFetch(
+    env,
+    `/api/v1/orgs/${encodeURIComponent(session.org)}/users/${userId}/history?${params.toString()}`
+  );
 
   if (!engineRes.ok) {
     const text = await engineRes.text().catch(() => "");
@@ -214,14 +208,11 @@ export async function handleDeleteHistory(
   );
   if ("error" in resolvedUser) return resolvedUser.error;
   const userId = resolvedUser.userId;
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(session.org)}/users/${userId}/history`;
-
-  const engineRes = await fetch(engineUrl, {
-    method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${engineAdminKey(env)}`,
-    },
-  });
+  const engineRes = await engineFetch(
+    env,
+    `/api/v1/admin/orgs/${encodeURIComponent(session.org)}/users/${userId}/history`,
+    { method: "DELETE" }
+  );
 
   if (!engineRes.ok) {
     const text = await engineRes.text().catch(() => "");
@@ -251,14 +242,11 @@ export async function handleDeleteMemory(
   );
   if ("error" in resolvedUser) return resolvedUser.error;
   const userId = resolvedUser.userId;
-  const engineUrl = `${env.ENGINE_BASE_URL}/api/v1/admin/orgs/${encodeURIComponent(session.org)}/users/${userId}/memory`;
-
-  const engineRes = await fetch(engineUrl, {
-    method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${engineAdminKey(env)}`,
-    },
-  });
+  const engineRes = await engineFetch(
+    env,
+    `/api/v1/admin/orgs/${encodeURIComponent(session.org)}/users/${userId}/memory`,
+    { method: "DELETE" }
+  );
 
   if (!engineRes.ok) {
     const text = await engineRes.text().catch(() => "");
