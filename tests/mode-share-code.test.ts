@@ -103,7 +103,7 @@ describe("share-code route — scoping", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("answers 401 and the same-origin 403 with codes, before any session work", async () => {
+  it("answers 401 and the same-origin 403 with codes, like every config route", async () => {
     const url = `https://portal.example.test${PATH}`;
     const noOrigin = await worker.fetch(new Request(url), testEnv);
     expect(noOrigin.status).toBe(403);
@@ -125,7 +125,11 @@ describe("share-code route — scoping", () => {
       new Request("https://portal.example.test/api/config/modes"),
       testEnv
     );
-    expect(await other.json()).toEqual({ error: "Forbidden" });
+    // Every /api/config 401 and 403 carries the same code.
+    expect(await other.json()).toEqual({
+      error: "Forbidden",
+      code: "forbidden",
+    });
   });
 
   it("lets a super-admin ask about another org's mode", async () => {
@@ -176,6 +180,7 @@ describe("share-code route — mapping the worker's answer", () => {
       reason: "collision",
       resolved_org: "PBT",
       home_org: GATEWAY,
+      queried_org: "PBT",
     });
   });
 
@@ -250,13 +255,17 @@ describe("share-code route — mapping the worker's answer", () => {
     expect(body).toEqual({
       capability: "present",
       home_org: GATEWAY,
+      queried_org: "PBT",
       code: "pbt/x",
       resolves: false,
       reason: "invalid_mode",
     });
   });
 
-  it("treats an empty code as a malformed answer", async () => {
+  it("treats an empty code, or resolves without a code, as a malformed answer", async () => {
+    workerReplies({ code: null, resolves: true });
+    expect((await call()).status).toBe(502);
+    vi.restoreAllMocks();
     workerReplies({ code: "", resolves: true });
     expect((await call()).status).toBe(502);
   });
@@ -290,6 +299,7 @@ describe("share-code route — mapping the worker's answer", () => {
       capability: "present",
       home_has_modes: false,
       home_org: GATEWAY,
+      queried_org: "PBT",
     });
     vi.restoreAllMocks();
     // A non-boolean is ignored rather than failing the answer.
@@ -568,22 +578,34 @@ describe("share-code route — mapping the worker's answer", () => {
     expect((await call()).status).toBe(502);
   });
 
-  it("answers unconfigured, not the worker's invalid_org, for an unusable WHATSAPP_ORG", async () => {
-    // The worker's own rule: `<org>:modes` within 512 bytes (and not
-    // empty). A cheap guard only: the worker is authoritative (its `field`).
-    for (const bad of ["a".repeat(507), "é".repeat(254)]) {
-      const spy = workerReplies({});
-      const res = await call({ env: { ...env, WHATSAPP_ORG: bad } as Env });
-      expect(await res.json(), `${bad.length}`).toEqual({
-        capability: "unconfigured",
-      });
-      expect(spy).not.toHaveBeenCalled();
-      vi.restoreAllMocks();
-    }
-    // 506 + ":modes" = 512 bytes: still usable.
-    const spy = workerReplies({ code: "x", resolves: true });
-    await call({ env: { ...env, WHATSAPP_ORG: "a".repeat(506) } as Env });
+  it("leaves an over-long WHATSAPP_ORG to the worker, whose field home_org 400 is unconfigured", async () => {
+    // Only an unset value is caught locally; the KV key rule is the worker's.
+    const spy = workerReplies(
+      { error: "invalid_org", field: "home_org", message: "too long" },
+      400
+    );
+    const res = await call({
+      env: { ...env, WHATSAPP_ORG: "a".repeat(507) } as Env,
+    });
     expect(spy).toHaveBeenCalledTimes(1);
+    expect(await res.json()).toEqual({ capability: "unconfigured" });
+  });
+
+  it("returns the exact org it queried, padded super-admin org included", async () => {
+    const spy = workerReplies({
+      code: "team/obt-coach",
+      resolves: false,
+      reason: "collision",
+      resolved_org: " team",
+    });
+    const res = await call({
+      session: makeSession({ org: " team", isAdmin: true, isSuperAdmin: true }),
+    });
+    expect(String(spy.mock.calls[0]![0])).toContain("/orgs/%20team/modes/");
+    expect(await res.json()).toMatchObject({
+      queried_org: " team",
+      resolved_org: " team",
+    });
   });
 
   it("answers unconfigured without calling the worker when WHATSAPP_ORG is unset", async () => {

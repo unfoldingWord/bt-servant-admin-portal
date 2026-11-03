@@ -66,6 +66,40 @@ export function modeShareTrigger(name: string): string {
   return `#${name}`;
 }
 
+// The worker's `MODE_NAME_PATTERN` (bt-servant-worker
+// src/types/prompt-overrides.ts): lowercase alphanumerics and inner
+// hyphens, 1–64 chars, no underscores. Stricter than the portal's
+// `slugifyModeName` (which keeps `_`), and the one the worker enforces on
+// every mode route (400 `invalid_mode_name`) — so it is the one a trigger
+// has to satisfy.
+const MODE_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+
+// Reserved by the worker's classifier as "clear the active mode"
+// (`CLEAR_TOKENS`, src/services/classifier/index.ts). Checked BEFORE mode
+// matching there, so `#default` can never reach a mode named `default`;
+// a QR for one would silently deactivate whatever mode the user had.
+const RESERVED_TRIGGERS: ReadonlySet<string> = new Set([
+  "default",
+  "none",
+  "clear",
+]);
+
+export type ModeShareSlugVerdict = "ok" | "slug-invalid" | "slug-reserved";
+
+/**
+ * Can this slug be carried by a `#` trigger at all? Independent of the
+ * number and of publish state — it is about the mode's identity, so the
+ * panel reports it before anything else (a draft named `default` should
+ * hear "rename", not "publish"). A stored slug never contains `/`. The
+ * worker would say the same (400 `invalid_mode_name`, reason `reserved`),
+ * and those answers still map to the same states.
+ */
+export function validateModeShareSlug(slug: string): ModeShareSlugVerdict {
+  if (!MODE_NAME_PATTERN.test(slug)) return "slug-invalid";
+  if (RESERVED_TRIGGERS.has(slug)) return "slug-reserved";
+  return "ok";
+}
+
 // Upper bound on a worker code put in a link. Two 64-char halves and the
 // `/` are 129; the worker does not cap the org half, so this is a sanity
 // bound that keeps the URL and its QR scannable, not a contract.
@@ -125,8 +159,8 @@ export type ModeShareState = "ready" | "group-only" | "draft";
  * flags. Same order as the worker's `staticReason` (bt-servant-worker
  * src/utils/mode-share-code.ts): draft, then group-only. The worker's
  * `invalid_mode`, which it checks first for a partner org's mode, is not
- * knowable from the flags; `resolveModeSharePanelState` lets that answer
- * win over these.
+ * knowable from the flags; it only matters once the mode is published,
+ * and the worker reports it then.
  *
  * - `draft`: the worker masks unpublished modes for non-admin callers, so
  *   a scanned draft answers "unknown mode".
@@ -292,6 +326,8 @@ export type ModeSharePanelState =
   /** Share-config is loaded; this mode's code is being checked. */
   | { kind: "checking-code" }
   | { kind: "error" }
+  /** The stored slug can't be a trigger (the worker's name pattern). */
+  | { kind: "slug-invalid" }
   | { kind: "retry"; cause: ShareCodeTransient }
   | { kind: "failed"; failure: ShareCodeFailure }
   | { kind: "not-found" }
@@ -360,6 +396,7 @@ export function workerSaysUnshareable(
 const NOT_FROM_ANSWER: ReadonlySet<ModeSharePanelState["kind"]> = new Set([
   "loading-config",
   "checking-code",
+  "slug-invalid",
   "error",
   "retry",
   "draft",
@@ -477,47 +514,36 @@ function unhandled(value: never): never {
 /**
  * Resolve what the panel shows. Order of precedence:
  *
- * 1. the page's own saved flags: draft, then group-only (the worker's
- *    order), unless the worker calls the mode damaged (`invalid_mode`,
- *    which the worker puts first for a partner org's mode). Publishing or
- *    turning off group-only is the author's to do first;
- * 2. query lifecycle: share-config loading (or offline) or failed, then
+ * 1. the mode's name, from its stored slug alone: a slug no trigger can
+ *    carry, then a reserved clear-word (a draft named `default` hears
+ *    "rename", not "publish");
+ * 2. the page's own saved flags: draft, then group-only (the worker's
+ *    order). The worker is not asked about either; publishing or turning
+ *    off group-only is the author's to do first. (The worker's
+ *    `invalid_mode`, which it checks first for a partner org's mode, is
+ *    reported once the mode is published and asked about);
+ * 3. query lifecycle: share-config loading (or offline) or failed, then
  *    the share code checking (see ShareCodeSnapshot) or failed with
  *    nothing to show;
- * 3. the worker's answer, as is: configuration (WHATSAPP_ORG unset or
+ * 4. the worker's answer, as is: configuration (WHATSAPP_ORG unset or
  *    unusable, a worker without the share-code route), a definite
  *    failure (a name the worker rejects included), no code at all, a link
  *    if the code resolves, else why not (a reserved name included). A
  *    draft / group-only answer here means the worker and the page
  *    disagree ("worker-sees");
- * 4. the number: missing or invalid.
- *
- * The mode's name is not checked here: the worker decides (400
- * `invalid_mode_name`, reason `reserved`).
+ * 5. the number: missing or invalid.
  */
 export function resolveModeSharePanelState(
   config: ShareConfigSnapshot,
   shareCode: ShareCodeSnapshot,
   flags: { published?: boolean; requires_group?: boolean },
-  modeOrg: string | null | undefined
+  modeOrg: string | null | undefined,
+  modeName: string
 ): ModeSharePanelState {
+  const slugVerdict = validateModeShareSlug(modeName);
+  if (slugVerdict !== "ok") return { kind: slugVerdict };
   const eligibility = modeShareState(flags);
-  if (eligibility !== "ready") {
-    // The worker's own order (#477 `staticReason`): a damaged stored mode
-    // of a partner org is `invalid_mode` before draft or group-only, since
-    // chat drops it whatever its flags. Only the worker can tell, so it is
-    // asked for every mode; any other answer leaves the page's flags in
-    // charge.
-    const { answer } = shareCode;
-    if (
-      answer?.capability === "present" &&
-      !answer.resolves &&
-      answer.reason === "invalid_mode"
-    ) {
-      return { kind: "invalid-mode" };
-    }
-    return { kind: eligibility };
-  }
+  if (eligibility !== "ready") return { kind: eligibility };
   // Only a first load blocks: a background refetch keeps a ready QR.
   // Offline before it ever loaded: the settings error, with Try again.
   if (config.pending && config.paused) return { kind: "error" };
@@ -553,7 +579,7 @@ function fromWorkerAnswer(
   modeOrg: string | null | undefined
 ): ModeSharePanelState {
   const { code } = answer;
-  if (code === null) return { kind: "org-unencodable" };
+  if (code === null) return withoutCode(answer.reason);
   const shown: Shown = {
     trigger: modeShareTrigger(code),
     partnerOrg: code.includes("/") ? (modeOrg?.trim() ?? null) : null,
@@ -579,9 +605,10 @@ function fromWorkerAnswer(
         kind: "collision",
         resolvedOrg,
         // #477 names this same org for an alias clash inside it.
-        // Exact, like the worker's org keys (#247/#253): " pbt" and "pbt"
-        // are different orgs, so a cross-org clash never reads as this one.
-        sameOrg: resolvedOrg !== null && resolvedOrg === modeOrg,
+        // Against the exact org the BFF asked about (`queried_org`), byte
+        // for byte like the worker's org keys (#247/#253): the client
+        // never guesses whether " pbt" and "pbt" are the same org.
+        sameOrg: resolvedOrg !== null && resolvedOrg === answer.queried_org,
         uncertain,
         ...shown,
       };
@@ -598,6 +625,27 @@ function fromWorkerAnswer(
     // (the worker contract is additive).
     default:
       return { kind: "unresolved", uncertain, ...shown };
+  }
+}
+
+/**
+ * No code at all (`code: null`; never with `resolves: true`, which the
+ * parser rejects). The reason comes first, when it names a state that
+ * needs no code; every other reason (`org_skipped` included) needs a code
+ * to point at, so it reads as the org name having no usable slug.
+ */
+function withoutCode(reason: string | undefined): ModeSharePanelState {
+  switch (reason) {
+    case "draft":
+      return { kind: "worker-sees", sees: "draft" };
+    case "requires_group":
+      return { kind: "worker-sees", sees: "group-only" };
+    case "invalid_mode":
+      return { kind: "invalid-mode" };
+    case "reserved":
+      return { kind: "slug-reserved" };
+    default:
+      return { kind: "org-unencodable" };
   }
 }
 

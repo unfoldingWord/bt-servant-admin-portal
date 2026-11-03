@@ -444,6 +444,7 @@ describe("share-code invalidation", () => {
       saveMayChangeShareCode(flags, flags, {
         capability: "present",
         home_org: "uW",
+        queried_org: "PBT",
         code: "pbt/x",
         resolves: false,
         reason: "invalid_mode",

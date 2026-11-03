@@ -44,6 +44,7 @@ describe("getModeShareCode", () => {
       resolved_org: "pbt",
       home_has_modes: false,
       home_org: "unfoldingWord",
+      queried_org: "PBT",
     });
     expect(await getModeShareCode("obt-coach", "PBT")).toEqual({
       capability: "present",
@@ -53,6 +54,7 @@ describe("getModeShareCode", () => {
       resolved_org: "pbt",
       home_has_modes: false,
       home_org: "unfoldingWord",
+      queried_org: "PBT",
     });
     // #477: home_has_modes is absent when the home record couldn't be read;
     // it stays absent (unknown), not false.
@@ -62,6 +64,7 @@ describe("getModeShareCode", () => {
       resolves: false,
       reason: "invalid_mode",
       home_org: "unfoldingWord",
+      queried_org: "PBT",
     });
     const unknownHome = await getModeShareCode("x", "PBT");
     expect(unknownHome).toEqual({
@@ -70,6 +73,7 @@ describe("getModeShareCode", () => {
       resolves: false,
       reason: "invalid_mode",
       home_org: "unfoldingWord",
+      queried_org: "PBT",
     });
     expect(homeOrgWithoutModes(unknownHome)).toBeNull();
     mockFetch(200, {
@@ -79,6 +83,7 @@ describe("getModeShareCode", () => {
       reason: "not_found",
       resolved_org_uncertain: true,
       home_org: "unfoldingWord",
+      queried_org: "PBT",
     });
     expect(await getModeShareCode("x", "PBT")).toMatchObject({
       reason: "not_found",
@@ -88,6 +93,28 @@ describe("getModeShareCode", () => {
     mockFetch(200, {
       capability: "present",
       code: "",
+      resolves: true,
+      home_org: "unfoldingWord",
+      queried_org: "PBT",
+    });
+    await expect(getModeShareCode("x", null)).rejects.toMatchObject({
+      kind: "server",
+    });
+    // A code that resolves must be there: malformed without it.
+    mockFetch(200, {
+      capability: "present",
+      code: null,
+      resolves: true,
+      home_org: "unfoldingWord",
+      queried_org: "PBT",
+    });
+    await expect(getModeShareCode("x", null)).rejects.toMatchObject({
+      kind: "server",
+    });
+    // A present answer without the BFF's queried_org isn't one.
+    mockFetch(200, {
+      capability: "present",
+      code: "x",
       resolves: true,
       home_org: "unfoldingWord",
     });
@@ -108,12 +135,7 @@ describe("getModeShareCode", () => {
   it("returns each definite failure as an answer, switching on the BFF's code only", async () => {
     const cases: [number, unknown][] = [
       [404, { error: "Mode not found", code: "mode_not_found" }],
-      [401, { error: "Unauthorized", code: "unauthorized" }],
-      [403, { error: "Forbidden", code: "forbidden" }],
       [405, { error: "Method not allowed", code: "method_not_allowed" }],
-      // Without a code (an edge in front of the BFF): the status alone.
-      [401, { error: "Unauthorized" }],
-      [403, "Forbidden"],
       [400, { error: "Invalid mode name", code: "invalid_mode_name" }],
       [400, { error: "Invalid org", code: "invalid_org" }],
       [400, { error: "Bad request", code: "bad_request" }],
@@ -129,9 +151,6 @@ describe("getModeShareCode", () => {
           code: "share_code_unsupported",
         },
       ],
-      // A portal without the route: non-JSON or empty.
-      [404, "404 Not Found"],
-      [404, ""],
     ];
     const got = [];
     for (const [status, body] of cases) {
@@ -140,11 +159,7 @@ describe("getModeShareCode", () => {
     }
     expect(got).toEqual([
       { capability: "not-found" },
-      { capability: "failed", failure: "signed-out" },
-      { capability: "failed", failure: "forbidden" },
       { capability: "failed", failure: "bad-request" },
-      { capability: "failed", failure: "signed-out" },
-      { capability: "failed", failure: "forbidden" },
       { capability: "failed", failure: "invalid-name" },
       { capability: "failed", failure: "org-invalid" },
       { capability: "failed", failure: "bad-request" },
@@ -153,15 +168,17 @@ describe("getModeShareCode", () => {
       { capability: "failed", failure: "bad-request" },
       { capability: "failed", failure: "corrupt-record" },
       { capability: "upgrade-needed" },
-      { capability: "upgrade-needed" },
-      { capability: "upgrade-needed" },
     ]);
   });
 
-  it("reads any other JSON 404 as a route that exists: a transient server error", async () => {
+  it("reads any other 404 as a route that exists: a transient server error", async () => {
+    // Only the BFF's share_code_unsupported means "upgrade"; the BFF route
+    // always exists in this portal, so a plain or empty 404 is no signal.
     for (const body of [
       { error: "mode_not_found" },
       { error: "Engine error", code: "engine_error" },
+      "404 Not Found",
+      "",
     ]) {
       mockFetch(404, body);
       await expect(getModeShareCode("x", null)).rejects.toMatchObject({
@@ -172,6 +189,12 @@ describe("getModeShareCode", () => {
 
   it("throws a typed error for each transient outcome, so a refetch keeps the last answer", async () => {
     const cases: [number, unknown, string][] = [
+      // 401/403 are retried, not cached as answers: a session blip mustn't
+      // stick for the stale time. With or without a code.
+      [401, { error: "Unauthorized", code: "unauthorized" }, "signed-out"],
+      [401, "Unauthorized", "signed-out"],
+      [403, { error: "Forbidden", code: "forbidden" }, "forbidden"],
+      [403, "Forbidden", "forbidden"],
       [
         503,
         { error: "modes_unavailable", detail: "listing_lag" },
@@ -203,6 +226,39 @@ describe("getModeShareCode", () => {
         kind: "server",
       });
     }
+  });
+
+  it("throws network when the body read fails, and keeps a cancelled read a cancellation", async () => {
+    const cutBody = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError("connection reset"));
+          },
+        }),
+        { status: 404 }
+      );
+    // Even on a 404, a body cut off mid-read is not "no JSON".
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(cutBody());
+    await expect(getModeShareCode("x", null)).rejects.toMatchObject({
+      kind: "network",
+    });
+    const controller = new AbortController();
+    const abort = new DOMException("Aborted", "AbortError");
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.error(abort);
+          },
+        }),
+        { status: 200 }
+      )
+    );
+    controller.abort();
+    await expect(
+      getModeShareCode("x", null, controller.signal)
+    ).rejects.not.toBeInstanceOf(ShareCodeRequestError);
   });
 
   it("throws network for a failed request, but lets a cancellation stay one", async () => {

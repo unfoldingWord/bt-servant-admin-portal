@@ -680,10 +680,7 @@ export async function handleConfig(
       );
     }
     return handleModeShareCode(env, resolved.org, modeName, {
-      caller: {
-        org: session.org,
-        isSuperAdmin: session.isSuperAdmin === true,
-      },
+      caller: { isSuperAdmin: session.isSuperAdmin === true },
       signal: request.signal,
     });
   }

@@ -24,6 +24,44 @@ export function errorResponse(message: string, status: number): Response {
 }
 
 /**
+ * Machine-readable codes every /api/config 401 and 403 carries next to its
+ * `error` (an extra field; readers of `error` are unaffected). The
+ * share-code client switches on them (#345).
+ */
+export const AUTH_ERROR_CODES = {
+  unauthorized: "unauthorized",
+  forbidden: "forbidden",
+} as const;
+
+/**
+ * Add the auth `code` to a 401 / 403 JSON error body that has none. Any
+ * other response, or a body that isn't a JSON object, passes unchanged.
+ */
+export async function withAuthErrorCode(res: Response): Promise<Response> {
+  if (res.status !== 401 && res.status !== 403) return res;
+  const body: unknown = await res
+    .clone()
+    .json()
+    .catch(() => null);
+  if (
+    body === null ||
+    typeof body !== "object" ||
+    Array.isArray(body) ||
+    "code" in body
+  ) {
+    return res;
+  }
+  const code =
+    res.status === 401
+      ? AUTH_ERROR_CODES.unauthorized
+      : AUTH_ERROR_CODES.forbidden;
+  return new Response(JSON.stringify({ ...body, code }), {
+    status: res.status,
+    headers: res.headers,
+  });
+}
+
+/**
  * `decodeURIComponent` for a path segment, or null when the segment holds a
  * malformed escape (`%E0%A4%A`). That is the caller's error, so every
  * /api/config route that decodes a segment answers 400 instead of letting

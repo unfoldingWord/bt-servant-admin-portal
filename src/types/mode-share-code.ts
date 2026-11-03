@@ -54,8 +54,17 @@ export interface ShareCodeAnswer {
 
 /** The 200 bodies of the share-code route. */
 export type ModeShareCodeResponse =
-  /** The worker answered. `home_org` (WHATSAPP_ORG) is added by the BFF. */
-  | ({ capability: "present"; home_org: string } & ShareCodeAnswer)
+  /**
+   * The worker answered. The BFF adds `home_org` (WHATSAPP_ORG, as sent)
+   * and `queried_org`: the exact org string it asked the worker about.
+   * `resolved_org` is compared to `queried_org` byte for byte (the
+   * worker's own org keys are exact, #247/#253), never trimmed.
+   */
+  | ({
+      capability: "present";
+      home_org: string;
+      queried_org: string;
+    } & ShareCodeAnswer)
   /**
    * WHATSAPP_ORG is unusable for this environment: unset or caught by the
    * BFF's guard (the worker isn't asked), or rejected by the worker as
@@ -129,6 +138,8 @@ export function parseShareCodeAnswer(body: unknown): ShareCodeAnswer | null {
     return null;
   }
   if (typeof resolves !== "boolean") return null;
+  // A code that resolves has to be there to build a link from.
+  if (resolves && code === null) return null;
   if (reason !== undefined && typeof reason !== "string") return null;
   if (resolved_org !== undefined && typeof resolved_org !== "string") {
     return null;

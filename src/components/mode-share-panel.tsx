@@ -15,6 +15,8 @@ import {
   resolveModeSharePanelState,
   answerUncertain,
   homeOrgWithoutModes,
+  modeShareState,
+  validateModeShareSlug,
   refreshFailed,
   retryControl,
   shownTrigger,
@@ -182,12 +184,19 @@ function ModeShareContent({
 }: ModeShareContentProps) {
   // Session-cached operator config; asked while open.
   const shareConfig = useShareConfig(open);
-  // The worker's answer for which code opens this mode (#345). Asked for
-  // every mode, drafts included: the page's own saved flags decide draft
-  // and group-only, but only the worker can say a stored mode is damaged
-  // (`invalid_mode`), which it puts first. The name is the worker's to
-  // judge too.
-  const shareCode = useModeShareCode(open, modeName, requestOrg);
+  // The worker's answer for which code opens this mode (#345). Not asked
+  // for a mode the panel refuses on its own: a slug no trigger can carry
+  // (it would only 400), a draft, or a group-only mode. A partner mode
+  // the worker would call damaged (`invalid_mode`, which it checks before
+  // draft) is skipped here too; that only matters once the mode is
+  // published, and the worker reports it then.
+  const shareCode = useModeShareCode(
+    open &&
+      validateModeShareSlug(modeName) === "ok" &&
+      modeShareState(flags) === "ready",
+    modeName,
+    requestOrg
+  );
   const shareCodeSnapshot = shareCode.snapshot;
 
   const state = useMemo<ModeSharePanelState>(() => {
@@ -203,10 +212,12 @@ function ModeShareContent({
       },
       shareCodeSnapshot,
       flags,
-      org
+      org,
+      modeName
     );
   }, [
     flags,
+    modeName,
     org,
     shareCodeSnapshot,
     shareConfig.data,
@@ -669,6 +680,8 @@ function describe(state: ModeSharePanelState, modeName: string): string {
       return "This mode's saved settings are damaged, so BT Servant on WhatsApp can't open it. Ask unfoldingWord to check the mode.";
     case "upgrade-needed":
       return "Share codes need a newer BT Servant version.";
+    case "slug-invalid":
+      return "This mode's name can't be encoded as a trigger. Rename it to lowercase letters, digits, and hyphens to share it by QR.";
     case "slug-reserved":
       return `“${modeName}” is a reserved word — on WhatsApp, #${modeName} takes a user out of their mode, so modes with this name aren't shared by QR. Rename the mode to share it.`;
     case "org-unencodable":
@@ -727,6 +740,7 @@ function placeholderLabel(state: ModeSharePanelState): string {
       return "Can't encode this code";
     case "upgrade-needed":
       return "Needs a newer version";
+    case "slug-invalid":
     case "slug-reserved":
       return "Can't encode this name";
     case "org-unencodable":
@@ -750,10 +764,6 @@ function placeholderLabel(state: ModeSharePanelState): string {
 
 function describeFailure(failure: ShareCodeFailure): string {
   switch (failure) {
-    case "signed-out":
-      return "Your session has ended. Sign in again to get this mode's code.";
-    case "forbidden":
-      return "You don't have access to this org's modes, so its WhatsApp code can't be checked.";
     case "invalid-name":
       return "BT Servant doesn't accept this mode's name. Rename it to lowercase letters, digits, and hyphens to share it by QR.";
     case "org-invalid":
@@ -773,5 +783,9 @@ function describeTransient(cause: ShareCodeTransient): string {
       return "BT Servant had a problem checking this mode's code. Try again.";
     case "network":
       return "Couldn't reach BT Servant to check this mode's code. Check your connection and try again.";
+    case "signed-out":
+      return "Your session may have ended. Sign in again to get this mode's code, or try again.";
+    case "forbidden":
+      return "You don't have access to this org's modes, so its WhatsApp code can't be checked. If that's unexpected, try again.";
   }
 }

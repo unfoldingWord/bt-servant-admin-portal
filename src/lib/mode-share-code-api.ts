@@ -57,10 +57,6 @@ export function saveMayChangeShareCode(
  * are answers too (data): retrying won't change them.
  */
 export type ShareCodeFailure =
-  /** 401: the session has ended. */
-  | "signed-out"
-  /** 403: the caller can't read this org's modes. */
-  | "forbidden"
   /** 400 code `invalid_mode_name`: the worker's pattern, or a path the BFF couldn't decode. */
   | "invalid-name"
   /** 400 code `invalid_org`: the mode's org (BFF org resolution, or the worker's `field: "org"`). */
@@ -76,8 +72,15 @@ export type ShareCodeTransient =
   | "unavailable"
   /** Other 5xx, or a body this client can't read. */
   | "server"
-  /** The request never got an answer. */
-  | "network";
+  /** The request never got an answer, or its body was cut off. */
+  | "network"
+  /**
+   * 401: the session looks ended. Retryable, not cached as an answer: a
+   * session blip mustn't stick for the stale time.
+   */
+  | "signed-out"
+  /** 403: no access to this org's modes. Retryable for the same reason. */
+  | "forbidden";
 
 /**
  * Thrown for a transient outcome, so TanStack Query treats it as a failed
@@ -104,9 +107,9 @@ export type ModeShareCode =
   /** 404 `mode_not_found`: no such mode in this org. */
   | { capability: "not-found" }
   /**
-   * 404 `share_code_unsupported`, or a non-JSON / empty 404: the worker
-   * (or this BFF) has no share-code route. No
-   * code is offered for any mode until BT Servant is upgraded.
+   * 404 `share_code_unsupported`: the BFF reports a worker without the
+   * share-code route. No code is offered for any mode until BT Servant is
+   * upgraded.
    */
   | { capability: "upgrade-needed" }
   | { capability: "failed"; failure: ShareCodeFailure };
@@ -130,14 +133,13 @@ export async function getModeShareCode(
     if (signal?.aborted) throw error;
     throw new ShareCodeRequestError("network");
   }
-  const data = (await res.json().catch(() => null)) as Record<
-    string,
-    unknown
-  > | null;
+  const data = await readJsonBody(res, signal);
   // The BFF's machine-readable code; the human `error` text is never read.
   const code = typeof data?.code === "string" ? data.code : null;
   if (res.status === 503) throw new ShareCodeRequestError("unavailable");
-  if (res.status === 404) return notFoundAnswer(data, code);
+  if (res.status === 401) throw new ShareCodeRequestError("signed-out");
+  if (res.status === 403) throw new ShareCodeRequestError("forbidden");
+  if (res.status === 404) return notFoundAnswer(code);
   if (!res.ok) {
     const failure = definiteFailure(res.status, code);
     if (failure === null) throw new ShareCodeRequestError("server");
@@ -149,40 +151,58 @@ export async function getModeShareCode(
 }
 
 /**
- * A 404: the mode is gone, or the share-code route doesn't exist (the
- * BFF's `share_code_unsupported`, or a non-JSON / empty 404 from a portal
- * without the route). Any other JSON 404 means the route exists and
- * something else failed: transient.
+ * The body as a JSON object, or null when a fully received body isn't
+ * one. A read that fails (the request aborted, or the connection cut) is
+ * not a body to classify: a cancellation stays one, anything else is
+ * "network".
  */
-function notFoundAnswer(
-  data: Record<string, unknown> | null,
-  code: string | null
-): ModeShareCode {
-  if (code === SHARE_CODE_ERRORS.modeNotFound)
-    return { capability: "not-found" };
-  if (code === SHARE_CODE_ERRORS.shareCodeUnsupported) {
-    return { capability: "upgrade-needed" };
+async function readJsonBody(
+  res: Response,
+  signal: AbortSignal | undefined
+): Promise<Record<string, unknown> | null> {
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ShareCodeRequestError("network");
   }
-  if (data === null || typeof data !== "object") {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A 404: the mode is gone, or the BFF reports a worker without the
+ * share-code route (`share_code_unsupported`). Anything else means the
+ * route exists and something else failed: transient.
+ */
+function notFoundAnswer(code: string | null): ModeShareCode {
+  if (code === SHARE_CODE_ERRORS.modeNotFound) {
+    return { capability: "not-found" };
+  }
+  if (code === SHARE_CODE_ERRORS.shareCodeUnsupported) {
     return { capability: "upgrade-needed" };
   }
   throw new ShareCodeRequestError("server");
 }
 
 /**
- * Name a definite failure by its code, or null when it's transient. The
- * status is read only for a body without a known code: something in
- * front of the BFF (an edge 401/403), or a newer BFF's 400.
+ * Name a definite failure by its code, or null when it's transient. A 400
+ * without a code this client knows is a generic bad request.
  */
 function definiteFailure(
   status: number,
   code: string | null
 ): ShareCodeFailure | null {
   switch (code) {
-    case SHARE_CODE_ERRORS.unauthorized:
-      return "signed-out";
-    case SHARE_CODE_ERRORS.forbidden:
-      return "forbidden";
     case SHARE_CODE_ERRORS.invalidModeName:
       return "invalid-name";
     case SHARE_CODE_ERRORS.invalidOrg:
@@ -193,11 +213,7 @@ function definiteFailure(
     case SHARE_CODE_ERRORS.corruptModesRecord:
       return "corrupt-record";
     default:
-      // No code (or one this client doesn't know): the status alone.
-      if (status === 401) return "signed-out";
-      if (status === 403) return "forbidden";
-      if (status === 400) return "bad-request";
-      return null;
+      return status === 400 ? "bad-request" : null;
   }
 }
 
@@ -211,8 +227,19 @@ export function parseShareCodeResponse(
       return { capability: "unconfigured" };
     case "present": {
       const answer = parseShareCodeAnswer(data);
-      if (answer === null || typeof data.home_org !== "string") return null;
-      return { capability: "present", home_org: data.home_org, ...answer };
+      if (
+        answer === null ||
+        typeof data.home_org !== "string" ||
+        typeof data.queried_org !== "string"
+      ) {
+        return null;
+      }
+      return {
+        capability: "present",
+        home_org: data.home_org,
+        queried_org: data.queried_org,
+        ...answer,
+      };
     }
     default:
       return null;

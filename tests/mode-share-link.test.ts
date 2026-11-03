@@ -275,12 +275,20 @@ describe("resolveModeSharePanelState", () => {
     failure: null,
   };
   type Present = Extract<ModeShareCodeResponse, { capability: "present" }>;
-  const answer = (
-    a: Omit<Present, "capability" | "home_org"> & { home_org?: string }
-  ): Present => ({ capability: "present", home_org: "unfoldingWord", ...a });
-  const present = (
-    a: Omit<Present, "capability" | "home_org"> & { home_org?: string }
-  ): ShareCodeSnapshot => ({ ...settled, answer: answer(a) });
+  type AnswerFields = Omit<
+    Present,
+    "capability" | "home_org" | "queried_org"
+  > & { home_org?: string; queried_org?: string };
+  const answer = (a: AnswerFields): Present => ({
+    capability: "present",
+    home_org: "unfoldingWord",
+    queried_org: "PBT",
+    ...a,
+  });
+  const present = (a: AnswerFields): ShareCodeSnapshot => ({
+    ...settled,
+    answer: answer(a),
+  });
   const code = (data: ModeShareCode): ShareCodeSnapshot => ({
     ...settled,
     answer: data,
@@ -310,13 +318,15 @@ describe("resolveModeSharePanelState", () => {
       config?: ShareConfigSnapshot;
       flags?: { published?: boolean; requires_group?: boolean };
       org?: string | null;
+      name?: string;
     } = {}
   ) =>
     resolveModeSharePanelState(
       opts.config ?? config,
       shareCode,
       opts.flags ?? ready,
-      opts.org === undefined ? "PBT" : opts.org
+      opts.org === undefined ? "PBT" : opts.org,
+      opts.name ?? "obt-coach"
     );
 
   it("builds a home mode's bare link from the worker's code", () => {
@@ -464,36 +474,86 @@ describe("resolveModeSharePanelState", () => {
     ).toEqual({ kind: "group-only" });
   });
 
-  it("compares the colliding org exactly: a padded org is another org", () => {
-    // " PBT" vs "PBT": a cross-org clash, never "another mode in this org".
-    expect(run(miss("collision", " PBT"))).toMatchObject({
+  it("decides same-org against the exact org the BFF queried, never trimmed", () => {
+    const clash = (queried: string, resolved: string) =>
+      present({
+        code: "pbt/obt-coach",
+        resolves: false,
+        reason: "collision",
+        resolved_org: resolved,
+        queried_org: queried,
+      });
+    // A super-admin on a legacy padded org: the BFF queried " PBT".
+    expect(run(clash(" PBT", " PBT"), { org: " PBT" })).toMatchObject({
       kind: "collision",
-      resolvedOrg: " PBT",
+      sameOrg: true,
+    });
+    // " PBT" and "PBT" are different orgs to the worker, either way round,
+    // whatever the page calls the mode's org.
+    expect(run(clash(" PBT", "PBT"), { org: "PBT" })).toMatchObject({
       sameOrg: false,
     });
-    expect(run(miss("collision", "PBT"), { org: " PBT" })).toMatchObject({
+    expect(run(clash("PBT", " PBT"), { org: " PBT" })).toMatchObject({
       sameOrg: false,
     });
   });
 
-  it("lets the worker's invalid_mode win over the page's draft / group-only, as the worker orders it", () => {
-    // #477 staticReason: a malformed partner mode is invalid_mode before
-    // draft or group-only.
+  it("checks the name before the page's flags: a draft named `default` hears rename", () => {
+    const unasked: ShareCodeSnapshot = { ...settled, checking: true };
+    expect(
+      run(unasked, { flags: { published: false }, name: "default" })
+    ).toEqual({ kind: "slug-reserved" });
+    expect(
+      run(unasked, { flags: { published: false }, name: "Fia Mode" })
+    ).toEqual({ kind: "slug-invalid" });
+    expect(
+      run(unasked, {
+        flags: { published: true, requires_group: true },
+        name: "none",
+      })
+    ).toEqual({ kind: "slug-reserved" });
+    // The worker's own answers for the same cases map to the same states.
+    expect(run(miss("reserved"))).toEqual({ kind: "slug-reserved" });
+    expect(
+      run(code({ capability: "failed", failure: "invalid-name" }))
+    ).toEqual({ kind: "failed", failure: "invalid-name" });
+  });
+
+  it("keeps the page's draft / group-only in charge (the worker isn't asked then)", () => {
     for (const flags of [
       { published: false },
       { published: true, requires_group: true },
     ]) {
+      // Even if a stale answer from an earlier publish were around.
       expect(run(miss("invalid_mode"), { flags })).toEqual({
-        kind: "invalid-mode",
+        kind: flags.published ? "group-only" : "draft",
       });
     }
-    // Any other answer (or none yet) leaves the page's flags in charge.
-    expect(run(miss("draft"), { flags: { published: false } })).toEqual({
-      kind: "draft",
+  });
+
+  it("reads a missing code by its reason first", () => {
+    const noCode = (reason?: string) =>
+      present({
+        code: null,
+        resolves: false,
+        ...(reason !== undefined ? { reason } : {}),
+      });
+    expect(run(noCode("draft"))).toEqual({
+      kind: "worker-sees",
+      sees: "draft",
     });
-    expect(
-      run({ ...settled, checking: true }, { flags: { published: false } })
-    ).toEqual({ kind: "draft" });
+    expect(run(noCode("requires_group"))).toEqual({
+      kind: "worker-sees",
+      sees: "group-only",
+    });
+    expect(run(noCode("invalid_mode"))).toEqual({ kind: "invalid-mode" });
+    expect(run(noCode("reserved"))).toEqual({ kind: "slug-reserved" });
+    // Reasons that need a code to point at read as an unusable org name.
+    for (const reason of ["org_skipped", "collision", "capped", undefined]) {
+      expect(run(noCode(reason)), String(reason)).toEqual({
+        kind: "org-unencodable",
+      });
+    }
   });
 
   it("says what BT Servant sees when it says draft / group-only for a page-published mode", () => {
@@ -538,8 +598,6 @@ describe("resolveModeSharePanelState", () => {
       kind: "upgrade-needed",
     });
     for (const failure of [
-      "signed-out",
-      "forbidden",
       "invalid-name",
       "org-invalid",
       "bad-request",
@@ -664,6 +722,7 @@ describe("refreshFailed and retryControl", () => {
   const lastAnswer = {
     capability: "present" as const,
     home_org: "uW",
+    queried_org: "PBT",
     code: "x",
     resolves: true,
   };
@@ -785,6 +844,7 @@ describe("workerSaysUnshareable", () => {
   const base = {
     capability: "present" as const,
     home_org: "unfoldingWord",
+    queried_org: "PBT",
     code: "pbt/x",
   };
   it("is true only for a draft / group-only answer (never cached)", () => {
@@ -814,6 +874,7 @@ describe("per-open snapshot: shareCodeStart and shareCodeSnapshot", () => {
   const answerA = {
     capability: "present" as const,
     home_org: "uW",
+    queried_org: "PBT",
     code: "pbt/a",
     resolves: true,
   };
@@ -890,7 +951,8 @@ describe("per-open snapshot: shareCodeStart and shareCodeSnapshot", () => {
         },
         failed,
         { published: true },
-        "PBT"
+        "PBT",
+        "a"
       )
     ).toEqual({ kind: "retry", cause: "network" });
   });
@@ -940,7 +1002,8 @@ describe("per-open snapshot: shareCodeStart and shareCodeSnapshot", () => {
       config,
       snap,
       { published: true },
-      "PBT"
+      "PBT",
+      "a"
     );
     expect(state).toEqual({ kind: "retry", cause: "network" });
     expect(retryControl(state, snap, null)).toEqual({
@@ -1009,6 +1072,7 @@ describe("homeOrgWithoutModes", () => {
     code: "pbt/x",
     resolves: true,
     home_org: "unfoldingWord",
+    queried_org: "PBT",
   };
   it("names the gateway org only when the worker says it has no modes", () => {
     expect(homeOrgWithoutModes({ ...base, home_has_modes: false })).toBe(

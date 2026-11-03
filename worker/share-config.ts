@@ -94,7 +94,6 @@ export function shareCodeError(
 
 /** Who is asking, for what the answer may name. */
 export interface ShareCodeCaller {
-  org: string;
   isSuperAdmin: boolean;
 }
 
@@ -137,9 +136,9 @@ export async function handleModeShareCode(
 ): Promise<Response> {
   // Used EXACTLY as set: the worker's home check is an exact KV key match
   // (`<org>:modes`), so trimming here could ask from a different org than
-  // the gateway sends. This pre-check is only a cheap guard that skips a
-  // round trip for a value that can't work; the worker is authoritative,
-  // and its 400s name the field they rejected (mapped below).
+  // the gateway sends. Only an unset value is caught here; the worker
+  // judges the rest, and its 400s name the field they rejected (mapped
+  // below).
   const homeOrg = env.WHATSAPP_ORG;
   if (homeOrg === undefined || !isUsableHomeOrg(homeOrg)) {
     return jsonResponse({
@@ -270,38 +269,38 @@ export async function handleModeShareCode(
   return jsonResponse({
     capability: "present",
     home_org: homeOrg,
-    ...withoutForeignOrg(answer, opts.caller),
+    queried_org: org,
+    ...withoutForeignOrg(answer, org, opts.caller),
   } satisfies ModeShareCodeResponse);
 }
 
 /**
  * `resolved_org` names the org whose mode a code opens instead. Only a
- * super-admin, or a caller whose own org it is, may see that name: other
- * orgs' mode names are not theirs to learn. Without it the panel says
- * "another org's mode".
+ * super-admin may see another org's name: other orgs' mode names are not
+ * an org admin's to learn. The org this route asked about (`queried`, the
+ * exact string sent to the worker; the caller's own org unless they are a
+ * super-admin) is always fine to name. Without it the panel says "another
+ * org's mode".
  */
 function withoutForeignOrg(
   answer: ShareCodeAnswer,
+  queried: string,
   caller: ShareCodeCaller
 ): ShareCodeAnswer {
   if (answer.resolved_org === undefined || caller.isSuperAdmin) return answer;
-  // Exact, like the worker's own org keys (#247/#253): " pbt" and "pbt"
-  // are different orgs, so a padded foreign org never passes as one's own.
-  if (answer.resolved_org === caller.org) return answer;
+  // Exact, the same rule the panel's same-org check uses on `queried_org`:
+  // the worker's org keys are exact (#247/#253), so " pbt" is not "pbt".
+  if (answer.resolved_org === queried) return answer;
   const rest = { ...answer };
   delete rest.resolved_org;
   return rest;
 }
 
-/** Cloudflare KV's key limit, in bytes; the worker applies it to `<org>:modes`. */
-const KV_KEY_MAX_BYTES = 512;
-
 /**
- * Whether WHATSAPP_ORG can name a home org for the worker: not empty or
- * whitespace-only, and its `<org>:modes` key within the KV key limit (the
- * worker's own `invalid_org` rule, bt-servant-worker#477).
+ * Whether WHATSAPP_ORG is set at all: not empty or whitespace-only. Every
+ * other rule (e.g. the KV key length) is the worker's, which answers 400
+ * with `field: "home_org"` (mapped to `unconfigured` above).
  */
 export function isUsableHomeOrg(org: string): boolean {
-  if (org.trim() === "") return false;
-  return new TextEncoder().encode(`${org}:modes`).length <= KV_KEY_MAX_BYTES;
+  return org.trim() !== "";
 }
