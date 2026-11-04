@@ -218,6 +218,15 @@ describe("buildShareLinkFromCode", () => {
         reason: "code-unencodable",
       });
     }
+    // A bare clear token is URL-safe but never a link (it would clear the
+    // scanner's mode).
+    for (const token of ["default", "none", "clear"]) {
+      expect(isUrlSafeShareCode(token)).toBe(true);
+      expect(buildShareLinkFromCode("15550100100", token), token).toEqual({
+        ok: false,
+        reason: "code-unencodable",
+      });
+    }
     expect(isUrlSafeShareCode("a".repeat(1000))).toBe(true);
     expect(isUrlSafeShareCode("a".repeat(1001))).toBe(false);
   });
@@ -359,6 +368,20 @@ describe("resolveModeSharePanelState", () => {
         kind: "code-unencodable",
       });
     }
+  });
+
+  it("never builds a link from a bare clear token, even when the worker says it resolves", () => {
+    for (const token of ["default", "none", "clear"]) {
+      const state = run(present({ code: token, resolves: true }));
+      expect(state, token).toEqual({ kind: "code-unencodable" });
+      expect(JSON.stringify(state)).not.toContain(`text=%23${token}`);
+    }
+    // The qualified form is not a clear token: it still gets its QR.
+    expect(
+      run(
+        present({ code: "pbt/default", resolves: true, queried_org: "PBT" })
+      )
+    ).toMatchObject({ kind: "ready", trigger: "#pbt/default" });
   });
 
   it("checks URL safety only for a code that resolves; otherwise the reason's copy", () => {

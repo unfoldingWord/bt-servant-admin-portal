@@ -149,13 +149,16 @@ export type ModeShareLinkResult =
  * resolves (bare or `<orgslug>/<slug>`), on a number already normalised
  * to `wa.me` digits (`whatsAppNumber`). The code is trusted as given;
  * this is the one place that checks it can be carried in a URL
- * (`isUrlSafeShareCode`).
+ * (`isUrlSafeShareCode`), and the backstop that a bare clear token
+ * (`#default`, `#none`, `#clear`) never becomes a link, whatever the
+ * worker's `resolves` says: such a QR would silently take the scanner out
+ * of their mode. A qualified `<orgslug>/default` is not a clear token.
  */
 export function buildShareLinkFromCode(
   digits: string,
   code: string
 ): ModeShareLinkResult {
-  if (!isUrlSafeShareCode(code)) {
+  if (!isUrlSafeShareCode(code) || RESERVED_TRIGGERS.has(code)) {
     return { ok: false, reason: "code-unencodable" };
   }
   const trigger = modeShareTrigger(code);
