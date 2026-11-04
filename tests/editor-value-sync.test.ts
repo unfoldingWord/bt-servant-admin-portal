@@ -1,7 +1,13 @@
-import { EditorState, type Transaction } from "@codemirror/state";
+import { redo, undo } from "@codemirror/commands";
+import {
+  EditorState,
+  type Transaction,
+  type TransactionSpec,
+} from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 
 import {
+  editorHistory,
   hasUserEdit,
   planExternalValueSync,
 } from "../src/lib/editor-value-sync";
@@ -17,6 +23,31 @@ const CR = LF.replace(/\n/g, "\r");
 const MIXED = "# Title\r\n\nFirst line\r\rSecond line\n";
 
 /**
+ * Dispatches a plan the way `MarkdownEditor` does: each spec as its own
+ * transaction, in order. Returns every transaction and the final state.
+ */
+function applyPlan(
+  state: EditorState,
+  plan: readonly TransactionSpec[]
+): { state: EditorState; transactions: Transaction[] } {
+  const transactions: Transaction[] = [];
+  let current = state;
+  for (const spec of plan) {
+    const tr = current.update(spec);
+    transactions.push(tr);
+    current = tr.state;
+  }
+  return { state: current, transactions };
+}
+
+/** The final state after applying a plan that must not be null. */
+function synced(state: EditorState, value: string): EditorState {
+  const plan = planExternalValueSync(state, value);
+  expect(plan).not.toBeNull();
+  return applyPlan(state, plan!).state;
+}
+
+/**
  * The parent/editor loop in miniature: the parent hands `value` down, the
  * editor applies it, and a transaction that counts as a user edit is reported
  * back and becomes the parent's new draft.
@@ -25,12 +56,14 @@ function handDown(
   state: EditorState,
   value: string
 ): { state: EditorState; draft: string; dispatched: boolean } {
-  const spec = planExternalValueSync(state, value);
-  if (spec === null) return { state, draft: value, dispatched: false };
-  const tr = state.update(spec);
+  const plan = planExternalValueSync(state, value);
+  if (plan === null) return { state, draft: value, dispatched: false };
+  const applied = applyPlan(state, plan);
   return {
-    state: tr.state,
-    draft: hasUserEdit([tr]) ? tr.state.doc.toString() : value,
+    state: applied.state,
+    draft: hasUserEdit(applied.transactions)
+      ? applied.state.doc.toString()
+      : value,
     dispatched: true,
   };
 }
@@ -79,9 +112,7 @@ describe("planExternalValueSync", () => {
 
   it("replaces the whole document when the value really changed", () => {
     const state = EditorState.create({ doc: "old\r\ntext" });
-    const spec = planExternalValueSync(state, CRLF);
-    expect(spec).not.toBeNull();
-    expect(state.update(spec!).state.doc.toString()).toBe(LF);
+    expect(synced(state, CRLF).doc.toString()).toBe(LF);
   });
 
   it("handles the empty document in both directions", () => {
@@ -89,22 +120,21 @@ describe("planExternalValueSync", () => {
       planExternalValueSync(EditorState.create({ doc: "" }), "")
     ).toBeNull();
     const filled = EditorState.create({ doc: LF });
-    expect(
-      filled.update(planExternalValueSync(filled, "")!).state.doc.length
-    ).toBe(0);
+    expect(synced(filled, "").doc.length).toBe(0);
     const empty = EditorState.create({ doc: "" });
-    expect(
-      empty.update(planExternalValueSync(empty, CRLF)!).state.doc.toString()
-    ).toBe(LF);
+    expect(synced(empty, CRLF).doc.toString()).toBe(LF);
   });
 });
 
 describe("hasUserEdit", () => {
   it("does not count the editor applying its own value prop", () => {
     const state = EditorState.create({ doc: "old" });
-    const tr = state.update(planExternalValueSync(state, CRLF)!);
-    expect(tr.docChanged).toBe(true);
-    expect(hasUserEdit([tr])).toBe(false);
+    const { transactions } = applyPlan(
+      state,
+      planExternalValueSync(state, CRLF)!
+    );
+    expect(transactions.some((tr) => tr.docChanged)).toBe(true);
+    expect(hasUserEdit(transactions)).toBe(false);
   });
 
   it("counts typing", () => {
@@ -128,9 +158,9 @@ describe("hasUserEdit", () => {
 
   it("counts a batch that holds an edit beside a value sync", () => {
     const state = EditorState.create({ doc: "old" });
-    const sync = state.update(planExternalValueSync(state, LF)!);
+    const sync = applyPlan(state, planExternalValueSync(state, LF)!);
     const typed = typeAtEnd(sync.state, "x");
-    expect(hasUserEdit([sync, typed])).toBe(true);
+    expect(hasUserEdit([...sync.transactions, typed])).toBe(true);
   });
 });
 
@@ -167,5 +197,96 @@ describe("a document keeps its stored bytes until the user edits it", () => {
     expect(tr.state.doc.toString()).toBe(`${LF}x`);
     // The page stores that text as the draft; handing it back is a no-op.
     expect(planExternalValueSync(tr.state, `${LF}x`)).toBeNull();
+  });
+});
+
+// #349 — Ctrl+Z straight after a mode loaded undid the load: the editor went
+// back to what it held before the value arrived, the undo counted as a user
+// edit, and autosave sent it. The page mounts the editor before it hands the
+// loaded document down, so "before" is the empty string on a first open and
+// the previous mode's draft after a switch.
+
+const MODE_A = "# Mode A\n\nAlpha instructions\n";
+const MODE_B = "# Mode B\n\nBeta instructions\n";
+
+/** The editor's own state: history in the compartment the plan resets. */
+function editorState(doc: string): EditorState {
+  return EditorState.create({ doc, extensions: [editorHistory()] });
+}
+
+/**
+ * Runs an undo (or redo) command and reports what the page would see: the
+ * resulting state, whether the command did anything, and the text handed to
+ * `onChange` if the command counted as a user edit.
+ */
+function press(
+  command: typeof undo,
+  state: EditorState
+): { state: EditorState; ran: boolean; reported: string | null } {
+  let next = state;
+  let reported: string | null = null;
+  const ran = command({
+    state,
+    dispatch: (tr) => {
+      if (hasUserEdit([tr])) reported = tr.state.doc.toString();
+      next = tr.state;
+    },
+  });
+  return { state: next, ran, reported };
+}
+
+describe("applying the value prop cannot be undone (#349)", () => {
+  it("Ctrl+Z right after the first load does nothing", () => {
+    const loaded = synced(editorState(""), MODE_B);
+    const z = press(undo, loaded);
+    expect(z.ran).toBe(false);
+    expect(z.reported).toBeNull();
+    expect(z.state.doc.toString()).toBe(MODE_B);
+  });
+
+  it("Ctrl+Z after a switch never brings back the other mode's text", () => {
+    // The editor holds A, with an edit of the user's in its history, when B
+    // is handed down (the cached-mode switch keeps the editor mounted; an
+    // uncached one remounts it on A's stale draft).
+    const typed = typeAtEnd(synced(editorState(""), MODE_A), "more").state;
+    const switched = synced(typed, MODE_B);
+    const z = press(undo, switched);
+    expect(z.ran).toBe(false);
+    expect(z.reported).toBeNull();
+    expect(z.state.doc.toString()).toBe(MODE_B);
+  });
+
+  it("an editor mounted on the previous mode's draft cannot undo to it", () => {
+    const z = press(undo, synced(editorState(MODE_A), MODE_B));
+    expect(z.ran).toBe(false);
+    expect(z.state.doc.toString()).toBe(MODE_B);
+  });
+
+  it("edits after a load still undo, back to the loaded text and no further", () => {
+    const loaded = synced(editorState(""), MODE_B);
+    const typed = typeAtEnd(loaded, "x").state;
+    const first = press(undo, typed);
+    expect(first.ran).toBe(true);
+    expect(first.reported).toBe(MODE_B);
+    expect(first.state.doc.toString()).toBe(MODE_B);
+    expect(press(undo, first.state).ran).toBe(false);
+    // Redo still works within the fresh history.
+    expect(press(redo, first.state).state.doc.toString()).toBe(`${MODE_B}x`);
+  });
+
+  it("a page-driven replace of the open document (priorities Apply) is not undoable", () => {
+    // Decision recorded in #349: an Apply is saved by its own PUT, and a
+    // Ctrl+Z that reverted it would autosave the pre-Apply document.
+    const loaded = synced(editorState(""), MODE_B);
+    const applied = synced(loaded, `${MODE_B}\n<!-- order: ["a"] -->\n`);
+    const z = press(undo, applied);
+    expect(z.ran).toBe(false);
+    expect(z.reported).toBeNull();
+  });
+
+  it("re-rendering with the shown value leaves the history alone", () => {
+    const typed = typeAtEnd(synced(editorState(""), MODE_B), "x").state;
+    expect(planExternalValueSync(typed, `${MODE_B}x`)).toBeNull();
+    expect(press(undo, typed).state.doc.toString()).toBe(MODE_B);
   });
 });

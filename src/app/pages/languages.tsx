@@ -5,6 +5,7 @@ import { Save } from "lucide-react";
 import { useBlocker } from "react-router";
 
 import { useAuthStore } from "@/lib/auth-store";
+import { wouldBlankStoredDocument } from "@/lib/autosave-gate";
 import {
   contextSwitchReason,
   decideContextChange,
@@ -402,6 +403,9 @@ export function LanguagesPage() {
     if (debouncedDraft !== draft) return;
     if (debouncedDraft === lastSyncedDoc) return;
     if (debouncedDraft === lastFailedDoc) return;
+    // #349 — never autosave a blank over a stored document with content; the
+    // modes editor refuses the same in `shouldAutoSaveDraft`. Save still can.
+    if (wouldBlankStoredDocument(debouncedDraft, lastSyncedDoc)) return;
     // Frank rd-2 P2: skip autosave when the user has no edit rights on
     // the selected row. Without this gate, a publish-only shepherd's
     // accidental keystroke triggers an autosave that 403s — the

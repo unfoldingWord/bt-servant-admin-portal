@@ -21,10 +21,14 @@ import {
   syntaxHighlighting,
 } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 
 import { cn } from "@/lib/utils";
-import { hasUserEdit, planExternalValueSync } from "@/lib/editor-value-sync";
+import {
+  editorHistory,
+  hasUserEdit,
+  planExternalValueSync,
+} from "@/lib/editor-value-sync";
 import { parseHeadings } from "@/lib/markdown-headings";
 import { findCommentRanges } from "@/lib/markdown-comment-ranges";
 import type { MarkdownHeading } from "@/types/markdown";
@@ -169,7 +173,9 @@ export const MarkdownEditor = forwardRef<
   // the *Ref pattern above.
   const extensions = useMemo(
     () => [
-      history(),
+      // Not a bare `history()`: the value sync below resets the history it
+      // holds, so Ctrl+Z cannot undo a load (#349).
+      editorHistory(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       markdown(),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
@@ -240,8 +246,11 @@ export const MarkdownEditor = forwardRef<
   useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
+    // Two transactions, in order: apply `value` with the undo history
+    // removed, then start a fresh one (#349). One dispatch with both specs
+    // would merge them into a single transaction and keep the old history.
     const sync = planExternalValueSync(view.state, value);
-    if (sync !== null) view.dispatch(sync);
+    if (sync !== null) for (const spec of sync) view.dispatch(spec);
   }, [value]);
 
   // ReadOnly toggle → reconfigure compartment in place. No remount,

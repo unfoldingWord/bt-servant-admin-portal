@@ -14,13 +14,22 @@
 // stored document to LF just for opening it. For someone who cannot, the
 // draft stayed "unsaved" for good.
 //
-// Both decisions live here, on `EditorState` alone, so they can be tested
-// against real CodeMirror without a DOM.
+// Applying `value` also starts a new undo history (#349). The transaction
+// that applies it used to be an ordinary undoable change, so Ctrl+Z straight
+// after a mode loaded undid the load itself: the editor went back to what it
+// held before (empty on first open, the previous mode's text after a switch),
+// that undo was a user edit, and autosave sent it as the new document.
+//
+// All three decisions live here, on `EditorState` alone, so they can be
+// tested against real CodeMirror without a DOM.
 
+import { history } from "@codemirror/commands";
 import {
   Annotation,
+  Compartment,
+  Transaction,
   type EditorState,
-  type Transaction,
+  type Extension,
   type TransactionSpec,
 } from "@codemirror/state";
 
@@ -28,8 +37,36 @@ import {
 const externalValueSync = Annotation.define<boolean>();
 
 /**
- * The transaction that makes the editor show `value`, or `null` when it
- * already does.
+ * Holds the editor's undo history, so a value sync can drop it and start a
+ * fresh one. A compartment is a key, not state: one instance serves every
+ * editor, each holding its own history inside it.
+ */
+const historyCompartment = new Compartment();
+
+/**
+ * The undo history extension for an editor whose `value` is synced through
+ * `planExternalValueSync`. Use it in place of a bare `history()`: the reset
+ * the plan performs only reaches a history held in this compartment.
+ */
+export function editorHistory(): Extension {
+  return historyCompartment.of(history());
+}
+
+/**
+ * The transactions that make the editor show `value`, to be dispatched in
+ * order, or `null` when it already does.
+ *
+ * Applying `value` is not an edit the user can undo. The first transaction
+ * replaces the document outside the history and removes the history; the
+ * second puts back an empty one. Removing it, and not only keeping this one
+ * change out of it, matters: older entries would otherwise be mapped through
+ * a whole-document replace, and undoing one could put the previous
+ * document's text back into the new one. Edits made after the sync undo as
+ * usual, back to `value` and no further.
+ *
+ * The same holds when the page replaces the document it already shows (a
+ * resource-priorities Apply, an import of the open mode): both are saved by
+ * their own PUT, and Ctrl+Z does not take them back.
  *
  * "Already does" is judged the way CodeMirror will store the text
  * (`state.toText`, which honours the state's own line-separator setting), not
@@ -40,16 +77,23 @@ const externalValueSync = Annotation.define<boolean>();
 export function planExternalValueSync(
   state: EditorState,
   value: string
-): TransactionSpec | null {
+): readonly TransactionSpec[] | null {
   // The typing round trip (onChange → parent → value) lands here on every
   // keystroke with the editor's own text; one string compare settles it.
   if (state.doc.toString() === value) return null;
   const next = state.toText(value);
   if (next.eq(state.doc)) return null;
-  return {
-    changes: { from: 0, to: state.doc.length, insert: next },
-    annotations: externalValueSync.of(true),
-  };
+  return [
+    {
+      changes: { from: 0, to: state.doc.length, insert: next },
+      annotations: [
+        externalValueSync.of(true),
+        Transaction.addToHistory.of(false),
+      ],
+      effects: historyCompartment.reconfigure([]),
+    },
+    { effects: historyCompartment.reconfigure(history()) },
+  ];
 }
 
 /**

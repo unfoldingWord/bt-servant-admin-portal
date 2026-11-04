@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   shouldAutoSaveDraft,
+  wouldBlankStoredDocument,
   type AutoSaveGateInput,
 } from "../src/lib/autosave-gate";
 
@@ -111,6 +112,47 @@ describe("shouldAutoSaveDraft vs. an out-of-band apply", () => {
         draft: edited,
         debouncedDraft: edited,
       })
+    ).toBe(true);
+  });
+});
+
+// #349 — the second line behind the editor fix: autosave never writes an
+// empty document over one with content.
+describe("wouldBlankStoredDocument", () => {
+  it.each([
+    ["", "# Mode", true],
+    ["  \n\r\n\t", "# Mode", true],
+    ["", "", false],
+    ["", "\n", false],
+    ["x", "# Mode", false],
+    ["# Mode", "", false],
+  ])("draft %j over stored %j → %s", (draft, stored, expected) => {
+    expect(wouldBlankStoredDocument(draft, stored)).toBe(expected);
+  });
+});
+
+describe("shouldAutoSaveDraft refuses to blank a stored document (#349)", () => {
+  it("refuses an empty draft over a document with content", () => {
+    expect(
+      shouldAutoSaveDraft(
+        gate({ draft: "", debouncedDraft: "", lastSyncedDoc: "# Mode" })
+      )
+    ).toBe(false);
+  });
+
+  it("refuses a whitespace-only draft too", () => {
+    expect(
+      shouldAutoSaveDraft(
+        gate({ draft: "\n\n", debouncedDraft: "\n\n", lastSyncedDoc: "# Mode" })
+      )
+    ).toBe(false);
+  });
+
+  it("still saves an empty draft's first real text", () => {
+    expect(
+      shouldAutoSaveDraft(
+        gate({ draft: "# New", debouncedDraft: "# New", lastSyncedDoc: "" })
+      )
     ).toBe(true);
   });
 });
