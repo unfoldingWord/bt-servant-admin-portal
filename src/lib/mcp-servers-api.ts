@@ -2,12 +2,10 @@ import type {
   McpServerPoolResponse,
   McpServerWrite,
 } from "@/types/mcp-servers";
-
-// X-Requested-With is the same-origin marker the worker requires on the
-// cookie-auth path. Every MCP-servers request from the browser includes it.
-const SAME_ORIGIN_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-} as const;
+// X-Requested-With (SAME_ORIGIN_HEADERS) is the same-origin marker the
+// worker requires on the cookie-auth path. Every MCP-servers request from
+// the browser includes it.
+import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
 // Thrown when the BFF returns 403 — the caller lacks the rights for this
 // operation (not an admin, editing a server owned by another org, or a

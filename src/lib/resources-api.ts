@@ -1,8 +1,5 @@
 import type { AggregatedResourcesResponse } from "@/types/resources";
-
-const SAME_ORIGIN_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-} as const;
+import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
 // Unlike the other config APIs this endpoint carries a required `language`
 // query param alongside the optional super-admin `?org=`, so it builds its

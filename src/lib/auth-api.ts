@@ -1,8 +1,5 @@
 import type { AuthUser } from "@/types/auth";
-
-const SAME_ORIGIN_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-} as const;
+import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
 interface AuthResponse {
   user: AuthUser;

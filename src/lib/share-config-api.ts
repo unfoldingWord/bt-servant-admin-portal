@@ -1,14 +1,10 @@
 // Client for the BFF's read-only share config (#311, `worker/share-config.ts`).
 
-const SAME_ORIGIN_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-} as const;
+import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
 export interface ShareConfig {
   /** Operator-entered WhatsApp number, not yet normalised. `null` = unset. */
   whatsappNumber: string | null;
-  /** Org the WhatsApp gateway is pinned to. `null` = unknown. */
-  whatsappOrg: string | null;
 }
 
 // Feature-detected: a portal build that predates the route answers 404, and
@@ -37,7 +33,6 @@ export async function getShareConfig(
     supported: true,
     config: {
       whatsappNumber: stringOrNull(data.whatsapp_number),
-      whatsappOrg: stringOrNull(data.whatsapp_org),
     },
   };
 }

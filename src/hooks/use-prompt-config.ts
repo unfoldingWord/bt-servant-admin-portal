@@ -6,7 +6,14 @@ import {
 } from "@tanstack/react-query";
 import { useCallback } from "react";
 
+import {
+  MODE_SHARE_CODE_KEY,
+  modeShareCodeKeys,
+  saveMayChangeShareCode,
+  type ModeShareCode,
+} from "@/lib/mode-share-code-api";
 import * as configApi from "@/lib/config-api";
+import type { ModeFlags } from "@/lib/mode-flags";
 import type {
   OrgModes,
   PromptMode,
@@ -30,6 +37,18 @@ const keys = {
 
 // Exported for unit tests that assert cache effects by key.
 export const modeQueryKeys = keys;
+
+/**
+ * Re-ask the worker for share codes (#345) after a structural write: a
+ * create, publish or unpublish, group-only flip, rename, retire (aliases)
+ * or delete. Every org's answers, not only the written org's: cross-org
+ * slug collisions and the gateway org's home pool make one org's codes
+ * depend on other orgs' modes. A document autosave changes none of that
+ * and invalidates nothing (`saveMayChangeShareCode`).
+ */
+export function invalidateShareCodes(qc: QueryClient) {
+  void qc.invalidateQueries({ queryKey: MODE_SHARE_CODE_KEY });
+}
 
 function normalize(org?: string | null): string | null {
   return org ?? null;
@@ -105,6 +124,13 @@ export interface ModeSaveTarget {
    */
   org: string | null;
   /**
+   * The mode's flags as the page last synced them, before this save
+   * (`lastSyncedFlags`), so the settle can tell whether the share code may
+   * have changed (#345). Absent for a mode the page hasn't synced (create,
+   * import): read as "may have changed".
+   */
+  flagsBefore?: ModeFlags;
+  /**
    * Opt-in cache seed for a PUT that targets a mode the editor is NOT
    * (necessarily) showing — import (#198) and create (#308). When set, the
    * PUT response is written into the TARGET mode's per-mode cache AND
@@ -133,13 +159,31 @@ export interface ModeSaveTarget {
 
 // Exported so the cache effects can be tested against a real QueryClient
 // without React (same shape as `languageSaveMutationOptions`).
+/**
+ * What a mode save snapshots before its PUT (#345): the worker's last
+ * share-code answer, taken in `onMutate` before any refetch can replace
+ * it. The flags before the save come from the variables (`flagsBefore`).
+ */
+export interface ModeSaveContext {
+  lastAnswer: ModeShareCode | undefined;
+}
+
 export function saveModeMutationOptions(qc: QueryClient) {
   return {
     mutationFn: ({ name, body, org }: ModeSaveTarget) =>
       configApi.putMode(name, body, undefined, org),
+    onMutate: ({ name, org }: ModeSaveTarget): ModeSaveContext => {
+      const key = normalize(org);
+      return {
+        lastAnswer: qc.getQueryData<ModeShareCode>(
+          modeShareCodeKeys.mode(key, name)
+        ),
+      };
+    },
     onSuccess: async (
       saved: PromptMode,
-      { name, org, seed }: ModeSaveTarget
+      { name, org, seed, flagsBefore, body }: ModeSaveTarget,
+      context: ModeSaveContext | undefined
     ) => {
       const key = normalize(org);
       if (seed) {
@@ -167,6 +211,13 @@ export function saveModeMutationOptions(qc: QueryClient) {
       // reconciles the optimistic rows with server truth (e.g. fresh
       // `aliases`).
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      // No `flagsBefore` (a create or import) reads as "may have changed".
+      // "After" is reconciled from what was sent and what was echoed.
+      if (
+        saveMayChangeShareCode(flagsBefore, body, saved, context?.lastAnswer)
+      ) {
+        invalidateShareCodes(qc);
+      }
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
     },
   };
@@ -208,6 +259,7 @@ export function useDeleteMode(org?: string | null) {
     mutationFn: (name: string) => configApi.deleteMode(name, undefined, key),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      invalidateShareCodes(qc);
     },
   });
 }
@@ -275,6 +327,7 @@ export function useRenameMode(org?: string | null) {
         applyRenameToModeList(prev, name, data)
       );
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      invalidateShareCodes(qc);
       void qc.invalidateQueries({ queryKey: keys.mode(name, key) });
       void qc.invalidateQueries({ queryKey: keys.mode(newName, key) });
     },
@@ -314,6 +367,8 @@ export function useCloneMode(org?: string | null) {
         applyCloneToModeList(prev, data)
       );
       qc.setQueryData(keys.mode(data.name, key), data);
+      // A clone is stored unpublished, which chat never serves, so no
+      // share code changes.
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
       void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
     },
@@ -382,6 +437,7 @@ export function useRetireMode(org?: string | null) {
       qc.setQueryData(keys.mode(data.name, key), data);
       qc.removeQueries({ queryKey: keys.mode(name, key) });
       void qc.invalidateQueries({ queryKey: keys.modes(key) });
+      invalidateShareCodes(qc);
       void qc.invalidateQueries({ queryKey: keys.mode(data.name, key) });
     },
   });

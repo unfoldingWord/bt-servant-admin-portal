@@ -21,7 +21,7 @@ function mockFetch(status: number, body: unknown): ReturnType<typeof vi.fn> {
 
 describe("getShareConfig", () => {
   it("sends the same-origin header to the BFF route", async () => {
-    const spy = mockFetch(200, { whatsapp_number: null, whatsapp_org: null });
+    const spy = mockFetch(200, { whatsapp_number: null });
     await getShareConfig();
     expect(String(spy.mock.calls[0]![0])).toBe("/api/share-config");
     const init = spy.mock.calls[0]![1] as RequestInit;
@@ -31,16 +31,15 @@ describe("getShareConfig", () => {
   });
 
   it("returns the config on 200", async () => {
+    // The deprecated `whatsapp_org` (kept one release for 1.16.x tabs) is
+    // ignored by this client.
     mockFetch(200, {
       whatsapp_number: "+57 300 123 4567",
       whatsapp_org: "unfoldingWord",
     });
     expect(await getShareConfig()).toEqual({
       supported: true,
-      config: {
-        whatsappNumber: "+57 300 123 4567",
-        whatsappOrg: "unfoldingWord",
-      },
+      config: { whatsappNumber: "+57 300 123 4567" },
     });
   });
 
@@ -59,15 +58,20 @@ describe("getShareConfig", () => {
   });
 
   it("drops non-string and blank values to null", async () => {
-    mockFetch(200, { whatsapp_number: 5730012, whatsapp_org: "   " });
+    mockFetch(200, { whatsapp_number: 5730012 });
     expect(await getShareConfig()).toEqual({
       supported: true,
-      config: { whatsappNumber: null, whatsappOrg: null },
+      config: { whatsappNumber: null },
+    });
+    mockFetch(200, { whatsapp_number: "   " });
+    expect(await getShareConfig()).toEqual({
+      supported: true,
+      config: { whatsappNumber: null },
     });
     mockFetch(200, {});
     expect(await getShareConfig()).toEqual({
       supported: true,
-      config: { whatsappNumber: null, whatsappOrg: null },
+      config: { whatsappNumber: null },
     });
   });
 });

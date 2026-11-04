@@ -6,6 +6,7 @@ import {
   isPathShapedOrg,
   jsonResponse,
   listKvKeys,
+  safeDecode,
 } from "./helpers";
 import type { LanguageRights, StoredUser } from "./types";
 
@@ -558,7 +559,9 @@ export async function handleAdmin(
 
   const match = pathname.match(/^\/api\/admin\/users\/(.+)$/);
   if (match?.[1]) {
-    const email = decodeURIComponent(match[1]).toLowerCase();
+    const decoded = safeDecode(match[1]);
+    if (decoded === null) return errorResponse("Invalid user email", 400);
+    const email = decoded.toLowerCase();
     if (request.method === "PUT") return updateUser(request, env, email, auth);
     if (request.method === "DELETE") {
       return deleteUser(request, env, email, auth);

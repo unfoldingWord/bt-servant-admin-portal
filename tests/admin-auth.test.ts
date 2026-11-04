@@ -1620,3 +1620,22 @@ describe("admin users — path-shaped org names (#253)", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Path decoding (#355 review): a malformed %-escape is the caller's error
+// ---------------------------------------------------------------------------
+
+describe("admin users route — a malformed %-escape is a 400, not a 500", () => {
+  for (const method of ["PUT", "DELETE"]) {
+    it(method, async () => {
+      const { status, body } = await call({
+        method,
+        pathname: "/api/admin/users/%E0%A4%A",
+        headers: { "X-Admin-Secret": ADMIN_SECRET },
+        ...(method === "PUT" ? { body: { name: "x" } } : {}),
+      });
+      expect(status).toBe(400);
+      expect(body).toEqual({ error: "Invalid user email" });
+    });
+  }
+});

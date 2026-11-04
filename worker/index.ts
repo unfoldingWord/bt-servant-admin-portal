@@ -21,6 +21,7 @@ import {
 import { handleConfig } from "./config";
 import type { Env } from "./helpers";
 import {
+  authErrorResponse,
   engineKeyMissingResponse,
   errorResponse,
   requireSameOrigin,
@@ -91,13 +92,14 @@ export default {
 
     // Config endpoints — session required
     if (url.pathname.startsWith("/api/config/")) {
+      // The BFF's own 401 / 403 carry a machine-readable `code` (#345;
+      // `requireSameOrigin` builds its 403 the same way). Engine responses
+      // passed through are left as they are.
       const blocked = requireSameOrigin(request);
       if (blocked) return blocked;
 
       const session = await validateSession(request, env);
-      if (!session) {
-        return errorResponse("Unauthorized", 401);
-      }
+      if (!session) return authErrorResponse("Unauthorized", 401);
       // Route label only: config paths can carry user ids.
       const keyMissing = engineKeyMissingResponse(env, "/api/config/*");
       if (keyMissing) return keyMissing;
@@ -139,7 +141,8 @@ export default {
       if (blocked) return blocked;
       const session = await validateSession(request, env);
       if (!session) {
-        return errorResponse("Unauthorized", 401);
+        // The BFF's own 401, coded like every other route's.
+        return authErrorResponse("Unauthorized", 401);
       }
       if (request.method !== "GET") {
         return errorResponse("Method not allowed", 405);
