@@ -3,6 +3,10 @@ import type {
   CreateUserBody,
   UpdateUserBody,
 } from "@/types/admin-users";
+// X-Requested-With (SAME_ORIGIN_HEADERS) is the same-origin marker the
+// worker requires on the cookie-auth path (see worker/admin.ts
+// requireAdminAuth). All admin user requests from the browser include it.
+import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
 // Sentinel for the "all orgs" entry in the super-admin org filter Select.
 // Radix Select disallows empty-string item values, so a literal stands in
@@ -17,13 +21,6 @@ export const ORG_FILTER_ALL_SENTINEL = "@@bt-servant:all-orgs@@";
 export function isReservedOrgSlug(slug: string): boolean {
   return slug === ORG_FILTER_ALL_SENTINEL;
 }
-
-// X-Requested-With is the same-origin marker the worker requires on the
-// cookie-auth path (see worker/admin.ts requireAdminAuth). All admin user
-// requests from the browser must include it.
-const SAME_ORIGIN_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-} as const;
 
 // Thrown when the worker returns 403 on an admin user operation. Most
 // commonly this means the caller isn't isAdmin (or session expired) — but

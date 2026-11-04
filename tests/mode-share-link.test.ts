@@ -2,15 +2,37 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildModeShareFilename,
-  buildModeShareLink,
+  MODE_NAME_PATTERN,
+  RESERVED_TRIGGERS,
+  validateModeShareSlug,
+  whatsAppNumber,
   isModeShareOpen,
+  isUrlSafeShareCode,
+  buildShareLinkFromCode,
   modeShareState,
   modeShareTrigger,
   normalizeWhatsAppNumber,
   resolveModeSharePanelState,
-  validateModeShareSlug,
+  answerUncertain,
+  resolvePreWorkerStage,
+  homeOrgWithoutModes,
+  answerNeverReused,
+  refreshFailed,
+  retryControl,
+  workerSaysUnshareable,
+  shareCodeSnapshot,
+  shareCodeStart,
+  type ShareCodeQueryView,
+  shownTrigger,
+  type ModeSharePanelState,
+  type ShareCodeSnapshot,
   type ShareConfigSnapshot,
 } from "../src/lib/mode-share-link";
+import {
+  ShareCodeRequestError,
+  type ModeShareCode,
+} from "../src/lib/mode-share-code-api";
+import type { ModeShareCodeResponse } from "../src/types/mode-share-code";
 
 // #311 — the wa.me deep link the per-mode QR encodes. Number and slug are
 // both treated as untrusted input; these pin the shape checks and the exact
@@ -60,143 +82,153 @@ describe("normalizeWhatsAppNumber", () => {
   });
 });
 
-describe("buildModeShareLink", () => {
+describe("buildShareLinkFromCode — bare codes", () => {
   it("builds the wa.me link with the #slug trigger percent-encoded", () => {
-    const result = buildModeShareLink(
-      "+57 300 123 4567",
-      "sbc-translation-coach"
-    );
-    expect(result).toEqual({
+    expect(
+      buildShareLinkFromCode("573001234567", "sbc-translation-coach")
+    ).toEqual({
       ok: true,
       url: "https://wa.me/573001234567?text=%23sbc-translation-coach",
-      digits: "573001234567",
       trigger: "#sbc-translation-coach",
     });
   });
 
-  it("keeps digits and hyphens in the slug legible", () => {
-    const result = buildModeShareLink("15550100100", "kids-mode2");
+  it("keeps digits and hyphens in the code legible", () => {
+    const result = buildShareLinkFromCode("15550100100", "kids-mode2");
     expect(result.ok && result.url).toBe(
       "https://wa.me/15550100100?text=%23kids-mode2"
     );
-    const single = buildModeShareLink("15550100100", "x");
+    const single = buildShareLinkFromCode("15550100100", "x");
     expect(single.ok && single.url).toBe("https://wa.me/15550100100?text=%23x");
   });
 
-  it("distinguishes a missing number from an invalid one", () => {
-    expect(buildModeShareLink(null, "fia-mode")).toEqual({
-      ok: false,
-      reason: "number-missing",
-    });
-    expect(buildModeShareLink("", "fia-mode")).toEqual({
-      ok: false,
-      reason: "number-missing",
-    });
-    expect(buildModeShareLink("   ", "fia-mode")).toEqual({
-      ok: false,
-      reason: "number-missing",
-    });
-    expect(buildModeShareLink("not a number", "fia-mode")).toEqual({
-      ok: false,
-      reason: "number-invalid",
-    });
-  });
-
-  it("refuses a slug the worker's MODE_NAME_PATTERN would reject instead of rewriting it", () => {
-    // A rewritten slug would encode a trigger for a DIFFERENT mode. The
-    // worker pattern has no underscore (the portal's slugify keeps it) and
-    // caps at 64 chars.
-    const tooLong = "a".repeat(65);
-    for (const bad of [
-      "",
-      "Fia Mode",
-      "fia mode",
-      "fia-mode?x=1",
-      "-fia-",
-      "fia-",
-      "a/b",
-      "#fia",
-      "kids_mode2",
-      tooLong,
-    ]) {
-      expect(buildModeShareLink("15550100100", bad), bad).toEqual({
+  it("normalises the share-config number first: missing vs invalid", () => {
+    for (const missing of [null, "", "   "]) {
+      expect(whatsAppNumber(missing)).toEqual({
         ok: false,
-        reason: "slug-invalid",
+        kind: "unconfigured",
       });
     }
-    expect(buildModeShareLink("15550100100", "a".repeat(64)).ok).toBe(true);
+    expect(whatsAppNumber("not a number")).toEqual({
+      ok: false,
+      kind: "number-invalid",
+    });
+    expect(whatsAppNumber("+57 300 123 4567")).toEqual({
+      ok: true,
+      digits: "573001234567",
+    });
   });
 
-  it("refuses the worker's reserved clear-mode tokens", () => {
-    // `#default` / `#none` / `#clear` deactivate the current mode in the
-    // classifier before any mode matching runs.
-    for (const reserved of ["default", "none", "clear"]) {
-      expect(buildModeShareLink("15550100100", reserved)).toEqual({
-        ok: false,
-        reason: "slug-reserved",
-      });
+  it("never lets a hostile code reach the URL", () => {
+    expect(buildShareLinkFromCode("15550100100", "fia&text=evil")).toEqual({
+      ok: false,
+      reason: "code-unencodable",
+    });
+  });
+});
+
+// The local name check mirrors the worker (cd20c99). Pinned so a change
+// is deliberate and made together with the worker's.
+describe("MODE_NAME_PATTERN / RESERVED_TRIGGERS — worker parity", () => {
+  it("pins the worker's name pattern and clear tokens", () => {
+    expect(MODE_NAME_PATTERN.source).toBe(
+      "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
+    );
+    expect(MODE_NAME_PATTERN.flags).toBe("");
+    expect([...RESERVED_TRIGGERS].sort()).toEqual(["clear", "default", "none"]);
+  });
+
+  it("decides names with them", () => {
+    expect(validateModeShareSlug("fia-mode")).toBe("ok");
+    expect(validateModeShareSlug("kids_mode")).toBe("slug-invalid");
+    expect(validateModeShareSlug("a".repeat(65))).toBe("slug-invalid");
+    for (const r of RESERVED_TRIGGERS) {
+      expect(validateModeShareSlug(r)).toBe("slug-reserved");
     }
-    expect(buildModeShareLink("15550100100", "default-mode").ok).toBe(true);
-  });
-
-  it("never lets a hostile slug reach the URL unencoded", () => {
-    const result = buildModeShareLink("15550100100", "fia&text=evil");
-    expect(result.ok).toBe(false);
   });
 });
 
 describe("modeShareTrigger", () => {
   it("is the worker's leading-token form", () => {
     expect(modeShareTrigger("fia-mode")).toBe("#fia-mode");
+    expect(modeShareTrigger("pbt/obt-coach")).toBe("#pbt/obt-coach");
   });
 });
 
 describe("modeShareState", () => {
-  const ready = { published: true, requires_group: false };
-
-  it("is ready for a published, non-group mode in the gateway's org", () => {
-    expect(modeShareState(ready, "unfoldingWord", "unfoldingWord")).toBe(
+  it("is ready for a published, non-group mode", () => {
+    expect(modeShareState({ published: true, requires_group: false })).toBe(
       "ready"
     );
   });
 
   it("treats absent flags as their false defaults", () => {
-    expect(modeShareState({}, "acme", "acme")).toBe("draft");
-    expect(modeShareState({ published: true }, "acme", "acme")).toBe("ready");
+    expect(modeShareState({})).toBe("draft");
+    expect(modeShareState({ published: true })).toBe("ready");
   });
 
-  it("reports the hardest constraint first: org, then group-only, then draft", () => {
-    const groupOnlyPublished = { published: true, requires_group: true };
-    // Org beats everything, including a published group-only mode.
-    expect(modeShareState({}, "acme", "unfoldingWord")).toBe("org-mismatch");
-    expect(modeShareState(groupOnlyPublished, "acme", "unfoldingWord")).toBe(
-      "org-mismatch"
+  it("reports draft ahead of group-only, as the worker does", () => {
+    // bt-servant-worker src/utils/mode-share-code.ts `staticReason`:
+    // published is checked before requires_group.
+    expect(modeShareState({ published: false, requires_group: true })).toBe(
+      "draft"
     );
-    // Group-only beats draft, and applies to published modes too.
-    expect(
-      modeShareState({ published: false, requires_group: true }, "acme", "acme")
-    ).toBe("group-only");
-    expect(modeShareState(groupOnlyPublished, "acme", "acme")).toBe(
+    expect(modeShareState({ published: true, requires_group: true })).toBe(
       "group-only"
     );
-    expect(modeShareState({ published: false }, "acme", "acme")).toBe("draft");
+    expect(modeShareState({ published: false })).toBe("draft");
+  });
+});
+
+describe("buildShareLinkFromCode", () => {
+  it("builds the qualified #<orgslug>/<slug> link the worker's welcome link emits", () => {
+    // Same bytes as bt-servant-worker tests/unit/mode-share-link.test.ts:
+    // buildModeShareLink('15558196461', 'pbt/obt-coach').
+    expect(buildShareLinkFromCode("15558196461", "pbt/obt-coach")).toEqual({
+      ok: true,
+      url: "https://wa.me/15558196461?text=%23pbt%2Fobt-coach",
+      trigger: "#pbt/obt-coach",
+    });
   });
 
-  it("does not block on an unknown org on either side", () => {
-    expect(modeShareState(ready, null, "unfoldingWord")).toBe("ready");
-    expect(modeShareState(ready, "acme", null)).toBe("ready");
-    expect(modeShareState(ready, undefined, undefined)).toBe("ready");
+  it("trusts a resolving code beyond the portal's own name rules", () => {
+    // The worker doesn't cap the org half; 64+ chars or `--` inside are
+    // its call, not the portal's.
+    const longOrg = `${"a".repeat(100)}/fia`;
+    expect(buildShareLinkFromCode("15550100100", longOrg).ok).toBe(true);
+    expect(buildShareLinkFromCode("15550100100", "a--b/-x-").ok).toBe(true);
+    // A qualified clear word is not a clear token to the worker.
+    expect(buildShareLinkFromCode("15550100100", "pbt/default").ok).toBe(true);
   });
 
-  it("compares orgs exactly (case-sensitive, like the worker's KV key) but trimmed", () => {
-    expect(modeShareState(ready, "unfoldingword", "unfoldingWord")).toBe(
-      "org-mismatch"
-    );
-    // Legacy stored orgs can carry whitespace padding (#247/#253).
-    expect(modeShareState(ready, " unfoldingWord", "unfoldingWord")).toBe(
-      "ready"
-    );
-    expect(modeShareState(ready, "acme", "   ")).toBe("ready");
+  it("refuses only what can't be carried in a URL", () => {
+    for (const bad of [
+      "",
+      "Fia",
+      "pbt/obt coach",
+      "a/b/c",
+      "/fia",
+      "pbt/",
+      "fia&text=x",
+      "#fia",
+      "a".repeat(1001),
+    ]) {
+      expect(buildShareLinkFromCode("15550100100", bad), bad).toEqual({
+        ok: false,
+        reason: "code-unencodable",
+      });
+    }
+    // A bare clear token is URL-safe but never a link (it would clear the
+    // scanner's mode).
+    for (const token of ["default", "none", "clear"]) {
+      expect(isUrlSafeShareCode(token)).toBe(true);
+      expect(buildShareLinkFromCode("15550100100", token), token).toEqual({
+        ok: false,
+        reason: "code-unencodable",
+      });
+    }
+    expect(isUrlSafeShareCode("a".repeat(1000))).toBe(true);
+    expect(isUrlSafeShareCode("a".repeat(1001))).toBe(false);
   });
 });
 
@@ -223,133 +255,1070 @@ describe("buildModeShareFilename", () => {
   });
 });
 
+// #345 — the panel renders the WORKER's share-code answer
+// (bt-servant-worker#477). These pin that every answer maps to one state,
+// that a link is built only from a code that resolves, and that no state
+// shows a trigger the worker didn't hand back.
 describe("resolveModeSharePanelState", () => {
-  const loaded: ShareConfigSnapshot = {
+  const config: ShareConfigSnapshot = {
     pending: false,
+    paused: false,
     error: false,
     supported: true,
     whatsappNumber: "+57 300 123 4567",
-    whatsappOrg: "acme",
   };
   const ready = { published: true, requires_group: false };
-
-  it("follows the query lifecycle before anything else", () => {
-    expect(
-      resolveModeSharePanelState(
-        { ...loaded, pending: true },
-        ready,
-        "acme",
-        "fia"
-      )
-    ).toEqual({ kind: "loading" });
-    expect(
-      resolveModeSharePanelState(
-        { ...loaded, error: true },
-        ready,
-        "acme",
-        "fia"
-      )
-    ).toEqual({ kind: "error" });
+  const settled: ShareCodeSnapshot = {
+    answer: undefined,
+    checking: false,
+    failure: null,
+  };
+  type Present = Extract<ModeShareCodeResponse, { capability: "present" }>;
+  type AnswerFields = Omit<
+    Present,
+    "capability" | "home_org" | "queried_org"
+  > & { home_org?: string; queried_org?: string };
+  const answer = (a: AnswerFields): Present => ({
+    capability: "present",
+    home_org: "unfoldingWord",
+    queried_org: "PBT",
+    ...a,
   });
+  const present = (a: AnswerFields): ShareCodeSnapshot => ({
+    ...settled,
+    answer: answer(a),
+  });
+  const code = (data: ModeShareCode): ShareCodeSnapshot => ({
+    ...settled,
+    answer: data,
+  });
+  const home = present({ code: "fia", resolves: true, resolved_org: "acme" });
+  const partner = present({
+    code: "pbt/obt-coach",
+    resolves: true,
+    resolved_org: "PBT",
+  });
+  const partnerShown = { trigger: "#pbt/obt-coach", partnerOrg: "PBT" };
+  const partnerReady = {
+    kind: "ready",
+    url: "https://wa.me/573001234567?text=%23pbt%2Fobt-coach",
+    ...partnerShown,
+  };
+  const miss = (reason: string | undefined, resolvedOrg?: string) =>
+    present({
+      code: "pbt/obt-coach",
+      resolves: false,
+      ...(reason !== undefined ? { reason } : {}),
+      ...(resolvedOrg !== undefined ? { resolved_org: resolvedOrg } : {}),
+    });
+  const run = (
+    shareCode: ShareCodeSnapshot,
+    opts: {
+      config?: ShareConfigSnapshot;
+      flags?: { published?: boolean; requires_group?: boolean };
+      name?: string;
+    } = {}
+  ) =>
+    resolveModeSharePanelState(
+      opts.config ?? config,
+      shareCode,
+      opts.flags ?? ready,
+      opts.name ?? "obt-coach"
+    );
 
-  it("is ready with the built link when everything lines up", () => {
-    expect(resolveModeSharePanelState(loaded, ready, "acme", "fia")).toEqual({
+  it("builds a home mode's bare link from the worker's code", () => {
+    expect(run(home)).toEqual({
       kind: "ready",
       url: "https://wa.me/573001234567?text=%23fia",
-      orgUnverified: false,
+      trigger: "#fia",
+      partnerOrg: null,
     });
   });
 
-  it("flags a ready result whose org check was skipped", () => {
-    expect(
-      resolveModeSharePanelState(
-        { ...loaded, whatsappOrg: null },
-        ready,
-        "acme",
-        "fia"
-      )
-    ).toMatchObject({ kind: "ready", orgUnverified: true });
+  it("builds a partner mode's qualified link from the worker's code", () => {
+    expect(run(partner)).toEqual(partnerReady);
   });
 
-  it("puts eligibility ahead of the number", () => {
-    const noNumber = { ...loaded, whatsappNumber: null };
-    expect(resolveModeSharePanelState(noNumber, {}, "acme", "fia")).toEqual({
-      kind: "draft",
-    });
+  it("names the card's org from the answer's queried_org, exactly as sent", () => {
+    // Never a trimmed page org: a legacy padded org stays as the BFF asked.
     expect(
-      resolveModeSharePanelState(
-        noNumber,
-        { requires_group: true },
-        "acme",
-        "fia"
+      run(
+        present({
+          code: "pbt/obt-coach",
+          resolves: true,
+          queried_org: " PBT",
+        })
       )
+    ).toMatchObject({ kind: "ready", partnerOrg: " PBT" });
+    // A bare code names no partner org, whatever was queried.
+    expect(run(home)).toMatchObject({ partnerOrg: null });
+  });
+
+  it("trusts a resolving code the portal's own name rules would reject", () => {
+    const long = `${"o".repeat(80)}/obt-coach`;
+    expect(run(present({ code: long, resolves: true }))).toMatchObject({
+      kind: "ready",
+      trigger: `#${long}`,
+    });
+  });
+
+  it("refuses a resolving code no URL can carry with its own state", () => {
+    for (const bad of ["Fia", "pbt/obt coach", "a/b/c", "pbt/"]) {
+      expect(run(present({ code: bad, resolves: true })), bad).toEqual({
+        kind: "code-unencodable",
+      });
+    }
+  });
+
+  it("shares a partner mode named `default` as #<orgslug>/default when the worker resolves it", () => {
+    // worker classifier: CLEAR_TOKENS is checked against the whole token,
+    // so `pbt/default` is not a clear token and matches pbt's `default`.
+    for (const name of ["default", "none", "clear"]) {
+      const state = run(
+        present({ code: `pbt/${name}`, resolves: true, queried_org: "PBT" }),
+        { name }
+      );
+      expect(state, name).toEqual({
+        kind: "ready",
+        url: `https://wa.me/573001234567?text=%23pbt%2F${name}`,
+        trigger: `#pbt/${name}`,
+        partnerOrg: "PBT",
+      });
+    }
+  });
+
+  it("refuses a home-org mode named `default`: the worker's bare `reserved` answer", () => {
+    // Home (bare code): the worker answers `reserved` (match.kind clear).
+    for (const name of ["default", "none", "clear"]) {
+      expect(
+        run(present({ code: name, resolves: false, reason: "reserved" }), {
+          name,
+        }),
+        name
+      ).toEqual({ kind: "slug-reserved" });
+    }
+  });
+
+  it("never builds a link from a bare clear token, even when the worker says it resolves", () => {
+    for (const token of ["default", "none", "clear"]) {
+      const state = run(present({ code: token, resolves: true }));
+      expect(state, token).toEqual({ kind: "code-unencodable" });
+      expect(JSON.stringify(state)).not.toContain(`text=%23${token}`);
+    }
+    // The qualified form is not a clear token: it still gets its QR.
+    expect(
+      run(present({ code: "pbt/default", resolves: true, queried_org: "PBT" }))
+    ).toMatchObject({ kind: "ready", trigger: "#pbt/default" });
+  });
+
+  it("checks URL safety only for a code that resolves; otherwise the reason's copy", () => {
+    expect(
+      run(present({ code: "Odd Code", resolves: false, reason: "capped" }))
+    ).toEqual({ kind: "capped", trigger: "#Odd Code", partnerOrg: null });
+  });
+
+  it("maps every worker reason to its own state, carrying the code", () => {
+    expect(run(miss("collision", "pbt"))).toEqual({
+      kind: "collision",
+      resolvedOrg: "pbt",
+      sameOrg: false,
+      uncertain: false,
+      ...partnerShown,
+    });
+    // #477: a collision whose winner is hidden (or stripped by the BFF:
+    // another org's name, for a non-super-admin) has no resolved_org.
+    expect(run(miss("collision"))).toEqual({
+      kind: "collision",
+      resolvedOrg: null,
+      sameOrg: false,
+      uncertain: false,
+      ...partnerShown,
+    });
+    // #477 cd20c99: an alias clash inside this same org names this org.
+    expect(run(miss("collision", "PBT"))).toEqual({
+      kind: "collision",
+      resolvedOrg: "PBT",
+      sameOrg: true,
+      uncertain: false,
+      ...partnerShown,
+    });
+    expect(run(miss("ambiguous", "Other Org"))).toEqual({
+      kind: "ambiguous",
+      resolvedOrg: "Other Org",
+      uncertain: false,
+      ...partnerShown,
+    });
+    expect(run(miss("capped"))).toEqual({ kind: "capped", ...partnerShown });
+    expect(run(miss("org_skipped"))).toEqual({
+      kind: "org-skipped",
+      ...partnerShown,
+    });
+    expect(run(miss("not_found"))).toEqual({
+      kind: "unresolved",
+      uncertain: false,
+      ...partnerShown,
+    });
+    expect(run(miss("reserved"))).toEqual({ kind: "slug-reserved" });
+  });
+
+  it("marks a verdict that rests on an org the worker couldn't read, with Try again", () => {
+    // #477: resolved_org_uncertain, with resolved_org omitted.
+    const uncertain = (reason: string) =>
+      present({
+        code: "pbt/obt-coach",
+        resolves: false,
+        reason,
+        resolved_org_uncertain: true,
+      });
+    const collision = run(uncertain("collision"));
+    expect(collision).toEqual({
+      kind: "collision",
+      resolvedOrg: null,
+      sameOrg: false,
+      uncertain: true,
+      ...partnerShown,
+    });
+    expect(run(uncertain("ambiguous"))).toMatchObject({
+      kind: "ambiguous",
+      resolvedOrg: null,
+      uncertain: true,
+    });
+    expect(run(uncertain("not_found"))).toMatchObject({
+      kind: "unresolved",
+      uncertain: true,
+    });
+    for (const state of [collision, run(uncertain("not_found"))]) {
+      expect(answerUncertain(state)).toBe(true);
+      expect(retryControl(state, settled, null)).toEqual({
+        target: "share-code",
+        busy: false,
+      });
+    }
+    // A firm verdict gets neither the line nor Try again.
+    const firm = run(miss("collision", "pbt"));
+    expect(answerUncertain(firm)).toBe(false);
+    expect(retryControl(firm, settled, null)).toBeNull();
+  });
+
+  it("names a damaged stored mode (invalid_mode) as permanent, with no Try again", () => {
+    const state = run(miss("invalid_mode"));
+    expect(state).toEqual({ kind: "invalid-mode" });
+    expect(
+      retryControl(state, { ...settled, answer: undefined }, null)
+    ).toBeNull();
+  });
+
+  it("shows org_skipped on a published mode as the worker's answer, as is", () => {
+    expect(run(miss("org_skipped"), { flags: ready })).toEqual({
+      kind: "org-skipped",
+      ...partnerShown,
+    });
+  });
+
+  it("refuses a draft or group-only mode from the page's own flags, without the worker", () => {
+    // Whatever the worker would say (here it isn't even asked: the answer
+    // is still loading), the page's saved flags decide, draft first.
+    const unasked: ShareCodeSnapshot = { ...settled, checking: true };
+    expect(
+      run(unasked, { flags: { published: false, requires_group: true } })
+    ).toEqual({ kind: "draft" });
+    expect(
+      run(unasked, { flags: { published: true, requires_group: true } })
     ).toEqual({ kind: "group-only" });
-    expect(resolveModeSharePanelState(noNumber, ready, "other", "fia")).toEqual(
-      { kind: "org-mismatch", whatsappOrg: "acme" }
-    );
   });
 
-  it("names each link failure distinctly", () => {
+  it("decides same-org against the exact org the BFF queried, never trimmed", () => {
+    const clash = (queried: string, resolved: string) =>
+      present({
+        code: "pbt/obt-coach",
+        resolves: false,
+        reason: "collision",
+        resolved_org: resolved,
+        queried_org: queried,
+      });
+    // A super-admin on a legacy padded org: the BFF queried " PBT".
+    expect(run(clash(" PBT", " PBT"))).toMatchObject({
+      kind: "collision",
+      sameOrg: true,
+    });
+    // " PBT" and "PBT" are different orgs to the worker, either way round,
+    // whatever the page calls the mode's org.
+    expect(run(clash(" PBT", "PBT"))).toMatchObject({
+      sameOrg: false,
+    });
+    expect(run(clash("PBT", " PBT"))).toMatchObject({
+      sameOrg: false,
+    });
+  });
+
+  it("checks the name pattern before the page's flags; reserved words go to the worker", () => {
+    const unasked: ShareCodeSnapshot = { ...settled, checking: true };
     expect(
-      resolveModeSharePanelState(
-        { ...loaded, whatsappNumber: null },
-        ready,
-        "acme",
-        "fia"
-      )
-    ).toEqual({ kind: "unconfigured" });
-    expect(
-      resolveModeSharePanelState(
-        { ...loaded, whatsappNumber: "nope" },
-        ready,
-        "acme",
-        "fia"
-      )
-    ).toEqual({ kind: "number-invalid" });
-    // A non-canonical name is the author's to fix, not an env problem.
-    expect(
-      resolveModeSharePanelState(loaded, ready, "acme", "Fia Mode")
+      run(unasked, { flags: { published: false }, name: "Fia Mode" })
     ).toEqual({ kind: "slug-invalid" });
+    // Not refused locally: a partner mode named `default` can be shared
+    // as `#<orgslug>/default`. The page's flags come first, as for any name.
     expect(
-      resolveModeSharePanelState(loaded, ready, "acme", "default")
-    ).toEqual({ kind: "slug-reserved" });
+      run(unasked, { flags: { published: false }, name: "default" })
+    ).toEqual({ kind: "draft" });
+    expect(
+      run(unasked, {
+        flags: { published: true, requires_group: true },
+        name: "none",
+      })
+    ).toEqual({ kind: "group-only" });
+    // The worker's answers map to their states.
+    expect(run(miss("reserved"))).toEqual({ kind: "slug-reserved" });
+    expect(
+      run(code({ capability: "failed", failure: "invalid-name" }))
+    ).toEqual({ kind: "failed", failure: "invalid-name" });
   });
 
-  it("names an identity problem before any publish/org advice", () => {
-    // A draft named `default` should hear "rename", not "publish": publishing
-    // would not make the QR work, and the reserved token is the real block.
-    expect(resolveModeSharePanelState(loaded, {}, "acme", "default")).toEqual({
-      kind: "slug-reserved",
+  it("keeps the page's draft / group-only in charge (the worker isn't asked then)", () => {
+    for (const flags of [
+      { published: false },
+      { published: true, requires_group: true },
+    ]) {
+      // Even if a stale answer from an earlier publish were around.
+      expect(run(miss("invalid_mode"), { flags })).toEqual({
+        kind: flags.published ? "group-only" : "draft",
+      });
+    }
+  });
+
+  it("reads a missing code by its reason first", () => {
+    const noCode = (reason?: string) =>
+      present({
+        code: null,
+        resolves: false,
+        ...(reason !== undefined ? { reason } : {}),
+      });
+    expect(run(noCode("draft"))).toEqual({
+      kind: "worker-sees",
+      sees: "draft",
     });
-    expect(resolveModeSharePanelState(loaded, {}, "other", "Fia Mode")).toEqual(
-      { kind: "slug-invalid" }
+    expect(run(noCode("requires_group"))).toEqual({
+      kind: "worker-sees",
+      sees: "group-only",
+    });
+    expect(run(noCode("invalid_mode"))).toEqual({ kind: "invalid-mode" });
+    expect(run(noCode("reserved"))).toEqual({ kind: "slug-reserved" });
+    // Only org_skipped means the org name has no usable slug.
+    expect(run(noCode("org_skipped"))).toEqual({ kind: "org-unencodable" });
+    // Any other reason, listed, missing or made up, reads as "does not
+    // open this mode", with no trigger.
+    for (const reason of [
+      "collision",
+      "capped",
+      "not_found",
+      undefined,
+      "zz_made_up_reason",
+    ]) {
+      const state = run(noCode(reason));
+      expect(state, String(reason)).toEqual({
+        kind: "unresolved",
+        uncertain: false,
+      });
+      expect(shownTrigger(state)).toBeNull();
+    }
+    expect(
+      run(
+        present({
+          code: null,
+          resolves: false,
+          reason: "zz_made_up_reason",
+          resolved_org_uncertain: true,
+        })
+      )
+    ).toEqual({ kind: "unresolved", uncertain: true });
+  });
+
+  it("says what BT Servant sees when it says draft / group-only for a page-published mode", () => {
+    // Either side may be stale: the state says what BT Servant sees.
+    expect(run(miss("draft"))).toEqual({ kind: "worker-sees", sees: "draft" });
+    expect(run(miss("requires_group"))).toEqual({
+      kind: "worker-sees",
+      sees: "group-only",
+    });
+  });
+
+  it("treats a missing or unknown reason (e.g. `pending`) as not resolving, with generic copy", () => {
+    for (const reason of [undefined, "pending", "some_future_reason"]) {
+      expect(run(miss(reason)), String(reason)).toEqual({
+        kind: "unresolved",
+        uncertain: false,
+        ...partnerShown,
+      });
+    }
+  });
+
+  it("never builds a link from a code that does not resolve, whatever the number", () => {
+    for (const reason of ["collision", "capped", "ambiguous", "not_found"]) {
+      expect(run(miss(reason))).not.toHaveProperty("url");
+    }
+  });
+
+  it("refuses an org that slugs to nothing (code null) without a trigger", () => {
+    expect(
+      run(present({ code: null, resolves: false, reason: "org_skipped" }))
+    ).toEqual({ kind: "org-unencodable" });
+  });
+
+  it("maps each non-answer to its own state, none of them showing a trigger", () => {
+    expect(run(code({ capability: "not-found" }))).toEqual({
+      kind: "not-found",
+    });
+    expect(run(code({ capability: "unconfigured" }))).toEqual({
+      kind: "org-unconfigured",
+    });
+    expect(run(code({ capability: "upgrade-needed" }))).toEqual({
+      kind: "upgrade-needed",
+    });
+    for (const failure of [
+      "invalid-name",
+      "org-invalid",
+      "bad-request",
+      "corrupt-record",
+      "engine-auth",
+      "cross-org-forbidden",
+    ] as const) {
+      expect(run(code({ capability: "failed", failure }))).toEqual({
+        kind: "failed",
+        failure,
+      });
+    }
+  });
+
+  it("offers no code for any mode on a worker without the route, home included", () => {
+    const upgrade = code({ capability: "upgrade-needed" });
+    for (const name of ["fia", "obt-coach"]) {
+      const state = run(upgrade, { name });
+      expect(state).toEqual({ kind: "upgrade-needed" });
+      expect(shownTrigger(state)).toBeNull();
+    }
+  });
+
+  it("checks while there is no current answer and a fetch runs (first load, reopen)", () => {
+    expect(run({ ...settled, checking: true })).toEqual({
+      kind: "checking-code",
+    });
+    expect(run(partner, { config: { ...config, pending: true } })).toEqual({
+      kind: "loading-config",
+    });
+  });
+
+  it("names share-config offline before it ever loaded as the settings error, with Try again", () => {
+    const state = run(partner, {
+      config: { ...config, pending: true, paused: true },
+    });
+    expect(state).toEqual({ kind: "error" });
+    expect(retryControl(state, settled, null)).toEqual({
+      target: "config",
+      busy: false,
+    });
+  });
+
+  it("keeps a ready QR through a share-config background refetch or its failure", () => {
+    // Only a first load (no data) blocks; the panel passes `error` only
+    // when there is nothing to fall back on.
+    const before = run(partner);
+    expect(before.kind).toBe("ready");
+    expect(run(partner, { config: { ...config } })).toEqual(before);
+    expect(run(partner, { config: { ...config, error: true } })).toEqual({
+      kind: "error",
+    });
+  });
+
+  it("names a transient failure with no answer on the card, with its cause", () => {
+    for (const cause of ["unavailable", "server", "network"] as const) {
+      expect(run({ ...settled, failure: cause })).toEqual({
+        kind: "retry",
+        cause,
+      });
+    }
+  });
+
+  it("keeps the answer on the card when a background refresh fails", () => {
+    // TanStack keeps `data` on a refetch error; the hook keeps it current.
+    expect(run({ ...partner, failure: "network" })).toEqual(partnerReady);
+  });
+
+  it("keeps the settings error for share-config failures only", () => {
+    expect(run(partner, { config: { ...config, error: true } })).toEqual({
+      kind: "error",
+    });
+  });
+
+  it("leaves the mode's name to the worker: reserved and invalid names are its answers", () => {
+    // No local name check: the worker answers `reserved` or 400
+    // invalid_mode_name, and the panel says so.
+    expect(run(miss("reserved"))).toEqual({ kind: "slug-reserved" });
+    expect(
+      run(code({ capability: "failed", failure: "invalid-name" }))
+    ).toEqual({ kind: "failed", failure: "invalid-name" });
+    // While it is asked, the panel checks rather than refusing up front.
+    expect(run({ ...settled, checking: true })).toEqual({
+      kind: "checking-code",
+    });
+  });
+
+  it("checks the number before the worker, which isn't asked without a usable one", () => {
+    const unasked: ShareCodeSnapshot = { ...settled, checking: true };
+    for (const [over, kind] of [
+      [{ whatsappNumber: null }, "unconfigured"],
+      [{ whatsappNumber: "  " }, "unconfigured"],
+      [{ supported: false, whatsappNumber: null }, "unconfigured"],
+      [{ whatsappNumber: "nope" }, "number-invalid"],
+    ] as const) {
+      const state = run(unasked, { config: { ...config, ...over } });
+      expect(state, JSON.stringify(over)).toEqual({ kind });
+      expect(shownTrigger(state)).toBeNull();
+    }
+    // Name and flags still come first.
+    expect(
+      run(unasked, {
+        config: { ...config, whatsappNumber: null },
+        flags: { published: false },
+      })
+    ).toEqual({ kind: "draft" });
+  });
+
+  it("asks the worker exactly when the pre-worker stage needs the share code", () => {
+    // The panel's query gate is this result, so it can't drift from the
+    // resolver's own order.
+    expect(resolvePreWorkerStage(config, ready, "obt-coach")).toEqual({
+      needsShareCode: true,
+      digits: "573001234567",
+    });
+    // A reserved word is asked about too: only the worker knows whether
+    // the code will be bare (home, a clear token) or qualified (partner).
+    for (const name of ["default", "none", "clear"]) {
+      expect(resolvePreWorkerStage(config, ready, name), name).toEqual({
+        needsShareCode: true,
+        digits: "573001234567",
+      });
+    }
+    for (const [cfg, flags, name, kind] of [
+      [config, ready, "Bad Name", "slug-invalid"],
+      [config, { published: false }, "obt-coach", "draft"],
+      [
+        config,
+        { published: true, requires_group: true },
+        "obt-coach",
+        "group-only",
+      ],
+      [{ ...config, pending: true }, ready, "obt-coach", "loading-config"],
+      [{ ...config, pending: true, paused: true }, ready, "obt-coach", "error"],
+      [{ ...config, error: true }, ready, "obt-coach", "error"],
+      [{ ...config, whatsappNumber: null }, ready, "obt-coach", "unconfigured"],
+      [
+        { ...config, whatsappNumber: "nope" },
+        ready,
+        "obt-coach",
+        "number-invalid",
+      ],
+    ] as const) {
+      const stage = resolvePreWorkerStage(cfg, flags, name);
+      expect(stage, kind).toEqual({ needsShareCode: false, state: { kind } });
+      // Whatever the share code would say, the stage's state wins.
+      expect(run(home, { config: cfg, flags, name }), kind).toEqual({ kind });
+    }
+  });
+});
+
+describe("refreshFailed and retryControl", () => {
+  const snap = (over: Partial<ShareCodeSnapshot> = {}): ShareCodeSnapshot => ({
+    answer: undefined,
+    checking: false,
+    failure: null,
+    ...over,
+  });
+  const readyState: ModeSharePanelState = {
+    kind: "ready",
+    url: "https://wa.me/1?text=%23x",
+    trigger: "#x",
+    partnerOrg: null,
+  };
+  const idle = null;
+
+  const lastAnswer = {
+    capability: "present" as const,
+    home_org: "uW",
+    queried_org: "PBT",
+    code: "x",
+    resolves: true,
+  };
+
+  it("notes a failed refresh while the worker's last answer is shown", () => {
+    expect(
+      refreshFailed(
+        readyState,
+        snap({ answer: lastAnswer, failure: "network" })
+      )
+    ).toBe(true);
+    expect(refreshFailed(readyState, snap({ answer: lastAnswer }))).toBe(false);
+    // No answer shown: the failure IS the state, not a note.
+    expect(
+      refreshFailed(
+        { kind: "retry", cause: "network" },
+        snap({ failure: "network" })
+      )
+    ).toBe(false);
+    expect(
+      refreshFailed({ kind: "checking-code" }, snap({ failure: "server" }))
+    ).toBe(false);
+  });
+
+  it("offers Try again with the note, re-asking the share code", () => {
+    expect(
+      retryControl(
+        readyState,
+        snap({ answer: lastAnswer, failure: "network" }),
+        idle
+      )
+    ).toEqual({
+      target: "share-code",
+      busy: false,
+    });
+    expect(
+      retryControl(readyState, snap({ answer: lastAnswer }), idle)
+    ).toBeNull();
+  });
+
+  it("notes a failed refresh over a definite state too, with Try again", () => {
+    const failedRefresh = (answer: ModeShareCode) =>
+      snap({ answer, failure: "server" });
+    const cases: [ModeSharePanelState, ModeShareCode][] = [
+      [{ kind: "not-found" }, { capability: "not-found" }],
+      [
+        { kind: "failed", failure: "invalid-name" },
+        { capability: "failed", failure: "invalid-name" },
+      ],
+      [
+        { kind: "slug-reserved" },
+        { ...lastAnswer, resolves: false, reason: "reserved" },
+      ],
+      [{ kind: "upgrade-needed" }, { capability: "upgrade-needed" }],
+      [{ kind: "org-unconfigured" }, { capability: "unconfigured" }],
+      [
+        { kind: "invalid-mode" },
+        { ...lastAnswer, resolves: false, reason: "invalid_mode" },
+      ],
+      [
+        { kind: "org-unencodable" },
+        { ...lastAnswer, code: null, resolves: false, reason: "org_skipped" },
+      ],
+      [
+        { kind: "unresolved", uncertain: false },
+        { ...lastAnswer, code: null, resolves: false },
+      ],
+    ];
+    for (const [state, answer] of cases) {
+      expect(refreshFailed(state, failedRefresh(answer)), state.kind).toBe(
+        true
+      );
+      expect(
+        retryControl(state, failedRefresh(answer), idle),
+        state.kind
+      ).toEqual({ target: "share-code", busy: false });
+    }
+    // The page's own flags are not the worker's answer: no note.
+    expect(
+      refreshFailed(
+        { kind: "draft" },
+        failedRefresh({ capability: "not-found" })
+      )
+    ).toBe(false);
+  });
+
+  it("offers Try again on upgrade-needed: a plain 404 may be an edge hiccup", () => {
+    expect(retryControl({ kind: "upgrade-needed" }, snap(), idle)).toEqual({
+      target: "share-code",
+      busy: false,
+    });
+  });
+
+  it("re-asks only the query that failed", () => {
+    expect(retryControl({ kind: "error" }, snap(), idle)).toEqual({
+      target: "config",
+      busy: false,
+    });
+    expect(
+      retryControl({ kind: "retry", cause: "unavailable" }, snap(), idle)
+    ).toEqual({ target: "share-code", busy: false });
+    expect(
+      retryControl({ kind: "worker-sees", sees: "draft" }, snap(), idle)
+    ).toEqual({
+      target: "share-code",
+      busy: false,
+    });
+    // Not-found and the definite failures are never reused: Try again.
+    expect(retryControl({ kind: "not-found" }, snap(), idle)).toEqual({
+      target: "share-code",
+      busy: false,
+    });
+    expect(
+      retryControl({ kind: "failed", failure: "corrupt-record" }, snap(), idle)
+    ).toEqual({ target: "share-code", busy: false });
+    // A damaged stored mode needs a repair, not a re-ask.
+    expect(retryControl({ kind: "invalid-mode" }, snap(), idle)).toBeNull();
+  });
+
+  it("stays visible and disabled while its re-ask runs, even once the state is checking", () => {
+    // Try again on the settings error: share-config refetches, and the
+    // button must stay, busy, until that query has fetched and stopped.
+    expect(retryControl({ kind: "loading-config" }, snap(), "config")).toEqual({
+      target: "config",
+      busy: true,
+    });
+    expect(
+      retryControl({ kind: "checking-code" }, snap(), "share-code")
+    ).toEqual({ target: "share-code", busy: true });
+    // Settled (busy cleared): back to whatever the state calls for.
+    expect(retryControl({ kind: "checking-code" }, snap(), null)).toBeNull();
+  });
+});
+
+describe("answerNeverReused", () => {
+  it("is true for what may be stale or cleared elsewhere, false for a firm answer", () => {
+    const present = {
+      capability: "present" as const,
+      home_org: "uW",
+      queried_org: "PBT",
+      code: "pbt/x",
+    };
+    expect(answerNeverReused({ capability: "upgrade-needed" })).toBe(true);
+    expect(answerNeverReused({ capability: "not-found" })).toBe(true);
+    expect(
+      answerNeverReused({ capability: "failed", failure: "invalid-name" })
+    ).toBe(true);
+    expect(
+      answerNeverReused({ ...present, resolves: false, reason: "draft" })
+    ).toBe(true);
+    expect(answerNeverReused({ ...present, resolves: true })).toBe(false);
+    expect(
+      answerNeverReused({ ...present, resolves: false, reason: "collision" })
+    ).toBe(false);
+    expect(answerNeverReused({ capability: "unconfigured" })).toBe(false);
+    expect(answerNeverReused(undefined)).toBe(false);
+  });
+});
+
+// Round 14: no flicker on close. The closing render's query is disabled
+// but keeps its data, and the hook keeps the start it recorded while
+// open, so the closing render resolves to the same state as the last
+// open one; it reads as checking only without that start.
+describe("closing render keeps the answer", () => {
+  const answer = {
+    capability: "present" as const,
+    home_org: "uW",
+    queried_org: "PBT",
+    code: "x",
+    resolves: true,
+  };
+  const config: ShareConfigSnapshot = {
+    pending: false,
+    paused: false,
+    error: false,
+    supported: true,
+    whatsappNumber: "15550100100",
+  };
+  const resolve = (snap: ShareCodeSnapshot) =>
+    resolveModeSharePanelState(config, snap, { published: true }, "x");
+
+  it("shows the same ready state on the closing render as on the last open one", () => {
+    // Open: a reopen past the stale time fetched a fresh answer.
+    const start = shareCodeStart({
+      data: answer,
+      dataUpdatedAt: 100,
+      fetchStatus: "fetching",
+      error: null,
+      isFetchedAfterMount: false,
+    });
+    const openView = {
+      data: answer,
+      dataUpdatedAt: 150,
+      fetchStatus: "idle" as const,
+      error: null,
+      isFetchedAfterMount: true,
+    };
+    const lastOpen = resolve(shareCodeSnapshot(openView, start));
+    expect(lastOpen.kind).toBe("ready");
+    // Closing: disabled, same data, the kept start.
+    const closing = resolve(shareCodeSnapshot(openView, start));
+    expect(closing).toEqual(lastOpen);
+  });
+
+  it("would read as checking without the kept start (the flicker)", () => {
+    const closingSnap = shareCodeSnapshot(
+      {
+        data: answer,
+        dataUpdatedAt: 100,
+        fetchStatus: "idle",
+        error: null,
+        isFetchedAfterMount: false,
+      },
+      { fresh: false, dataUpdatedAt: 100 }
     );
-    // ...but never ahead of the query lifecycle.
+    expect(resolve(closingSnap)).toEqual({ kind: "checking-code" });
+  });
+});
+
+describe("workerSaysUnshareable", () => {
+  const base = {
+    capability: "present" as const,
+    home_org: "unfoldingWord",
+    queried_org: "PBT",
+    code: "pbt/x",
+  };
+  it("is true only for a draft / group-only answer (never cached)", () => {
+    expect(
+      workerSaysUnshareable({ ...base, resolves: false, reason: "draft" })
+    ).toBe(true);
+    expect(
+      workerSaysUnshareable({
+        ...base,
+        resolves: false,
+        reason: "requires_group",
+      })
+    ).toBe(true);
+    expect(
+      workerSaysUnshareable({ ...base, resolves: false, reason: "org_skipped" })
+    ).toBe(false);
+    expect(workerSaysUnshareable({ ...base, resolves: true })).toBe(false);
+    expect(workerSaysUnshareable({ capability: "not-found" })).toBe(false);
+    expect(workerSaysUnshareable(undefined)).toBe(false);
+  });
+});
+
+// The panel mounts the share-code query once per open, so "after mount"
+// (TanStack's isFetchedAfterMount) means "in this open". `start` is the
+// one thing the hook takes at the first render it asks.
+describe("per-open snapshot: shareCodeStart and shareCodeSnapshot", () => {
+  const answerA = {
+    capability: "present" as const,
+    home_org: "uW",
+    queried_org: "PBT",
+    code: "pbt/a",
+    resolves: true,
+  };
+  const view = (over: Partial<ShareCodeQueryView>): ShareCodeQueryView => ({
+    data: undefined,
+    dataUpdatedAt: 0,
+    fetchStatus: "idle",
+    error: null,
+    isFetchedAfterMount: false,
+    ...over,
+  });
+
+  it("takes a fresh start only from an idle first look at cached data", () => {
+    // TanStack's first result is optimistic: a stale answer already shows
+    // as fetching (or paused, offline).
+    expect(shareCodeStart(view({ data: answerA, dataUpdatedAt: 100 }))).toEqual(
+      { fresh: true, dataUpdatedAt: 100 }
+    );
+    for (const fetchStatus of ["fetching", "paused"] as const) {
+      expect(
+        shareCodeStart(view({ data: answerA, dataUpdatedAt: 100, fetchStatus }))
+          .fresh
+      ).toBe(false);
+    }
+    expect(shareCodeStart(view({})).fresh).toBe(false);
+  });
+
+  it("checks on a reopen past the stale time, then shows the fresh answer", () => {
+    const first = view({
+      data: answerA,
+      dataUpdatedAt: 100,
+      fetchStatus: "fetching",
+    });
+    const start = shareCodeStart(first);
+    expect(shareCodeSnapshot(first, start)).toEqual({
+      answer: undefined,
+      checking: true,
+      failure: null,
+    });
+    expect(
+      shareCodeSnapshot(
+        view({ data: answerA, dataUpdatedAt: 150, isFetchedAfterMount: true }),
+        start
+      )
+    ).toEqual({ answer: answerA, checking: false, failure: null });
+  });
+
+  it("never offers a previous open's answer when this open's refetch failed", () => {
+    const start = shareCodeStart(
+      view({ data: answerA, dataUpdatedAt: 100, fetchStatus: "fetching" })
+    );
+    const failed = shareCodeSnapshot(
+      view({
+        data: answerA,
+        dataUpdatedAt: 100,
+        error: new ShareCodeRequestError("network"),
+        isFetchedAfterMount: true,
+      }),
+      start
+    );
+    expect(failed).toEqual({
+      answer: undefined,
+      checking: false,
+      failure: "network",
+    });
     expect(
       resolveModeSharePanelState(
-        { ...loaded, pending: true },
-        {},
-        "acme",
-        "default"
+        {
+          pending: false,
+          paused: false,
+          error: false,
+          supported: true,
+          whatsappNumber: "15550100100",
+        },
+        failed,
+        { published: true },
+        "a"
       )
-    ).toEqual({ kind: "loading" });
+    ).toEqual({ kind: "retry", cause: "network" });
   });
 
-  it("treats an absent BFF route as not configured, not as an error", () => {
-    const unsupported: ShareConfigSnapshot = {
-      pending: false,
-      error: false,
-      supported: false,
-      whatsappNumber: null,
-      whatsappOrg: null,
-    };
-    expect(
-      resolveModeSharePanelState(unsupported, ready, "acme", "fia")
-    ).toEqual({ kind: "unconfigured" });
-    // ...and it cannot block on an org it does not know.
-    expect(resolveModeSharePanelState(unsupported, {}, "acme", "fia")).toEqual({
-      kind: "draft",
+  it("never shows a previous open's failed refresh on a fresh open", () => {
+    // The last open's background refresh failed: the cache still holds
+    // that error next to a fresh answer. This mount fetched nothing yet,
+    // so the error isn't this open's.
+    const cached = view({
+      data: answerA,
+      dataUpdatedAt: 100,
+      error: new ShareCodeRequestError("server"),
     });
+    expect(shareCodeSnapshot(cached, shareCodeStart(cached))).toEqual({
+      answer: answerA,
+      checking: false,
+      failure: null,
+    });
+    // With no answer at all, a stale error is not shown either: it checks.
+    const empty = view({
+      error: new ShareCodeRequestError("server"),
+      fetchStatus: "fetching",
+    });
+    expect(shareCodeSnapshot(empty, shareCodeStart(empty))).toEqual({
+      answer: undefined,
+      checking: true,
+      failure: null,
+    });
+  });
+
+  it("names offline (paused) as the network failure with Try again, not checking", () => {
+    const paused = view({ fetchStatus: "paused" });
+    const snap = shareCodeSnapshot(paused, shareCodeStart(paused));
+    expect(snap).toEqual({
+      answer: undefined,
+      checking: false,
+      failure: "network",
+    });
+    const config: ShareConfigSnapshot = {
+      pending: false,
+      paused: false,
+      error: false,
+      supported: true,
+      whatsappNumber: "15550100100",
+    };
+    const state = resolveModeSharePanelState(
+      config,
+      snap,
+      { published: true },
+      "a"
+    );
+    expect(state).toEqual({ kind: "retry", cause: "network" });
+    expect(retryControl(state, snap, null)).toEqual({
+      target: "share-code",
+      busy: false,
+    });
+    // Paused under an answer shown this open: kept, with the refresh note.
+    const start = shareCodeStart(view({ data: answerA, dataUpdatedAt: 100 }));
+    expect(
+      shareCodeSnapshot(
+        view({ data: answerA, dataUpdatedAt: 100, fetchStatus: "paused" }),
+        start
+      )
+    ).toEqual({ answer: answerA, checking: false, failure: "network" });
+  });
+
+  it("keeps a fresh cached answer shown at reopen through a later background refetch", () => {
+    const first = view({ data: answerA, dataUpdatedAt: 100 });
+    const start = shareCodeStart(first);
+    expect(shareCodeSnapshot(first, start)).toEqual({
+      answer: answerA,
+      checking: false,
+      failure: null,
+    });
+    // A mode write invalidates it: the refetch runs in the background and
+    // the card keeps the answer.
+    expect(
+      shareCodeSnapshot({ ...first, fetchStatus: "fetching" }, start)
+    ).toEqual({ answer: answerA, checking: false, failure: null });
+    // A failed background refetch keeps it too, with the failure noted.
+    expect(
+      shareCodeSnapshot(
+        {
+          ...first,
+          error: new ShareCodeRequestError("server"),
+          isFetchedAfterMount: true,
+        },
+        start
+      )
+    ).toEqual({ answer: answerA, checking: false, failure: "server" });
+  });
+
+  it("names a first-load failure in this open, with no answer", () => {
+    const start = shareCodeStart(view({ fetchStatus: "fetching" }));
+    expect(
+      shareCodeSnapshot(
+        view({
+          error: new ShareCodeRequestError("unavailable"),
+          isFetchedAfterMount: true,
+        }),
+        start
+      )
+    ).toEqual({ answer: undefined, checking: false, failure: "unavailable" });
+    expect(
+      shareCodeSnapshot(
+        view({ error: new Error("boom"), isFetchedAfterMount: true }),
+        start
+      ).failure
+    ).toBe("server");
+  });
+});
+
+describe("homeOrgWithoutModes", () => {
+  const base = {
+    capability: "present" as const,
+    code: "pbt/x",
+    resolves: true,
+    home_org: "unfoldingWord",
+    queried_org: "PBT",
+  };
+  it("names the gateway org only when the worker says it has no modes", () => {
+    expect(homeOrgWithoutModes({ ...base, home_has_modes: false })).toEqual({
+      name: "unfoldingWord",
+    });
+    // Withheld by the BFF (not a super-admin, not the caller's own org):
+    // the note shows with no name.
+    const withheld = { ...base, home_has_modes: false };
+    delete (withheld as { home_org?: string }).home_org;
+    expect(homeOrgWithoutModes(withheld)).toEqual({ name: null });
+    expect(homeOrgWithoutModes({ ...base, home_has_modes: true })).toBeNull();
+    expect(homeOrgWithoutModes(base)).toBeNull();
+    expect(homeOrgWithoutModes(undefined)).toBeNull();
+    expect(homeOrgWithoutModes({ capability: "not-found" })).toBeNull();
+  });
+});
+
+describe("shownTrigger", () => {
+  it("returns the code only for states that carry one", () => {
+    expect(shownTrigger({ kind: "checking-code" })).toBeNull();
+    expect(shownTrigger({ kind: "upgrade-needed" })).toBeNull();
+    expect(
+      shownTrigger({ kind: "capped", trigger: "#pbt/x", partnerOrg: "PBT" })
+    ).toEqual({ trigger: "#pbt/x", partnerOrg: "PBT" });
   });
 });
 
@@ -365,16 +1334,5 @@ describe("isModeShareOpen", () => {
     expect(isModeShareOpen("fia", null)).toBe(false);
     // A → B: never a frame of B's name under A's flags.
     expect(isModeShareOpen("fia", "mast")).toBe(false);
-  });
-});
-
-describe("validateModeShareSlug", () => {
-  it("mirrors the worker's name pattern and reserved tokens", () => {
-    expect(validateModeShareSlug("fia-mode")).toBe("ok");
-    expect(validateModeShareSlug("kids_mode")).toBe("slug-invalid");
-    expect(validateModeShareSlug("")).toBe("slug-invalid");
-    for (const r of ["default", "none", "clear"]) {
-      expect(validateModeShareSlug(r)).toBe("slug-reserved");
-    }
   });
 });

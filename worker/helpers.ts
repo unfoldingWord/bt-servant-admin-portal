@@ -1,3 +1,5 @@
+import { BFF_ERRORS } from "@/lib/bff-errors";
+
 export interface Env {
   ENGINE_BASE_URL: string;
   // Optional at runtime: with neither key set, engineFetch fails cleanly
@@ -188,14 +190,82 @@ export function errorResponse(message: string, status: number): Response {
 }
 
 /**
+ * A 401 / 403 the BFF itself generates (the session, same-origin and org
+ * checks), with its machine-readable `code` next to `error` (#345; an
+ * extra field, so readers of `error` are unaffected). Engine bodies the
+ * BFF passes through are never rewritten.
+ */
+export function authErrorResponse(
+  message: string,
+  status: 401 | 403
+): Response {
+  return jsonResponse(
+    {
+      error: message,
+      code: status === 401 ? BFF_ERRORS.unauthorized : BFF_ERRORS.forbidden,
+    },
+    status
+  );
+}
+
+/**
+ * 403 code `cross_org_forbidden`: another org's config without
+ * super-admin. Deterministic, so a client can show it as a definite
+ * answer rather than a retryable one.
+ */
+export function crossOrgForbidden(): Response {
+  return jsonResponse(
+    {
+      error: "Cross-org config access requires isSuperAdmin",
+      code: BFF_ERRORS.crossOrgForbidden,
+    },
+    403
+  );
+}
+
+/**
+ * 400 code `invalid_org`: the org-resolution error on /api/config routes
+ * (the org param or the resolved org, via `orgErrorResponse`) and the
+ * share-code route's mapping of the worker's `invalid_org` for the
+ * mode's org.
+ */
+export function invalidOrg(message = "Invalid org"): Response {
+  return jsonResponse({ error: message, code: BFF_ERRORS.invalidOrg }, 400);
+}
+
+/**
+ * `decodeURIComponent` for a path segment, or null when the segment holds a
+ * malformed escape (`%E0%A4%A`). That is the caller's error, so every
+ * /api/config route that decodes a segment answers 400 instead of letting
+ * the URIError become a 500.
+ */
+export function safeDecode(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The 400 for a mode-name path segment `safeDecode` couldn't read. The
+ * share-code route answers with its coded counterpart
+ * (`shareCodeInvalidModeName` in share-config.ts).
+ */
+export function invalidModeNameResponse(): Response {
+  return errorResponse("Invalid mode name", 400);
+}
+
+/**
  * Lightweight same-origin guard: require X-Requested-With header.
  * Browsers block custom headers on cross-origin requests unless a CORS
  * preflight succeeds, and this worker sends no CORS headers, so external
- * sites cannot call these endpoints.
+ * sites cannot call these endpoints. The refusal is the BFF's own 403,
+ * with its machine-readable `code` (#345), on every route that uses it.
  */
 export function requireSameOrigin(request: Request): Response | null {
   if (request.headers.get("X-Requested-With") !== "XMLHttpRequest") {
-    return errorResponse("Forbidden", 403);
+    return authErrorResponse("Forbidden", 403);
   }
   return null;
 }

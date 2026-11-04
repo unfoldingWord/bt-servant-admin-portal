@@ -1,9 +1,6 @@
 import { buildConfigUrl } from "@/lib/config-url";
 import type { LanguageScaffold } from "@/types/language-scaffold";
-
-const SAME_ORIGIN_HEADERS = {
-  "X-Requested-With": "XMLHttpRequest",
-} as const;
+import { SAME_ORIGIN_HEADERS } from "@/lib/http";
 
 export async function getLanguageScaffold(
   signal?: AbortSignal,

@@ -1,9 +1,13 @@
 import type { Env } from "./helpers";
 import {
+  crossOrgForbidden,
   discardBody,
   engineFetch,
   errorResponse,
+  invalidModeNameResponse,
+  invalidOrg,
   isPathShapedOrg,
+  safeDecode,
 } from "./helpers";
 import {
   contractOrgModeRights,
@@ -14,6 +18,13 @@ import {
   type RightsField,
 } from "./rights-migration";
 import type { LanguageRights, SessionData } from "./types";
+import {
+  handleModeShareCode,
+  SHARE_CODE_PATH,
+  shareCodeError,
+  shareCodeInvalidModeName,
+} from "./share-config";
+import { SHARE_CODE_ERRORS } from "@/lib/mode-share-code-wire";
 
 // `undefined` is the back-compat default for users predating the rights
 // system (and for fields the worker hasn't lazy-migrated into yet — see
@@ -509,10 +520,32 @@ function isAdminMutation(method: string, session: SessionData): boolean {
 // a restricted-shepherd super admin could bypass their own org's
 // language_rights by adding a self-referential `?org=` (Frank, PR #185
 // review).
+/** Why `resolveOrg` refused; `orgErrorResponse` maps it. */
+export type OrgResolutionError =
+  | "invalid-org-param"
+  | "cross-org-forbidden"
+  | "invalid-org";
+
+/**
+ * The response for a refused org, on every config route: the same
+ * statuses and messages as before #345, each with its machine-readable
+ * `code` (an additive field).
+ */
+function orgErrorResponse(error: OrgResolutionError): Response {
+  switch (error) {
+    case "invalid-org-param":
+      return invalidOrg("Invalid org parameter");
+    case "cross-org-forbidden":
+      return crossOrgForbidden();
+    case "invalid-org":
+      return invalidOrg();
+  }
+}
+
 function resolveOrg(
   request: Request,
   session: SessionData
-): { crossOrg: boolean; org: string } | { error: Response } {
+): { crossOrg: boolean; org: string } | { error: OrgResolutionError } {
   const orgParam = new URL(request.url).searchParams.get("org");
 
   // Slash-named orgs are addressable: org names are free-text (stored
@@ -528,7 +561,7 @@ function resolveOrg(
   } else {
     const trimmed = orgParam.trim();
     if (!trimmed) {
-      return { error: errorResponse("Invalid org parameter", 400) };
+      return { error: "invalid-org-param" };
     }
     if (trimmed === session.org.trim()) {
       // Trim BOTH sides: buildConfigUrl trims the param before sending,
@@ -539,12 +572,7 @@ function resolveOrg(
       // no-param branch produces for the same caller.
       resolved = { crossOrg: false, org: session.org };
     } else if (session.isSuperAdmin !== true) {
-      return {
-        error: errorResponse(
-          "Cross-org config access requires isSuperAdmin",
-          403
-        ),
-      };
+      return { error: "cross-org-forbidden" };
     } else {
       resolved = { crossOrg: true, org: trimmed };
     }
@@ -559,7 +587,7 @@ function resolveOrg(
   // create/move, but stored values predating that guard must still be
   // stopped here.
   if (isPathShapedOrg(resolved.org)) {
-    return { error: errorResponse("Invalid org", 400) };
+    return { error: "invalid-org" };
   }
 
   return resolved;
@@ -614,9 +642,32 @@ export async function handleConfig(
   pathname: string
 ): Promise<Response> {
   const resolved = resolveOrg(request, session);
-  if ("error" in resolved) {
-    return resolved.error;
+  if ("error" in resolved) return orgErrorResponse(resolved.error);
+
+  // /api/config/modes/{name}/share-code → GET (#345). Matched before the
+  // generic mode route, whose `(.+)` would capture `{name}/share-code` as
+  // a mode name. A read, scoped exactly like the mode GET: any session for
+  // its own org, super-admins cross-org (`resolveOrg`). The RAW resolved
+  // org goes to the worker, so it reads the same key the mode GET does.
+  const modeShareCodeMatch = pathname.match(SHARE_CODE_PATH);
+  if (modeShareCodeMatch?.[1]) {
+    if (request.method !== "GET") {
+      return shareCodeError(
+        "Method not allowed",
+        SHARE_CODE_ERRORS.methodNotAllowed,
+        405
+      );
+    }
+    const modeName = safeDecode(modeShareCodeMatch[1]);
+    if (modeName === null) {
+      return shareCodeInvalidModeName();
+    }
+    return handleModeShareCode(env, resolved.org, modeName, {
+      caller: { isSuperAdmin: session.isSuperAdmin === true },
+      signal: request.signal,
+    });
   }
+
   // Named so the raw-vs-encoded distinction travels with the variable:
   // the round-3 double-encoding bug happened because a pre-encoded local
   // called `org` was passed where raw resolved.org was expected. Helpers
@@ -668,7 +719,8 @@ export async function handleConfig(
     /^\/api\/config\/modes\/([^/]+)\/_rename$/
   );
   if (modeRenameMatch?.[1]) {
-    const modeName = decodeURIComponent(modeRenameMatch[1]);
+    const modeName = safeDecode(modeRenameMatch[1]);
+    if (modeName === null) return invalidModeNameResponse();
     if (
       !resolved.crossOrg &&
       !hasAdminPowers(session) &&
@@ -892,7 +944,8 @@ export async function handleConfig(
     /^\/api\/config\/modes\/([^/]+)\/_clone$/
   );
   if (modeCloneMatch?.[1]) {
-    const modeName = decodeURIComponent(modeCloneMatch[1]);
+    const modeName = safeDecode(modeCloneMatch[1]);
+    if (modeName === null) return invalidModeNameResponse();
     if (
       !resolved.crossOrg &&
       !hasAdminPowers(session) &&
@@ -1070,7 +1123,8 @@ export async function handleConfig(
     /^\/api\/config\/modes\/([^/]+)\/_retire$/
   );
   if (modeRetireMatch?.[1]) {
-    const modeName = decodeURIComponent(modeRetireMatch[1]);
+    const modeName = safeDecode(modeRetireMatch[1]);
+    if (modeName === null) return invalidModeNameResponse();
     const isShepherdRetire = !resolved.crossOrg && !hasAdminPowers(session);
     if (
       isShepherdRetire &&
@@ -1149,7 +1203,8 @@ export async function handleConfig(
   // verb-perms, admin-trump)
   const modeMatch = pathname.match(/^\/api\/config\/modes\/(.+)$/);
   if (modeMatch?.[1]) {
-    const modeName = decodeURIComponent(modeMatch[1]);
+    const modeName = safeDecode(modeMatch[1]);
+    if (modeName === null) return invalidModeNameResponse();
     if (request.method === "PUT" || request.method === "DELETE") {
       const gate = await gateConfigMutation(
         request,
@@ -1224,7 +1279,10 @@ export async function handleConfig(
   // (per-language verb-perms, admin-trump, super-admin cross-org bypass)
   const languageMatch = pathname.match(/^\/api\/config\/languages\/(.+)$/);
   if (languageMatch?.[1]) {
-    const languageName = decodeURIComponent(languageMatch[1]);
+    const languageName = safeDecode(languageMatch[1]);
+    if (languageName === null) {
+      return errorResponse("Invalid language name", 400);
+    }
     if (request.method === "PUT" || request.method === "DELETE") {
       const gate = await gateConfigMutation(
         request,
@@ -1255,8 +1313,8 @@ export async function handleConfig(
   // /api/config/user-mode/{userId} → PUT/DELETE (UUID v4 only)
   const userModeMatch = pathname.match(/^\/api\/config\/user-mode\/(.+)$/);
   if (userModeMatch?.[1]) {
-    const userId = decodeURIComponent(userModeMatch[1]);
-    if (!UUID_V4_RE.test(userId)) {
+    const userId = safeDecode(userModeMatch[1]);
+    if (userId === null || !UUID_V4_RE.test(userId)) {
       return errorResponse("Invalid user ID", 400);
     }
     return proxyToEngine(
@@ -1270,8 +1328,8 @@ export async function handleConfig(
   // /api/config/user-memory/{userId} → GET/DELETE (UUID v4 only)
   const userMemoryMatch = pathname.match(/^\/api\/config\/user-memory\/(.+)$/);
   if (userMemoryMatch?.[1]) {
-    const userId = decodeURIComponent(userMemoryMatch[1]);
-    if (!UUID_V4_RE.test(userId)) {
+    const userId = safeDecode(userMemoryMatch[1]);
+    if (userId === null || !UUID_V4_RE.test(userId)) {
       return errorResponse("Invalid user ID", 400);
     }
     return proxyToEngine(
@@ -1432,11 +1490,8 @@ export async function handleConfig(
     if (session.isSuperAdmin !== true) {
       return errorResponse("Deleting MCP servers requires a super admin", 403);
     }
-    let serverId: string;
-    try {
-      serverId = decodeURIComponent(mcpDeleteMatch[1]);
-    } catch {
-      // A malformed %-sequence would otherwise throw URIError → 500.
+    const serverId = safeDecode(mcpDeleteMatch[1]);
+    if (serverId === null) {
       return errorResponse("Invalid server id encoding", 400);
     }
     return proxyToEngine(

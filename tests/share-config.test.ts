@@ -50,9 +50,13 @@ describe("GET /api/share-config — gates", () => {
     expect(res.status).toBe(403);
   });
 
-  it("401 without a session", async () => {
+  it("401 without a session, coded like the BFF's other 401s", async () => {
     const res = await worker.fetch(request(), env);
     expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({
+      error: "Unauthorized",
+      code: "unauthorized",
+    });
   });
 
   it("401 with a junk session cookie", async () => {
@@ -90,6 +94,7 @@ describe("GET /api/share-config — shape", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     // Exactly these two keys — no other env binding may leak through.
+    // `whatsapp_org` is deprecated (#345): kept one release for 1.16.x tabs.
     expect(Object.keys(body).sort()).toEqual([
       "whatsapp_number",
       "whatsapp_org",
