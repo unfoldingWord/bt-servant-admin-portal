@@ -370,6 +370,35 @@ describe("resolveModeSharePanelState", () => {
     }
   });
 
+  it("shares a partner mode named `default` as #<orgslug>/default when the worker resolves it", () => {
+    // worker classifier: CLEAR_TOKENS is checked against the whole token,
+    // so `pbt/default` is not a clear token and matches pbt's `default`.
+    for (const name of ["default", "none", "clear"]) {
+      const state = run(
+        present({ code: `pbt/${name}`, resolves: true, queried_org: "PBT" }),
+        { name }
+      );
+      expect(state, name).toEqual({
+        kind: "ready",
+        url: `https://wa.me/573001234567?text=%23pbt%2F${name}`,
+        trigger: `#pbt/${name}`,
+        partnerOrg: "PBT",
+      });
+    }
+  });
+
+  it("refuses a home-org mode named `default`: the worker's bare `reserved` answer", () => {
+    // Home (bare code): the worker answers `reserved` (match.kind clear).
+    for (const name of ["default", "none", "clear"]) {
+      expect(
+        run(present({ code: name, resolves: false, reason: "reserved" }), {
+          name,
+        }),
+        name
+      ).toEqual({ kind: "slug-reserved" });
+    }
+  });
+
   it("never builds a link from a bare clear token, even when the worker says it resolves", () => {
     for (const token of ["default", "none", "clear"]) {
       const state = run(present({ code: token, resolves: true }));
@@ -522,21 +551,23 @@ describe("resolveModeSharePanelState", () => {
     });
   });
 
-  it("checks the name before the page's flags: a draft named `default` hears rename", () => {
+  it("checks the name pattern before the page's flags; reserved words go to the worker", () => {
     const unasked: ShareCodeSnapshot = { ...settled, checking: true };
-    expect(
-      run(unasked, { flags: { published: false }, name: "default" })
-    ).toEqual({ kind: "slug-reserved" });
     expect(
       run(unasked, { flags: { published: false }, name: "Fia Mode" })
     ).toEqual({ kind: "slug-invalid" });
+    // Not refused locally: a partner mode named `default` can be shared
+    // as `#<orgslug>/default`. The page's flags come first, as for any name.
+    expect(
+      run(unasked, { flags: { published: false }, name: "default" })
+    ).toEqual({ kind: "draft" });
     expect(
       run(unasked, {
         flags: { published: true, requires_group: true },
         name: "none",
       })
-    ).toEqual({ kind: "slug-reserved" });
-    // The worker's own answers for the same cases map to the same states.
+    ).toEqual({ kind: "group-only" });
+    // The worker's answers map to their states.
     expect(run(miss("reserved"))).toEqual({ kind: "slug-reserved" });
     expect(
       run(code({ capability: "failed", failure: "invalid-name" }))
@@ -759,9 +790,16 @@ describe("resolveModeSharePanelState", () => {
       needsShareCode: true,
       digits: "573001234567",
     });
+    // A reserved word is asked about too: only the worker knows whether
+    // the code will be bare (home, a clear token) or qualified (partner).
+    for (const name of ["default", "none", "clear"]) {
+      expect(resolvePreWorkerStage(config, ready, name), name).toEqual({
+        needsShareCode: true,
+        digits: "573001234567",
+      });
+    }
     for (const [cfg, flags, name, kind] of [
       [config, ready, "Bad Name", "slug-invalid"],
-      [config, ready, "default", "slug-reserved"],
       [config, { published: false }, "obt-coach", "draft"],
       [
         config,

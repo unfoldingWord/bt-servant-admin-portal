@@ -99,8 +99,10 @@ export const MODE_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 // Reserved by the worker's classifier as "clear the active mode"
 // (`CLEAR_TOKENS`, src/services/classifier/index.ts). Checked BEFORE mode
-// matching there, so `#default` can never reach a mode named `default`;
-// a QR for one would silently deactivate whatever mode the user had.
+// matching there, against the WHOLE token text, so a bare `#default` can
+// never reach a mode named `default` (a QR for one would silently
+// deactivate whatever mode the user had). A qualified `#pbt/default` is
+// not a clear token: the classifier matches it to pbt's `default` mode.
 export const RESERVED_TRIGGERS: ReadonlySet<string> = new Set([
   "default",
   "none",
@@ -110,12 +112,14 @@ export const RESERVED_TRIGGERS: ReadonlySet<string> = new Set([
 export type ModeShareSlugVerdict = "ok" | "slug-invalid" | "slug-reserved";
 
 /**
- * Can this slug be carried by a `#` trigger at all? Independent of the
- * number and of publish state — it is about the mode's identity, so the
- * panel reports it before anything else (a draft named `default` should
- * hear "rename", not "publish"). A stored slug never contains `/`. The
- * worker would say the same (400 `invalid_mode_name`, reason `reserved`),
- * and those answers still map to the same states.
+ * Can this slug be carried as a BARE `#` trigger (a home-org mode's
+ * code)? The name pattern applies to every mode; the reserved words only
+ * to a bare code, since a partner mode's `#<orgslug>/default` is not a
+ * clear token. The panel's pre-worker stage therefore checks the pattern
+ * alone (it can't know before asking whether the code will be bare); a
+ * home mode named `default` is refused by the worker's `reserved` answer,
+ * and `buildShareLinkFromCode` never builds a link from a bare clear
+ * token whatever the worker says. A stored slug never contains `/`.
  */
 export function validateModeShareSlug(slug: string): ModeShareSlugVerdict {
   if (!MODE_NAME_PATTERN.test(slug)) return "slug-invalid";
@@ -534,8 +538,9 @@ function unhandled(value: never): never {
  * precedence:
  *
  * 1. the mode's name, from its stored slug alone: a slug no trigger can
- *    carry, then a reserved clear-word (a draft named `default` hears
- *    "rename", not "publish");
+ *    carry. A reserved clear-word (`default`, `none`, `clear`) is not
+ *    refused here: only a bare home-org code is a clear token, and the
+ *    worker answers `reserved` for it (step 6);
  * 2. the page's own saved flags: draft, then group-only (the worker's
  *    order). The worker is not asked about either; publishing or turning
  *    off group-only is the author's to do first. (The worker's
@@ -585,8 +590,14 @@ export function resolvePreWorkerStage(
     needsShareCode: false,
     state,
   });
-  const slugVerdict = validateModeShareSlug(modeName);
-  if (slugVerdict !== "ok") return stop({ kind: slugVerdict });
+  // The name pattern only. Reserved words (`default`, `none`, `clear`)
+  // are refused only as a bare home-org code: a partner mode named
+  // `default` is shared as `#<orgslug>/default`, which the worker's
+  // classifier resolves. Whether the code is bare is the worker's answer,
+  // so those names are asked about (see `validateModeShareSlug`).
+  if (!MODE_NAME_PATTERN.test(modeName)) {
+    return stop({ kind: "slug-invalid" });
+  }
   const eligibility = modeShareState(flags);
   if (eligibility !== "ready") return stop({ kind: eligibility });
   // Only a first load blocks: a background refetch keeps a ready QR.
