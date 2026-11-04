@@ -378,9 +378,7 @@ describe("resolveModeSharePanelState", () => {
     }
     // The qualified form is not a clear token: it still gets its QR.
     expect(
-      run(
-        present({ code: "pbt/default", resolves: true, queried_org: "PBT" })
-      )
+      run(present({ code: "pbt/default", resolves: true, queried_org: "PBT" }))
     ).toMatchObject({ kind: "ready", trigger: "#pbt/default" });
   });
 
