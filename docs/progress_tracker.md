@@ -114,6 +114,55 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ## Session Log
 
+### 2026-11-04 afternoon — worker #477 (v2.60.0) and #475 (v2.61.0) merged; #481 fix open as worker #486; portal #359 open for #349; #468 and #474 scoped; written standup posted
+
+**Lane:** Ian leads the BT Servant repos. Worker merges are a human step: Seth merged #477 and Ian merged #475. We merged nothing in the worker. Nothing was deployed by us.
+
+**Merged:**
+
+- **Worker #477** (#345 share codes, v2.60.0). Seth merged it at 2451892, 18:41Z.
+  - Bench round 3: Frank found that a failed read could flip a negative answer. Now any failed read that could change ownership returns a retryable 503, with Frank's three-org regression test.
+  - Both reviewers ended clean at 36a3a92.
+  - The bench's first approval had skipped one open Frank finding, so we fixed it before calling the PR clean.
+- **Worker #475** (#354 partner keys, v2.61.0). Ian merged it at 808adbd, 21:56Z.
+  - Round 4 fixes: string-only conversation-address fields (Frank P1), and the import lease covers the destination write (George).
+  - Round 6: the bench fixed a "Ann B"/"Ann-B" audio-collision cleanup bug itself.
+  - Seth posted `ack stomp` from `sethstoll`. The bench only accepts commands from the PR author; the first ack from `sethstoll7` was refused.
+  - **Prod prerequisite:** `PARTNER_KEY_TAG_SECRET` must be set on the prod worker before deploy (Ian).
+- **Branch protection detail:** worker main has `require_last_push_approval`. When the bench pushes the last commit, its own approval doesn't count, so a human (Ian) has to approve.
+
+**Open:**
+
+- **Worker #486** (fixes #481, v2.62.0). Ian's #481 is assigned to Seth.
+  - What it does:
+    - a 30 s stall timer and a 270 s turn ceiling replace the 90 s cap;
+    - a cut-off final answer is delivered with a localized notice, also used on `max_tokens`;
+    - only localized errors reach users;
+    - the per-user lock is refreshed during long turns;
+    - a 240 s recovery gate is ready.
+  - Prod log for request `ec68f587` (read-only, approved by Seth): the WhatsApp request aborted at 89 s after about 229 KB of streamed text, error `upstream-abort`. Inferred from the code: the user saw the gateway's canned apology, not the raw text.
+  - The bench fixed one lock edge case (40bbff7); both reviewers are clean. It now needs main merged in after #475, which is being done. Seth or Ian merges it.
+- **Portal #359** (fixes #349, v1.16.6).
+  - Opening a mode now starts a fresh undo history, so Ctrl+Z can't empty the document or bring back the previous mode's text.
+  - Autosave refuses a blank document over one that has content.
+  - Apply and import are no longer undoable (Seth approved).
+  - The `claude-code-review` sub-agent ran 2 rounds and approved. Two lows were not filed: there's no hint when a cleared document needs a manual Save, and the languages guard has no direct test.
+  - CI is green; waiting on the bench.
+- **Portal #355:** approved. It merges once #477 is live in prod.
+- **Scopes posted:**
+  - **#468** (Anthropic spend-limit outages): classify the spend errors, stop pointless retries, localize the user message, and emit one signal for #466. Builds after #486.
+  - **#474** (QR in greeting): a worker-rendered PNG in the final reply on WhatsApp. It partly reverses the 09-04 decision on #311, so it needs Ian and Elsy.
+- **Coordination:** a heads-up is on Abel's draft #480, which touches the orchestrator near #486 and the #478 redo.
+- **Bench:** it reviewed nothing on #359 for more than 4 hours. Worker #486 was reviewed only around 21:10Z.
+
+**Next:**
+
+1. #486: main merged, CI green, then the bench, then Ian or Seth approves and merges.
+2. #359: merge on the bench's approval. #355: merge once #477 is live in prod.
+3. Ian: deploy #477 and #475, setting `PARTNER_KEY_TAG_SECRET` first. Answer the questions on #481, #468 and the #478 redo.
+4. #478 redo: build after #486 lands.
+5. Elsy: #336 prod check, the #310 questions, #474.
+
 ### 2026-11-04 — worker #475 clean from both reviewers (held only on the stub-removal ack); #477 merged up and green, waiting on the bench; portal #355 bench-approved, held for #477; #478 redo designed; worker #421 and #158 reopened
 
 **Lane:** Ian leads the BT Servant repos. This session ran from the evening of 2026-11-03 into 2026-11-04 local. No merges by us. The worker's `main` is now branch-protected (1 approval; Ian is the only bypass), so worker merges are a human step: we bring PRs to clean and green and Seth or Ian merges.
