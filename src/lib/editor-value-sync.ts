@@ -49,7 +49,15 @@ const historyCompartment = new Compartment();
  * the plan performs only reaches a history held in this compartment.
  */
 export function editorHistory(): Extension {
-  return historyCompartment.of(history());
+  return historyCompartment.of(makeHistory());
+}
+
+/**
+ * The one history configuration. Both the editor's first history and the
+ * fresh one a value sync puts back come from here, so they cannot drift.
+ */
+function makeHistory(): Extension {
+  return history();
 }
 
 /**
@@ -92,7 +100,7 @@ export function planExternalValueSync(
       ],
       effects: historyCompartment.reconfigure([]),
     },
-    { effects: historyCompartment.reconfigure(history()) },
+    { effects: historyCompartment.reconfigure(makeHistory()) },
   ];
 }
 

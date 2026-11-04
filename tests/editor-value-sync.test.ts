@@ -256,6 +256,23 @@ describe("applying the value prop cannot be undone (#349)", () => {
     expect(z.state.doc.toString()).toBe(MODE_B);
   });
 
+  it("a deletion made in the previous mode is not spliced into the new one", () => {
+    // Why the history is reset, not only bypassed: with addToHistory(false)
+    // alone, this deletion is mapped through the whole-document replace and
+    // undo re-inserts "Alpha instructions" into mode B.
+    const loadedA = synced(editorState(""), MODE_A);
+    const from = MODE_A.indexOf("Alpha");
+    const deleted = loadedA.update({
+      changes: { from, to: from + "Alpha instructions".length },
+      userEvent: "delete",
+    }).state;
+    const switched = synced(deleted, MODE_B);
+    const z = press(undo, switched);
+    expect(z.ran).toBe(false);
+    expect(z.reported).toBeNull();
+    expect(z.state.doc.toString()).toBe(MODE_B);
+  });
+
   it("an editor mounted on the previous mode's draft cannot undo to it", () => {
     const z = press(undo, synced(editorState(MODE_A), MODE_B));
     expect(z.ran).toBe(false);
