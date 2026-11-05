@@ -27,6 +27,23 @@
 // converge as soon as the user pauses, so steady-state autosave is unaffected;
 // only stale snapshots are refused.
 
+/**
+ * Whether saving `draft` would blank a stored document that has content.
+ *
+ * Autosave refuses that (#349). Ctrl+Z straight after a load used to empty
+ * the editor and autosave sent the empty document, wiping the mode. The
+ * editor no longer lets an undo reach past a load, and this is the second
+ * line: an empty document is never written without someone asking for it.
+ * A user who really means to clear a document still can, with Save. Text of
+ * spaces and line breaks only counts as empty.
+ */
+export function wouldBlankStoredDocument(
+  draft: string,
+  lastSyncedDoc: string
+): boolean {
+  return draft.trim() === "" && lastSyncedDoc.trim() !== "";
+}
+
 export interface AutoSaveGateInput {
   /** The mode being edited, or `null` when the page has no selection. */
   selectedMode: string | null;
@@ -63,5 +80,8 @@ export function shouldAutoSaveDraft(input: AutoSaveGateInput): boolean {
   if (input.debouncedDraft !== input.draft) return false;
   if (input.debouncedDraft === input.lastSyncedDoc) return false;
   if (input.debouncedDraft === input.lastFailedDoc) return false;
+  if (wouldBlankStoredDocument(input.debouncedDraft, input.lastSyncedDoc)) {
+    return false;
+  }
   return true;
 }
