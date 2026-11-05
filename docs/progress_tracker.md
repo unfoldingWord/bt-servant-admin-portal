@@ -114,6 +114,60 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 
 ## Session Log
 
+### 2026-11-05 afternoon — Elsy answered #336/#310/#474; registry issue opened as worker #487; portal #333 closed; Ian freezes worker `main` for the develop branch (worker #488, #489)
+
+**Lane:** Ian leads the BT Servant repos. Nothing was built, merged or deployed this session. Seth posted the 11-05 standup on Zulip himself.
+
+**Elsy's answers (11-05):**
+
+- **#336:** checked on prod and closed by Elsy (14:20Z).
+- **#310 (answered 14:37Z):**
+  - Block at **publish**, not at draft creation.
+  - Web users keep their own org's language.
+  - Use specific ISO 639-3 codes (`arb`, `apc`, not `ara`). DCV is the only variant.
+  - Typing `@<code>` goes straight to that language. Typing `@<name>` lists the matching languages to pick from.
+- **#474 (answered 14:46Z):**
+  - Reverses the 09-04 #311 call.
+  - QR once per mode, WhatsApp only, uW org only, and to scan-in users too, in the order welcome → answer → QR.
+  - A failed send retries once, then is skipped and logged. The caption is translated.
+  - Q6 (build order) is Ian's.
+
+**Done (on Seth's go):**
+
+- **Worker #487 opened:** the global language registry, split out of #310 as promised on 11-02.
+  - It follows the #278 `__global__` pattern and records Elsy's decisions.
+  - The full scope is to come before any PR.
+  - Inference, labeled in the issue: "web users keep their own org's language" means resolve against the request org first. Languages are stored per org today (`${org}:languages`). Not yet checked against the trigger-resolution code.
+- **Worker #474:** commented to tag `@IanLindsley` for Q6. Elsy's mention went to `@ILindsley`, a different account.
+- **Portal #333:** closed as covered by worker #474, with Elsy's OK.
+
+**Ian: develop branch (Zulip 10:48 local).** No merges to worker `main` until Ian says the change is done.
+
+- `origin/develop` now exists.
+- **Worker #489** (open, targets `develop`, v2.62.2):
+  - staging deploys from `develop`;
+  - `main` is release-only (prod), merged by Ian from `develop` or `hotfix/*`;
+  - a `Release Source` CI check enforces that;
+  - `CODEOWNERS` is `@IanLindsley`;
+  - the worker's `CLAUDE.md` gets a Branching Model section.
+- **Worker #488** (open, targets `develop`, v2.62.1): CI now lints `tests/`. It closes the `legacy-import.test.ts` gap that was on our list to tell Ian.
+- The portal is not affected: its `lint` script is already `eslint .`.
+
+**Still open:**
+
+- Prod is still worker 2.61.0 (`/health`).
+- No replies yet on #421 (#478 Q1–Q3) or #474 Q6.
+
+**Next:**
+
+1. Worker #468 first PR. Read the worker's new `CLAUDE.md` once #489 lands, and target `develop`. Don't open it against `main` during the freeze.
+2. Worker #487: write the full scope, verifying `@language` resolution in `user-do.ts` (`classifyAndResolveTriggers`).
+3. Ian:
+   - deploy v2.62.x and portal v1.17.x;
+   - answer #421 Q1–Q3 and #474 Q6, and name the #468 Console owner;
+   - say when the freeze ends.
+4. Elsy: no open asks from us.
+
 ### 2026-11-05 — worker #486 (#481, v2.62.0), portal #355 (v1.17.0) and #359 (#349, v1.17.1) merged; Ian's answers on #481/#468; #478 redo questions reposted on worker #421
 
 **Lane:** Ian leads the BT Servant repos. Seth merged worker #486. We merged portal #355 and #359 on Seth's "merge on clean and green" rule for portal PRs. We deployed nothing.
