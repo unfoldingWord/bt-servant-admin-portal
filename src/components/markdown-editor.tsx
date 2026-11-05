@@ -25,7 +25,7 @@ import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 
 import { cn } from "@/lib/utils";
 import {
-  editorHistory,
+  editorValueSync,
   hasUserEdit,
   planExternalValueSync,
 } from "@/lib/editor-value-sync";
@@ -40,6 +40,12 @@ export interface MarkdownEditorHandle {
 
 interface MarkdownEditorProps {
   value: string;
+  /**
+   * Which document `value` is (e.g. the selected mode). A change resets the
+   * undo history even when the text is the same, so Ctrl+Z after a switch
+   * cannot reach the previous document's edits (#349).
+   */
+  documentKey: string;
   onChange: (value: string) => void;
   onHeadingsChange?: (headings: MarkdownHeading[]) => void;
   onActiveLineChange?: (line: number) => void;
@@ -130,6 +136,7 @@ export const MarkdownEditor = forwardRef<
 >(function MarkdownEditor(
   {
     value,
+    documentKey,
     onChange,
     onHeadingsChange,
     onActiveLineChange,
@@ -173,9 +180,6 @@ export const MarkdownEditor = forwardRef<
   // the *Ref pattern above.
   const extensions = useMemo(
     () => [
-      // Not a bare `history()`: the value sync below resets the history it
-      // holds, so Ctrl+Z cannot undo a load (#349).
-      editorHistory(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       markdown(),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
@@ -211,7 +215,13 @@ export const MarkdownEditor = forwardRef<
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const state = EditorState.create({ doc: value, extensions });
+    // The undo history is not in `extensions`: `editorValueSync` holds it
+    // with the document identity it belongs to, which the value sync below
+    // resets so Ctrl+Z cannot undo a load or reach another document (#349).
+    const state = EditorState.create({
+      doc: value,
+      extensions: [extensions, editorValueSync(documentKey)],
+    });
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
     // Seed TOC + active line on mount so consumers don't need a
@@ -226,8 +236,8 @@ export const MarkdownEditor = forwardRef<
       view.destroy();
       viewRef.current = null;
     };
-    // `value` is intentionally only the initial doc; external value
-    // changes flow through the sync effect below. `extensions` is
+    // `value` and `documentKey` are intentionally only the initial doc and
+    // its identity; later changes flow through the sync effect below. `extensions` is
     // stable by construction.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -249,9 +259,10 @@ export const MarkdownEditor = forwardRef<
     // Two transactions, in order: apply `value` with the undo history
     // removed, then start a fresh one (#349). One dispatch with both specs
     // would merge them into a single transaction and keep the old history.
-    const sync = planExternalValueSync(view.state, value);
+    // A new `documentKey` resets the history even when the text is the same.
+    const sync = planExternalValueSync(view.state, value, documentKey);
     if (sync !== null) for (const spec of sync) view.dispatch(spec);
-  }, [value]);
+  }, [value, documentKey]);
 
   // ReadOnly toggle → reconfigure compartment in place. No remount,
   // undo history + cursor state preserved.

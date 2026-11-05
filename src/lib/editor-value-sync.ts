@@ -27,6 +27,8 @@ import { history } from "@codemirror/commands";
 import {
   Annotation,
   Compartment,
+  StateEffect,
+  StateField,
   Transaction,
   type EditorState,
   type Extension,
@@ -44,12 +46,33 @@ const externalValueSync = Annotation.define<boolean>();
 const historyCompartment = new Compartment();
 
 /**
- * The undo history extension for an editor whose `value` is synced through
- * `planExternalValueSync`. Use it in place of a bare `history()`: the reset
- * the plan performs only reaches a history held in this compartment.
+ * Which document the editor's undo history belongs to (#349, bench round 2).
+ * Text alone cannot say: two modes can hold the same text, and a switch
+ * between them changes nothing on screen while the history still holds the
+ * first mode's edits.
  */
-export function editorHistory(): Extension {
-  return historyCompartment.of(makeHistory());
+const setDocumentKey = StateEffect.define<string | null>();
+const documentKeyField = StateField.define<string | null>({
+  create: () => null,
+  update(key, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setDocumentKey)) key = effect.value;
+    }
+    return key;
+  },
+});
+
+/**
+ * The undo history and document identity for an editor whose `value` is
+ * synced through `planExternalValueSync`, opened on the document named
+ * `documentKey`. Use it in place of a bare `history()`: the reset the plan
+ * performs only reaches a history held here.
+ */
+export function editorValueSync(documentKey: string | null): Extension {
+  return [
+    historyCompartment.of(makeHistory()),
+    documentKeyField.init(() => documentKey),
+  ];
 }
 
 /**
@@ -60,9 +83,15 @@ function makeHistory(): Extension {
   return history();
 }
 
+/** Both transactions of a plan carry these: neither is the user's edit. */
+const SYNC_ANNOTATIONS = [
+  externalValueSync.of(true),
+  Transaction.addToHistory.of(false),
+];
+
 /**
- * The transactions that make the editor show `value`, to be dispatched in
- * order, or `null` when it already does.
+ * The transactions that make the editor show `value` as the document named
+ * `documentKey`, to be dispatched in order, or `null` when it already does.
  *
  * Applying `value` is not an edit the user can undo. The first transaction
  * replaces the document outside the history and removes the history; the
@@ -72,35 +101,54 @@ function makeHistory(): Extension {
  * document's text back into the new one. Edits made after the sync undo as
  * usual, back to `value` and no further.
  *
- * The same holds when the page replaces the document it already shows (a
- * resource-priorities Apply, an import of the open mode): both are saved by
- * their own PUT, and Ctrl+Z does not take them back.
+ * A change of `documentKey` resets the history even when the text is
+ * already on screen: after a switch between two documents with the same
+ * text, the history would otherwise still hold the first one's edits, and
+ * Ctrl+Z would write them into the second. For the same document, a value
+ * the editor already shows (the typing round trip) plans nothing and keeps
+ * the history.
  *
- * "Already does" is judged the way CodeMirror will store the text
+ * Replacing the text of the same document (a resource-priorities Apply, an
+ * import of the open mode) also resets it: both are saved by their own PUT,
+ * and Ctrl+Z does not take them back.
+ *
+ * "Already shows" is judged the way CodeMirror will store the text
  * (`state.toText`, which honours the state's own line-separator setting), not
  * byte for byte: a value that differs from the editor's text only by line
- * endings is the same document to the editor, and replacing it would only
- * reset the cursor and add an undo step.
+ * endings is the same text to the editor.
+ *
+ * An editor without `editorValueSync` tracks no identity; only text changes
+ * reset it.
  */
 export function planExternalValueSync(
   state: EditorState,
-  value: string
+  value: string,
+  documentKey: string | null = null
 ): readonly TransactionSpec[] | null {
+  const heldKey = state.field(documentKeyField, false);
+  const sameDocument = heldKey === undefined || heldKey === documentKey;
   // The typing round trip (onChange → parent → value) lands here on every
   // keystroke with the editor's own text; one string compare settles it.
-  if (state.doc.toString() === value) return null;
-  const next = state.toText(value);
-  if (next.eq(state.doc)) return null;
+  const next = state.doc.toString() === value ? null : state.toText(value);
+  // The text to put in, or null when the editor already shows `value`.
+  const replacement = next !== null && !next.eq(state.doc) ? next : null;
+  if (replacement === null && sameDocument) return null;
   return [
     {
-      changes: { from: 0, to: state.doc.length, insert: next },
-      annotations: [
-        externalValueSync.of(true),
-        Transaction.addToHistory.of(false),
+      changes:
+        replacement === null
+          ? undefined
+          : { from: 0, to: state.doc.length, insert: replacement },
+      annotations: SYNC_ANNOTATIONS,
+      effects: [
+        historyCompartment.reconfigure([]),
+        ...(sameDocument ? [] : [setDocumentKey.of(documentKey)]),
       ],
-      effects: historyCompartment.reconfigure([]),
     },
-    { effects: historyCompartment.reconfigure(makeHistory()) },
+    {
+      annotations: SYNC_ANNOTATIONS,
+      effects: historyCompartment.reconfigure(makeHistory()),
+    },
   ];
 }
 

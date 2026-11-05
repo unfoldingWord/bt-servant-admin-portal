@@ -2040,6 +2040,9 @@ export function ModesPage() {
               <MarkdownEditor
                 ref={editorRef}
                 value={draft}
+                // #349 — which document the draft is, so a switch resets the
+                // undo history even onto a document with the same text.
+                documentKey={JSON.stringify([contextOrg, selectedMode])}
                 onChange={setDraft}
                 onHeadingsChange={setHeadings}
                 onActiveLineChange={setActiveLine}

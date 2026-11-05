@@ -1,13 +1,13 @@
 import { redo, undo } from "@codemirror/commands";
 import {
   EditorState,
-  type Transaction,
+  Transaction,
   type TransactionSpec,
 } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 
 import {
-  editorHistory,
+  editorValueSync,
   hasUserEdit,
   planExternalValueSync,
 } from "../src/lib/editor-value-sync";
@@ -41,8 +41,12 @@ function applyPlan(
 }
 
 /** The final state after applying a plan that must not be null. */
-function synced(state: EditorState, value: string): EditorState {
-  const plan = planExternalValueSync(state, value);
+function synced(
+  state: EditorState,
+  value: string,
+  documentKey: string | null = null
+): EditorState {
+  const plan = planExternalValueSync(state, value, documentKey);
   expect(plan).not.toBeNull();
   return applyPlan(state, plan!).state;
 }
@@ -209,9 +213,18 @@ describe("a document keeps its stored bytes until the user edits it", () => {
 const MODE_A = "# Mode A\n\nAlpha instructions\n";
 const MODE_B = "# Mode B\n\nBeta instructions\n";
 
-/** The editor's own state: history in the compartment the plan resets. */
-function editorState(doc: string): EditorState {
-  return EditorState.create({ doc, extensions: [editorHistory()] });
+/**
+ * The editor's own state: history in the compartment the plan resets, opened
+ * on the document named `documentKey`.
+ */
+function editorState(
+  doc: string,
+  documentKey: string | null = null
+): EditorState {
+  return EditorState.create({
+    doc,
+    extensions: [editorValueSync(documentKey)],
+  });
 }
 
 /**
@@ -248,8 +261,11 @@ describe("applying the value prop cannot be undone (#349)", () => {
     // The editor holds A, with an edit of the user's in its history, when B
     // is handed down (the cached-mode switch keeps the editor mounted; an
     // uncached one remounts it on A's stale draft).
-    const typed = typeAtEnd(synced(editorState(""), MODE_A), "more").state;
-    const switched = synced(typed, MODE_B);
+    const typed = typeAtEnd(
+      synced(editorState("", "A"), MODE_A, "A"),
+      "more"
+    ).state;
+    const switched = synced(typed, MODE_B, "B");
     const z = press(undo, switched);
     expect(z.ran).toBe(false);
     expect(z.reported).toBeNull();
@@ -260,13 +276,13 @@ describe("applying the value prop cannot be undone (#349)", () => {
     // Why the history is reset, not only bypassed: with addToHistory(false)
     // alone, this deletion is mapped through the whole-document replace and
     // undo re-inserts "Alpha instructions" into mode B.
-    const loadedA = synced(editorState(""), MODE_A);
+    const loadedA = synced(editorState("", "A"), MODE_A, "A");
     const from = MODE_A.indexOf("Alpha");
     const deleted = loadedA.update({
       changes: { from, to: from + "Alpha instructions".length },
       userEvent: "delete",
     }).state;
-    const switched = synced(deleted, MODE_B);
+    const switched = synced(deleted, MODE_B, "B");
     const z = press(undo, switched);
     expect(z.ran).toBe(false);
     expect(z.reported).toBeNull();
@@ -274,7 +290,8 @@ describe("applying the value prop cannot be undone (#349)", () => {
   });
 
   it("an editor mounted on the previous mode's draft cannot undo to it", () => {
-    const z = press(undo, synced(editorState(MODE_A), MODE_B));
+    // Mounted while B is selected, before B's draft arrives.
+    const z = press(undo, synced(editorState(MODE_A, "B"), MODE_B, "B"));
     expect(z.ran).toBe(false);
     expect(z.state.doc.toString()).toBe(MODE_B);
   });
@@ -305,5 +322,79 @@ describe("applying the value prop cannot be undone (#349)", () => {
     const typed = typeAtEnd(synced(editorState(""), MODE_B), "x").state;
     expect(planExternalValueSync(typed, `${MODE_B}x`)).toBeNull();
     expect(press(undo, typed).state.doc.toString()).toBe(MODE_B);
+  });
+});
+
+// Bench round 2 on #349 — the reset above runs only when the text changes.
+// Two documents can hold the same text: edit A from OLD to SHARED, switch to
+// B, whose stored text is SHARED, and nothing on screen changes. Without a
+// document identity the history still held A's edit, and Ctrl+Z wrote OLD
+// into B, where autosave saved it.
+
+const OLD = "# Shared\n\nOld wording\n";
+const SHARED = "# Shared\n\nNew wording\n";
+
+/** Mode A, loaded as OLD and edited by the user to SHARED. */
+function editedA(): EditorState {
+  const loaded = synced(editorState("", "A"), OLD, "A");
+  const from = OLD.indexOf("Old");
+  return loaded.update({
+    changes: { from, to: from + "Old".length, insert: "New" },
+    userEvent: "input.type",
+  }).state;
+}
+
+describe("a switch onto a document with the same text (#349)", () => {
+  it("resets the history: Ctrl+Z cannot write A's text into B", () => {
+    const a = editedA();
+    expect(a.doc.toString()).toBe(SHARED);
+    const plan = planExternalValueSync(a, SHARED, "B");
+    expect(plan).not.toBeNull();
+    const switched = applyPlan(a, plan!);
+    expect(switched.transactions.some((tr) => tr.docChanged)).toBe(false);
+    expect(hasUserEdit(switched.transactions)).toBe(false);
+    const z = press(undo, switched.state);
+    expect(z.ran).toBe(false);
+    expect(z.reported).toBeNull();
+    expect(z.state.doc.toString()).toBe(SHARED);
+  });
+
+  it("an echo of the same document's text keeps its history", () => {
+    const a = editedA();
+    expect(planExternalValueSync(a, SHARED, "A")).toBeNull();
+    const z = press(undo, a);
+    expect(z.ran).toBe(true);
+    expect(z.reported).toBe(OLD);
+  });
+
+  it("text equal only up to line endings counts as the same text", () => {
+    const a = editedA();
+    const crlf = SHARED.replace(/\n/g, "\r\n");
+    expect(planExternalValueSync(a, crlf, "A")).toBeNull();
+    const switched = synced(a, crlf, "B");
+    expect(press(undo, switched).ran).toBe(false);
+  });
+
+  it("the identity sticks: B's later echoes keep B's own history", () => {
+    const b = synced(editedA(), SHARED, "B");
+    const typed = typeAtEnd(b, "x").state;
+    expect(planExternalValueSync(typed, `${SHARED}x`, "B")).toBeNull();
+    expect(press(undo, typed).reported).toBe(SHARED);
+  });
+
+  it("marks both transactions of every plan as the sync, outside history", () => {
+    // A key-only reset, and a text change within the same document.
+    for (const [state, value, key] of [
+      [editedA(), SHARED, "B"],
+      [editorState(OLD, "A"), SHARED, "A"],
+    ] as const) {
+      const plan = planExternalValueSync(state, value, key);
+      expect(plan).toHaveLength(2);
+      const { transactions } = applyPlan(state, plan!);
+      for (const tr of transactions) {
+        expect(tr.annotation(Transaction.addToHistory)).toBe(false);
+      }
+      expect(hasUserEdit(transactions)).toBe(false);
+    }
   });
 });
