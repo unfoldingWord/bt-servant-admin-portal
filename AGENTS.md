@@ -34,8 +34,8 @@ npm run lint:fix     # ESLint with auto-fix
 npm run format       # Prettier format all files
 npm run format:check # Prettier check (CI)
 npm run typecheck    # TypeScript type check (project references)
-npm run deploy       # Deploy to production via wrangler
-npm run deploy:staging # Deploy to staging
+npm run deploy       # Wrangler prod deploy — CI only (deploy-prod.yml on a v* tag), never locally
+npm run deploy:staging # Wrangler staging deploy — CI only (deploy-staging.yml), never locally
 ```
 
 ## Architecture
@@ -55,17 +55,36 @@ worker/
 
 **Rule: Never import "upward" in the hierarchy.**
 
+## CRITICAL: Branching Model (develop → main)
+
+Two long-lived branches, since 2026-11-07:
+
+- **`develop`** is the integration branch and the default branch. Every feature branch is cut from `develop` and every feature PR targets `develop`. Merging a PR into `develop` deploys **staging** automatically (`deploy-staging.yml`).
+- **`main`** is the release branch. It only ever receives `develop` (a release PR, "Release vX.Y.Z: develop → main") or a `hotfix/*` branch. Only the repo owner can merge to `main` (code-owner review via `.github/CODEOWNERS`). **Production** deploys from a `v*` tag on `main`.
+- **Rule: `develop` is always releasable.** Work that is not ready to ship stays on its feature branch, or merges behind a flag that is off in production. Never cherry-pick into `main`; if something on `develop` must not ship, revert it on `develop` or flag it off, then release.
+- **Hotfix:** branch from `main` as `hotfix/<name>`, PR into `main`, then open a PR from `main` into `develop` the same day so `develop` stays ahead of `main`. (That sync PR is what puts the hotfix on staging.)
+- **Release:** merge the release PR, tag `v<version>` on the resulting `main` commit (`git checkout main && git pull && git tag v<version> && git push origin v<version>`), then dispatch the production deploy on that tag: `gh workflow run deploy-prod.yml --ref v<version>`.
+- **Merge methods:** feature PRs into `develop` are **squash**-merged. Release and hotfix PRs into `main` use a **merge commit**, never squash or rebase. A squash would copy `develop`'s work into a new commit that `develop` never contains, so the branches would diverge and every later release PR would re-list already-shipped commits. With merge commits, the next release PR shows only what is new, and `git log --first-parent main` lists one commit per release. Never delete `develop` when merging a release PR.
+- **Version bumps:** every PR bumps the version in its own branch with `npm version patch|minor --no-git-tag-version` (patch for fixes/docs/CI, minor for features), committing `package.json` and `package-lock.json`. Tags are only created on `main`, after a release merge.
+
+Enforcement in CI:
+
+- CI (`ci.yml`) runs on pushes to `develop` and `main` and on every PR. Its **Release Source** job refuses a PR into `main` from any branch other than `develop` or `hotfix/*` (it is skipped for PRs into `develop`).
+- Per-PR preview workers (`deploy-pr.yml`) deploy for PRs into `develop` and `main`; `cleanup-pr.yml` deletes them when the PR closes.
+- Staging (`deploy-staging.yml`) deploys only when a PR into `develop` merges. A release PR merging into `main` does not redeploy staging.
+- Production (`deploy-prod.yml`) refuses to run unless dispatched on a `v*` tag whose commit is on `main`.
+
 ## Workflow
 
-- Create feature branches off `main`
-- Open PRs for review — **dev** deploys automatically on PR
-- **NEVER merge to `main` without explicit user permission.** Always ask first. Never assume permission — even if CI passes and reviews are clean, wait for the user to say "merge".
+- Create feature branches off `develop` and open PRs against `develop` (see "Branching Model" above)
+- Open PRs for review — a per-PR **preview** worker deploys automatically on PR
+- **NEVER merge a PR (into `develop` or `main`) without explicit user permission.** Always ask first. Never assume permission — even if CI passes and reviews are clean, wait for the user to say "merge".
 - Before any merge discussion, a **code review must be completed** on the PR using the `Codex-review` sub-agent
 - All issues found during code review with **medium severity or higher must be fixed** before merging
 - After fixing review issues, **always push the fixes and kick off a new review** using the `Codex-review` sub-agent. Repeat this fix → re-review cycle until the reviewer approves with no medium+ issues remaining.
 - Low severity issues may be converted to GitHub issues, but **only with user permission**
-- Push/merge to `main` — **staging** deploys automatically (after CI passes)
-- **Production** deploys via manual workflow dispatch (Actions → Deploy Production → Run workflow)
+- Merge to `develop` — **staging** deploys automatically
+- **Production** deploys via manual workflow dispatch **on a `v*` release tag on `main`** (`gh workflow run deploy-prod.yml --ref v<version>`, or Actions → Deploy Production → Run workflow → select the tag). Dispatching on a branch is refused.
 - No direct deploys from local machines
 
 ## After Every Push
@@ -73,7 +92,7 @@ worker/
 Whenever you push to the remote, **always** do the following automatically:
 
 1. **Monitor CI/CD** — watch `gh pr checks` (or `gh run list`) until all checks pass or fail. If a check fails, investigate and fix it.
-2. **Create a PR if one doesn't exist** — if you're on a feature branch and no PR exists yet, create one after CI succeeds using `gh pr create`.
+2. **Create a PR if one doesn't exist** — if you're on a feature branch and no PR exists yet, create one against `develop` (`gh pr create --base develop`). Only release (`develop`) and `hotfix/*` branches open PRs into `main`.
 3. **Report results** — tell the user whether CI passed or failed, and share the PR URL if one was created.
 
 Do this every time without being asked.
