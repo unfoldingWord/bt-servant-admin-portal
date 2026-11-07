@@ -8,13 +8,19 @@ name: Deploy Staging
 # Docs/mockups-only PRs skip the staging deploy (mirror of deploy-pr.yml's
 # paths-ignore) — no build artefact changed, so no need to redeploy.
 #
+# Branching model: staging follows `develop` (the integration branch), so the
+# trigger is a PR merged INTO develop. A release PR (develop → main) merges
+# into main and is therefore excluded by `branches: [develop]` — it must not
+# redeploy staging, because staging already runs that exact develop code and
+# main's merge commit adds nothing new. Production is deploy-prod.yml.
+#
 # `workflow_dispatch` is preserved as a manual recovery path in case a merge
 # event is missed or the deploy needs to be re-run from a specific ref.
 
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    branches: [develop]
     types: [closed]
     paths-ignore:
       - "**/*.md"
@@ -42,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # On a PR-merge run, check out the merge commit (now on main).
+          # On a PR-merge run, check out the merge commit (now on develop).
           # On workflow_dispatch, fall back to the default ref the dispatch was
           # made against.
           ref: ${{ github.event.pull_request.merge_commit_sha || github.ref }}
@@ -62,7 +68,7 @@ jobs:
 
       # Type check before build — vite strips types, so a tsc error would not
       # fail `npm run build` on its own. Per Frank's review of #89: a merge
-      # commit could land on main with a type error if branch protection
+      # commit could land on develop with a type error if branch protection
       # ever lets one through, and we don't want staging to deploy that.
       - name: Type check
         run: npm run typecheck

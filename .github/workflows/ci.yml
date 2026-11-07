@@ -1,7 +1,7 @@
 name: CI
 
 # Trigger shape is the uW standard (dev-practices `ci-cd-workflows.md`):
-# `pull_request` with NO base filter, plus `push` on `main` only.
+# `pull_request` with NO base filter, plus `push` on `main` and `develop`.
 #
 # The `pull_request` filter is absent on purpose — that was the #330 bug. In an
 # Actions filter glob `*` does not match `/`, so `branches: ["*"]` excluded any
@@ -11,7 +11,9 @@ name: CI
 # as `docs-eod-2026-08-19` did match the old glob, so this was never literally
 # "main-only" for PRs.)
 #
-# `push` is deliberately `main`-only rather than `"**"`. Running both events on
+# `push` is deliberately limited to the two long-lived branches (`develop` is
+# the integration branch, `main` the release branch — see CLAUDE.md "Branching
+# Model") rather than `"**"`. Running both events on
 # every feature-branch push doubles the whole matrix — two gitleaks history
 # scans and four `npm ci` installs per commit — for identical code, and posts
 # two same-named checks whose gitleaks commit ranges differ (push scans only
@@ -36,13 +38,13 @@ name: CI
 # computed against the old base, so it would re-validate the stale merge.
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
 
 # Supersede stale PR runs rather than letting a fix -> push -> re-review cycle
 # stack them up (dev-practices; `deploy-staging.yml` already does this).
 #
-# `main` pushes get a group PER COMMIT instead. Sharing one group would not
+# `main` and `develop` pushes get a group PER COMMIT instead. Sharing one group would not
 # just cancel in-progress runs — when a third run queues, GitHub cancels the
 # one already PENDING in that group, whatever `cancel-in-progress` says. Merge
 # bursts are real here (four merges inside seven minutes on 2026-08-11, two
@@ -55,6 +57,31 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # ==========================================
+  # Release Source
+  # ==========================================
+  # main is the release branch (prod deploys from a v* tag on it). main only
+  # ever receives develop (a release PR) or a hotfix/* branch. Any other PR into
+  # main is refused here so a feature branch cannot skip integration and
+  # staging. Skipped (not failed) for every PR into develop.
+  release-source:
+    name: Release Source
+    if: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require develop or hotfix/* as the source of a PR into main
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          echo "PR into main from '$HEAD_REF'"
+          case "$HEAD_REF" in
+            develop|hotfix/*) echo "ok" ;;
+            *)
+              echo "::error::PRs into main must come from develop (a release) or hotfix/* (an emergency fix). Open this PR against develop instead."
+              exit 1 ;;
+          esac
+
   # ==========================================
   # Secret Scanning
   # ==========================================
