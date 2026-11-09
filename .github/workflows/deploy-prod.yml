@@ -1,5 +1,14 @@
 name: Deploy Production
 
+# Branching model (see CLAUDE.md "Branching Model"): production only ever runs
+# a release — a v* tag cut on main after a develop → main (or hotfix/*) merge.
+# Dispatch it on the tag, not on a branch:
+#
+#   gh workflow run deploy-prod.yml --ref v<version>
+#
+# Both jobs check out `github.ref`, i.e. the tag, so the gate validates and
+# the deploy builds exactly the tagged commit.
+
 on:
   workflow_dispatch:
 
@@ -7,9 +16,32 @@ jobs:
   ci:
     name: CI Gate
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Full history so the ancestry check below can see origin/main.
+          fetch-depth: 0
+
+      # workflow_dispatch accepts any ref, so refuse a branch, or a tag that
+      # never reached main, before anything is built or deployed. This is a
+      # failing step rather than a job-level `if:` on purpose: a skipped gate
+      # would make the run look like a quiet no-op instead of a refusal.
+      - name: Require a release tag on main
+        run: |
+          set -euo pipefail
+          echo "Dispatched on $GITHUB_REF ($GITHUB_SHA)"
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *)
+              echo "::error::Production deploys only from a v* release tag. Re-run with: gh workflow run deploy-prod.yml --ref v<version>"
+              exit 1 ;;
+          esac
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag ${GITHUB_REF#refs/tags/} points at $GITHUB_SHA, which is not on main. Tag the release commit on main."
+            exit 1
+          fi
+          echo "ok: ${GITHUB_REF#refs/tags/} is on main"
 
       - uses: actions/setup-node@v6
         with:
@@ -41,6 +73,7 @@ jobs:
 
   deploy:
     name: Deploy to Production
+    # The gate above must succeed (release tag on main + checks) first.
     needs: ci
     runs-on: ubuntu-latest
     permissions:

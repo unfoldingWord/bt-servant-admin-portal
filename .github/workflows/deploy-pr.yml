@@ -10,8 +10,11 @@ name: Deploy PR
 
 on:
   workflow_dispatch:
+  # Feature PRs target develop; release/hotfix PRs target main. Both get a
+  # preview worker. cleanup-pr.yml has no base filter, so it tears down
+  # previews for PRs into either branch.
   pull_request:
-    branches: [main]
+    branches: [develop, main]
     types: [opened, synchronize, reopened]
     # Skip the deploy when only docs/mockups change — no build artefacts
     # depend on those, so a Worker redeploy is wasted CI time.
