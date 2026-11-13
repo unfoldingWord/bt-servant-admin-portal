@@ -146,7 +146,7 @@ export function ApiKeysPage() {
             />
             <p className="text-sm">Loading keys…</p>
           </div>
-        ) : keysQuery.error ? null : keys.length === 0 ? (
+        ) : keysQuery.error && !keysQuery.data ? null : keys.length === 0 ? (
           <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
             <p className="text-sm">
               {showAll

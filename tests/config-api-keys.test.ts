@@ -207,6 +207,27 @@ describe("api keys (#354): list", () => {
     expect(res.status).toBe(502);
   });
 
+  it("a JSON null list body is a 502, not a crash", async () => {
+    mockFetch(() => new Response("null", { status: 200 }));
+    const res = await call(
+      makeRequest("GET", PATH),
+      makeSession({ isAdmin: true, org: freshOrg() })
+    );
+    expect(res.status).toBe(502);
+  });
+
+  it("an engine 401/403 becomes a 502 (portal config fault, not the user's rights)", async () => {
+    for (const status of [401, 403]) {
+      const spy = mockFetch(json({ error: "bad key" }, status));
+      const res = await call(
+        makeRequest("GET", PATH),
+        makeSession({ isAdmin: true, org: freshOrg() })
+      );
+      expect(res.status).toBe(502);
+      spy.mockRestore();
+    }
+  });
+
   it("an unknown scope is a 400", async () => {
     const spy = mockFetch(json({ keys: [] }));
     const res = await call(

@@ -78,6 +78,13 @@ function codedError(
 
 /** Pass the engine's response through (status and body), never cached. */
 function passThrough(res: Response): Response {
+  // An engine 401/403 means the portal's own engine key was refused — a
+  // portal configuration fault, not the user's permissions. Passing it
+  // through would read as a session or rights error in the browser.
+  if (res.status === 401 || res.status === 403) {
+    void res.body?.cancel().catch(() => {});
+    return errorResponse("The portal couldn't authenticate to the worker", 502);
+  }
   return new Response(res.body, {
     status: res.status,
     headers: { "Content-Type": "application/json", ...NO_STORE },
@@ -114,7 +121,10 @@ export async function readTermsAcceptance(
 /**
  * Record `email`'s acceptance of the current terms for `org`. The first
  * acceptance of a version is kept: a record that already exists is returned
- * unchanged rather than overwritten.
+ * unchanged rather than overwritten. Best effort: KV has no compare-and-
+ * swap, so two first creates racing (or a stale read) can each write, and
+ * the later one wins. Each key's worker record keeps its own createdBy,
+ * termsVersion and termsAcceptedAt either way.
  */
 async function recordTermsAcceptance(
   env: Pick<Env, "AUTH_KV">,
@@ -223,18 +233,22 @@ async function listKeys(
   );
   if (!res.ok) return passThrough(res);
 
-  let body: { keys?: unknown };
+  let body: unknown;
   try {
     body = await res.json();
   } catch {
     return errorResponse("The worker returned an unreadable key list", 502);
   }
-  if (!Array.isArray(body.keys)) {
+  const rawKeys =
+    body !== null && typeof body === "object"
+      ? (body as { keys?: unknown }).keys
+      : undefined;
+  if (!Array.isArray(rawKeys)) {
     return errorResponse("The worker returned no key list", 502);
   }
   // Defense in depth: a single-org list keeps only that org's records even
   // if the worker's filter ever widened. Non-objects are dropped too.
-  const keys = body.keys.filter(
+  const keys = rawKeys.filter(
     (k): k is { org: string } =>
       k !== null &&
       typeof k === "object" &&

@@ -28,6 +28,9 @@ export function ApiKeyRotateDialog({
 }: ApiKeyRotateDialogProps) {
   const rotate = useRotateApiKey();
   const [grace, setGrace] = useState<number>(ROTATION_GRACE_OPTIONS[0].seconds);
+  // The grace actually sent, so the confirmation can't describe a choice
+  // changed after submitting.
+  const [submittedGrace, setSubmittedGrace] = useState<number | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [issued, setIssued] = useState<ApiKeyIssued | null>(null);
   const revealing = issued !== null;
@@ -35,6 +38,7 @@ export function ApiKeyRotateDialog({
   const handleRotate = () => {
     if (!apiKey) return;
     setErrorText(null);
+    setSubmittedGrace(grace);
     rotate.mutate(
       { id: apiKey.id, graceSeconds: grace },
       {
@@ -63,7 +67,7 @@ export function ApiKeyRotateDialog({
             <DialogHeader>
               <DialogTitle>Your replacement key</DialogTitle>
               <DialogDescription>
-                {grace > 0
+                {(submittedGrace ?? grace) > 0
                   ? "The old key keeps working until its grace period ends. Switch the app to this key before then."
                   : "The old key has stopped working. Switch the app to this key now."}
               </DialogDescription>
@@ -104,6 +108,7 @@ export function ApiKeyRotateDialog({
                     name="rotation-grace"
                     checked={grace === opt.seconds}
                     onChange={() => setGrace(opt.seconds)}
+                    disabled={rotate.isPending}
                   />
                   {opt.label}
                 </label>

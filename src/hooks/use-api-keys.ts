@@ -24,6 +24,9 @@ export function useCreateApiKey(org: string | null) {
   const invalidate = useInvalidate();
   return useMutation({
     mutationFn: (input: ApiKeyCreateInput) => api.createApiKey(org, input),
+    // The result holds a plaintext key: drop it from the cache as soon as
+    // nothing observes it, instead of the default five minutes.
+    gcTime: 0,
     // Refresh on failure too: a 409 terms refusal or a recorded acceptance
     // changes what the page should show.
     onSettled: invalidate,
@@ -43,6 +46,7 @@ export function useRotateApiKey() {
   return useMutation({
     mutationFn: ({ id, graceSeconds }: { id: string; graceSeconds: number }) =>
       api.rotateApiKey(id, graceSeconds),
+    gcTime: 0, // plaintext key in the result; see useCreateApiKey
     onSettled: invalidate,
   });
 }
