@@ -1,5 +1,6 @@
 import { faBooks as faBooksLight } from "@fortawesome/pro-light-svg-icons";
 import { faComments as faCommentsLight } from "@fortawesome/pro-light-svg-icons";
+import { faKey as faKeyLight } from "@fortawesome/pro-light-svg-icons";
 import { faLanguage as faLanguageLight } from "@fortawesome/pro-light-svg-icons";
 import { faMessageBot as faMessageBotLight } from "@fortawesome/pro-light-svg-icons";
 import { faPenToSquare as faPenToSquareLight } from "@fortawesome/pro-light-svg-icons";
@@ -7,6 +8,7 @@ import { faServer as faServerLight } from "@fortawesome/pro-light-svg-icons";
 import { faUsers as faUsersLight } from "@fortawesome/pro-light-svg-icons";
 import { faBooks as faBooksSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faComments as faCommentsSolid } from "@fortawesome/pro-solid-svg-icons";
+import { faKey as faKeySolid } from "@fortawesome/pro-solid-svg-icons";
 import { faLanguage as faLanguageSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faMessageBot as faMessageBotSolid } from "@fortawesome/pro-solid-svg-icons";
 import { faPenToSquare as faPenToSquareSolid } from "@fortawesome/pro-solid-svg-icons";
@@ -110,6 +112,18 @@ export function ActivityBar() {
             onClick={() => {
               setActiveSection("mcp-servers");
               void navigate("/mcp-servers");
+            }}
+          />
+        )}
+        {isAdmin && (
+          <ActivityBarItem
+            icon={faKeyLight}
+            activeIcon={faKeySolid}
+            label="Manage API keys for your apps"
+            isActive={activeSection === "api-keys"}
+            onClick={() => {
+              setActiveSection("api-keys");
+              void navigate("/api-keys");
             }}
           />
         )}

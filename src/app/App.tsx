@@ -15,6 +15,7 @@ import { RequireAdmin } from "@/components/require-admin";
 import { RequireAuth } from "@/components/require-auth";
 import { RequireModeAccess } from "@/components/require-mode-access";
 import { AdminUsersPage } from "@/app/pages/admin-users";
+import { ApiKeysPage } from "@/app/pages/api-keys";
 import { BaruchPage } from "@/app/pages/baruch";
 import { LanguagesPage } from "@/app/pages/languages";
 import { LoginPage } from "@/app/pages/login";
@@ -73,6 +74,14 @@ const router = createBrowserRouter([
             element: (
               <RequireAdmin>
                 <McpServersPage />
+              </RequireAdmin>
+            ),
+          },
+          {
+            path: "api-keys",
+            element: (
+              <RequireAdmin>
+                <ApiKeysPage />
               </RequireAdmin>
             ),
           },

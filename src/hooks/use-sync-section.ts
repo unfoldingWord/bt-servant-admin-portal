@@ -11,6 +11,7 @@ const pathToSection: Record<string, Section> = {
   "/languages": "languages",
   "/resources": "resources",
   "/mcp-servers": "mcp-servers",
+  "/api-keys": "api-keys",
   "/admin/users": "admin-users",
 };
 
