@@ -25,13 +25,19 @@ export class ApiKeysRequestError extends Error {
 }
 
 async function throwForStatus(res: Response): Promise<never> {
-  let body: { error?: string; code?: string } = {};
+  let error: string | undefined;
+  let code: string | undefined;
   try {
-    body = (await res.json()) as typeof body;
+    const body: unknown = await res.json();
+    if (body !== null && typeof body === "object") {
+      const b = body as { error?: unknown; code?: unknown };
+      if (typeof b.error === "string") error = b.error;
+      if (typeof b.code === "string") code = b.code;
+    }
   } catch {
     // Non-JSON error body: fall back to the status alone.
   }
-  throw new ApiKeysRequestError(res.status, body.error, body.code);
+  throw new ApiKeysRequestError(res.status, error, code);
 }
 
 /**

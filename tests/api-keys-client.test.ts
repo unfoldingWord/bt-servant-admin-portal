@@ -81,6 +81,13 @@ describe("api-keys-api (#354)", () => {
     expect(rotated.apiKey).toBe("bts_new");
   });
 
+  it("a null or non-JSON error body still yields an ApiKeysRequestError", async () => {
+    mockFetch(500, null);
+    const err = await listApiKeys(null, false).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiKeysRequestError);
+    expect(err).toMatchObject({ status: 500, message: "Request failed (500)" });
+  });
+
   it("errors carry the status, message and code", async () => {
     mockFetch(409, { error: "Accept the terms", code: "terms_not_accepted" });
     const err = await createApiKey(null, { name: "a", app: "b" }).catch(
