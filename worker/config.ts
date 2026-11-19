@@ -1,3 +1,4 @@
+import { handleApiKeys, isApiKeysPath } from "./api-keys";
 import type { Env } from "./helpers";
 import {
   crossOrgForbidden,
@@ -643,6 +644,12 @@ export async function handleConfig(
 ): Promise<Response> {
   const resolved = resolveOrg(request, session);
   if ("error" in resolved) return orgErrorResponse(resolved.error);
+
+  // /api/config/api-keys* → partner API keys (#354). Org scoping is enforced
+  // in worker/api-keys.ts against this resolved org and the session.
+  if (isApiKeysPath(pathname)) {
+    return handleApiKeys(request, env, session, resolved, pathname);
+  }
 
   // /api/config/modes/{name}/share-code → GET (#345). Matched before the
   // generic mode route, whose `(.+)` would capture `{name}/share-code` as

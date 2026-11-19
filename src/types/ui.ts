@@ -5,4 +5,5 @@ export type Section =
   | "languages"
   | "resources"
   | "mcp-servers"
+  | "api-keys"
   | "admin-users";
