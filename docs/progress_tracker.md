@@ -6,7 +6,7 @@
 
 **Phase**: Post-June-9 demo; Phase 1 (Stabilize) of the tuning-project plan active. **2026-07-31 was the first ultracode batch day**: three features shipped same-day through the new batch pipeline (parallel implement lanes → independent verify → dual external review via **codex + grok CLIs** → authorized merges) — **#209 group-chat toggle (PR #267), #261 MCP topology map (PR #268), #249 language admin trump + org-wide visibility (PR #271, −888 net lines via #247 carve-out deletion)**. #249 went design→decided→spec→shipped in one day after Elsy's morning +1. Review loops earned their keep: 5 confirmed defects fixed post-verification, including a real BFF authz gap (`requires_group` invisible to the verb-rights gate) caught only by the deep-tree lens in _untouched_ code. #195 premise-check stopped a half-feature; exact worker ask filed as worker#346. #254 eval harness built (9 scenarios / 32 checks over baruch's real prompt assembly, `claude-sonnet-4-6` vs `claude-opus-4-8`); blocked only on an API credential (Ian's lane). **2026-08-10 was ultracode day 2**: #277 resource prioritization went design→decided→built→dual-external-approved same day (**PR #282**, awaiting merge) via a mechanism pivot that un-gated it from worker#257 item 2 — the ordering persists as a generated block in the mode document's `## Tool Guidance` section (the document IS the injection; zero worker changes). Same session: #269/#279 root-caused by live MCP probes as a worker adapter gap (worker#354 filed — TC Helps has enumeration on both endpoints; the issues' premises were wrong), #278 scoped with a recommendation (global server "library" key; partner orgs currently get zero MCP fan-out even in chat), and the #264 five-movements mode document drafted from the live obs-5m-mcp server and posted for Tim/Elsy review.
 **2026-08-11 was ultracode day 3 — the fastest full cycle yet**: Ian settled the worker#236 org-default-language contract in the morning; by mid-afternoon **four PRs were built, adversarially verified, dual-external-reviewed to convergence, and merged** — #288 (#286 org default language + #272 cleanups, contract-first against the not-yet-implemented worker route), #289 (#230 follow-up: one server-attribution join across all three resource surfaces, emission bytes frozen), #290 (#281 outside-priority disclosure riding the #277 Tool Guidance block, zero worker changes), #287 (gitleaks-action v2→v3, the last Node-20 action runtime). Review pipeline: per-lane adversarial verify → 3 codex+grok rounds → final delta pass; ~20 confirmed findings fixed, including a dual-confirmed P1 data-loss path in orphan repair, a CommonMark lazy-continuation bug that would have inverted the disclosure's meaning for the model, an Apply/autosave revert race, and a grok-forced design reversal (emission frozen, hardening display-only). Also merged same morning: **PR #282 (#277) and the 08-10 docs PR**; Elsy's dupe re-files #284/#285 got diagnosis cross-links; follow-ups filed as #293/#294.
-**Last Updated**: 2026-11-13
+**Last Updated**: 2026-11-20
 **Demo target**: June 9 (passed) — outcome to be summarized
 **Last prod deploy**: _2026-11-09 (GitHub runs and `/health`, read 2026-11-13):_ worker **v2.62.6** (released develop → main by Ian, #491) and portal **v1.17.2** (tag `v1.17.2`, Deploy Production run `42656142586`). _2026-11-04 (Ian, relayed by Seth):_ worker **v2.61.0** live in prod, with #477 share codes and #475 partner keys; Ian verified both end to end, and `PARTNER_KEY_TAG_SECRET` is set on prod. Worker #486 (v2.62.0) and portal v1.17.0/v1.17.1 are merged and waiting for Ian's prod deploy. _2026-11-03 evening (from Ian's EOD, not read by us):_ worker **v2.59.2** (#479 admin key, enforced by #485), portal **v1.16.5** and baruch **v1.3.3**, deployed from main and tagged. _Earlier 2026-11-03:_ Ian deployed worker **v2.58.0** to prod (`api.btservant.ai/health` reports `2.58.0`); it carries #437 (#336), #436 (#341) and #446 (#342). Portal prod was not checked this session. _2026-10-12 correction, from GitHub runs only (prod was not read):_ a worker production `Deploy` run succeeded on 2026-10-12 at 16:12Z on `5c6f76b` (v2.56.1, run `38275727380`), so the v2.54.0 figure below is out of date; that deploy predates the #341 fix (v2.56.2). Portal `main` is **v1.16.4** (2026-10-16: #351; v1.16.3 was #348, v1.16.2 #346). _Earlier record:_ **Worker prod is v2.54.0** — Ian's `Deploy` run on 2026-09-11 at `3311e89` (Signal voice fixes), which already includes #311's first-contact welcome (worker #423, v2.52.0). Before that, 2026-09-09: worker → v2.50.0 (run `34352633458`) and web-client → v1.12.2 (run `34373280525`), putting the pt-BR interface live in prod. **Portal prod is still v1.12.0** (2026-08-17, `36ad8ca`). `main` is now **v1.16.1**; a promotion would carry #198 import, #303/#307 editor fixes, #308, #311 (QR + welcome authoring), #278 copy, #292 MCP server page, #328 mode details, #337 and the #330 CI change. Scoping is waiting on Elsy's #292 verify (nudged 2026-09-16). _(Prior: 2026-08-05 portal v1.11.0 + worker 2.29→2.37; portal later reached v1.12.0 on 08-17.)_
 
@@ -113,6 +113,70 @@ Backend dependencies (all in `unfoldingWord/bt-servant-worker`, the actual API s
 - [~] **#125 — Remove Prompt Overrides** (per Elsy + Christou, 2026-05-11 PM). Phase 1 (hide sidebar entry) shipped 2026-05-11, PR #127 at `a39954f` — single-file delete of the `<ActivityBarItem>` block + `faSliders` imports; `/prompt-configuration` route + worker proxy + upstream endpoint left intact as emergency escape. Phase 2 (full deletion of page + BFF route + types + tests) **gated on bt-servant-worker#215** — investigation surfaced that worker still consumes `_org_prompt_overrides` on every chat request via `readAllOrgKV` → DO body → `resolvePromptOverrides` → system prompt; KV inventory clear in both staging and prod (zero `{org}` keys), so worker patch will be invisible. Cross-link comment posted on portal #125 with revised sequence. (GitHub auto-closed #125 on PR #127 merge despite "Closes only partially" wording — reopened with explanation.)
 
 ## Session Log
+
+### 2026-11-20 — covers one session, 11-16 to 11-20: the #354 and #474 PRs merged and are on staging (worker #503, #500; gateway #49; portal #366); #501 re-approved, then updated again and waiting for a bench kick; stale-PR triage notes posted
+
+**Lane:** Ian leads the BT Servant repos. Seth approved every merge listed below (11-19: "approved to merge, carefully and cleanly"). Nothing was deployed to prod.
+
+**Merged into `develop` (squash). Staging deployed after each:**
+
+| PR          | What                                         | Commit            | Staging                                    |
+| ----------- | -------------------------------------------- | ----------------- | ------------------------------------------ |
+| worker #503 | #474: one-time WhatsApp share QR (v2.63.0)   | `0d31a4b` (11-19) | yes                                        |
+| gateway #49 | #474: sends the QR as its own image (v1.4.0) | `6378714` (11-19) | yes                                        |
+| portal #366 | #354: API keys page (v1.18.0)                | `b6a5123` (11-19) | yes; `/api-keys` returns 200               |
+| worker #500 | #354: "last used" per partner key (v2.64.0)  | `f4775a0` (11-20) | `staging-api.btservant.ai/health` = 2.64.0 |
+
+Portal #366 merged before worker #500 on purpose: `lastUsedAt` is optional, and the page shows "Not yet recorded" when it's missing.
+
+**Worker #501 (#468, spend-limit stop):**
+
+- 11-16: Security Audit on #500 was red because lane B's hono `^4.13.18` commit was never pushed. Verified locally and pushed it; CI went green.
+- 11-17: in round 1, the bench returned needs-author on the user message. "Temporarily unavailable… try again later" contradicted the PR's own comments, which say a spend stop lasts until a person acts. George's other Medium was refuted (`develop` already notified and then rethrew). Two Lows were deferred as follow-ups.
+- 11-18, b88d32d: Seth chose new wording.
+  - en: "This service is unavailable right now. It may take some time to come back."
+  - pt: "Este serviço está indisponível no momento. Pode levar algum tempo para voltar."
+  - A test pins both and rules out retry wording.
+  - Round 2: Frank and George both clean; approved.
+- 11-20, 12019bf: merged `develop` in and bumped to v2.64.1, which dismissed the approval. #503's `share_qr_caption` conflicted with `error_service_unavailable` in `ui-strings.ts` and its test; both keys are kept. Full suite 2449/2449 passes, plus typecheck, architecture and `audit:prod`. CI green.
+- **Needs a bench kick, then merge.** Seth approved the merge, and is the Portuguese reviewer (not Elsy).
+
+**Process learned:**
+
+- **The bench doesn't pick up bt-servant PRs on its own** (Seth tuned it that way, since Ian and Abel don't use it). PRs assigned 11-13 sat untouched until Seth kicked it on 11-16. It reviewed all five on 11-17.
+- **Worker `develop` protection:** 1 approval required; stale approvals are dismissed on push; branches must be up to date (strict). Ian can bypass. So every worker PR merged after another needs fresh approval after its `develop` update. Don't use `--admin`.
+- A local `git merge` in a worktree used Seth's git identity. The merge commit was re-authored to Claude before pushing. Pass `-c user.name=Claude -c user.email=claude@anthropic.com` on merges.
+- GitHub records squash commits under Seth's account, as the PR author.
+
+**Issues and comments:**
+
+- #354: told Elsy it wasn't on staging yet (11-18), then posted the staging link and a how-to (11-20, comment 7042361958).
+- Worker #474: staging status (11-20). Left open until verified end to end.
+- **Ian's GitHub Apps request** (Zulip, uw-platform): Seth handled it by DM; complete per Seth.
+
+**Stale-PR triage (11-20):** a note on each PR for its owner; nothing closed.
+
+- Keep, on hold with #421: gateway #47 and worker #480 (Abel). Both assume #478 is in place, but it was reverted (#482).
+- Refresh: worker #176 (Ian, PDF tracking ID). Still needed; offered to do the update.
+- Suggested closing:
+  - worker #207 (Ian): removes `#mode`/`@language` prefix handling, which #310/#487 build on; the bench's needs-author finding is unresolved.
+  - worker #90 (Benjamin): `.claude/` no longer exists on `develop`.
+- Benjamin's call: worker #246. The bench fixed the mode doc, but re-uploading it to prod is left to him.
+
+**Open PRs:**
+
+- Worker #501: needs a bench kick.
+- Portal #367 (this tracker, v1.18.1): needs an approval.
+- Worker #502: draft, on hold for #421.
+
+**Next:**
+
+1. Seth: kick the bench on worker #501 and portal #367, then Claude merges both (already approved).
+2. Elsy: test #354 on staging. Ian: the key-holder list and cutoff for moving partners off the shared key.
+3. #421: Ian's all-clear, then #502, gateway #47 and #480 can move.
+4. #487: answers from Ian and Elsy (none since it was scoped on 11-13).
+5. Triage replies from Ian (#176, #207) and Benjamin (#90, #246).
+6. A worker release (develop → main) by Ian ships #474, #354 and #468 to prod.
 
 ### 2026-11-13 — multi-lane wave: worker #500/#501/#503, gateway #49, portal #366 open and green, waiting on the bench; #502 (#478 redo) held as a draft for Ian's summit all-clear; #487 scoped; Elsy answered on #354
 
